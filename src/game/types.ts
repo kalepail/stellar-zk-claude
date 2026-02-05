@@ -16,6 +16,10 @@ export interface Entity {
   angle: number;
   alive: boolean;
   radius: number;
+  // Previous frame position for interpolation
+  prevX: number;
+  prevY: number;
+  prevAngle: number;
 }
 
 export interface Ship extends Entity {
@@ -47,4 +51,36 @@ export interface Star {
   x: number;
   y: number;
   alpha: number;
+  baseAlpha: number;
+  twinkleSpeed: number;
+  twinklePhase: number;
+}
+
+export interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+  alpha: number;
+  decay: number;
+  type: "spark" | "smoke" | "debris" | "glow";
+}
+
+export interface Debris {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  spin: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  vertices: number[];
 }

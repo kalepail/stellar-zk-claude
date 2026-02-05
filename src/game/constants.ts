@@ -38,3 +38,22 @@ export const SCORE_LARGE_SAUCER = 200;
 export const SCORE_SMALL_SAUCER = 1000;
 
 export const STORAGE_HIGH_SCORE_KEY = "asteroids.highScore";
+
+// Particle system
+export const MAX_PARTICLES = 300;
+export const MAX_DEBRIS = 50;
+
+// Screen shake
+export const SHAKE_DECAY = 0.92;
+export const SHAKE_INTENSITY_SMALL = 3;
+export const SHAKE_INTENSITY_MEDIUM = 6;
+export const SHAKE_INTENSITY_LARGE = 10;
+
+// Visual effects
+export const GLOW_ENABLED = true;
+export const SCANLINE_OPACITY = 0.08;
+export const CRT_CURVATURE = 0.02;
+
+// Anti-lurking behavior
+export const LURK_TIME_THRESHOLD = 8; // seconds without destroying asteroids
+export const LURK_SAUCER_SPAWN_FAST = 3; // faster saucer spawn when lurking
