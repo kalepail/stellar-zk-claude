@@ -55,5 +55,5 @@ export const SCANLINE_OPACITY = 0.08;
 export const CRT_CURVATURE = 0.02;
 
 // Anti-lurking behavior
-export const LURK_TIME_THRESHOLD = 8; // seconds without destroying asteroids
+export const LURK_TIME_THRESHOLD = 6; // seconds without destroying asteroids
 export const LURK_SAUCER_SPAWN_FAST = 3; // faster saucer spawn when lurking

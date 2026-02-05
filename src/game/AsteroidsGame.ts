@@ -396,12 +396,13 @@ export class AsteroidsGame {
     this.saucerBullets = [];
     this.particles = [];
     this.debris = [];
-    this.saucerSpawnTimer = randomRange(SAUCER_SPAWN_MIN, SAUCER_SPAWN_MAX);
     this.timeSinceLastKill = 0;
     this.ship = this.createShip();
     this.shakeIntensity = 0;
     this.autopilot.setEnabled(false);
     this.spawnWave();
+    const waveSpawnMult = Math.max(0.4, 1 - (this.wave - 1) * 0.08);
+    this.saucerSpawnTimer = randomRange(SAUCER_SPAWN_MIN * waveSpawnMult, SAUCER_SPAWN_MAX * waveSpawnMult);
   }
 
   private storePreviousPositions(): void {
@@ -483,7 +484,7 @@ export class AsteroidsGame {
     this.wave += 1;
     this.timeSinceLastKill = 0;
 
-    const largeCount = Math.min(11, 4 + (this.wave - 1) * 2);
+    const largeCount = Math.min(16, 4 + (this.wave - 1) * 2);
 
     for (let i = 0; i < largeCount; i += 1) {
       let x = randomRange(0, WORLD_WIDTH);
@@ -508,7 +509,8 @@ export class AsteroidsGame {
     const [minSpeed, maxSpeed] = ASTEROID_SPEED_RANGE_BY_SIZE[size];
     const moveAngle = randomRange(0, Math.PI * 2);
     const direction = angleToVector(moveAngle);
-    const speed = randomRange(minSpeed, maxSpeed);
+    const waveSpeedMult = 1 + Math.min(0.5, (this.wave - 1) * 0.06);
+    const speed = randomRange(minSpeed, maxSpeed) * waveSpeedMult;
     const vertices = this.createAsteroidVertices();
     const startAngle = randomRange(0, Math.PI * 2);
 
@@ -778,12 +780,13 @@ export class AsteroidsGame {
     const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
     const spawnThreshold = isLurking ? LURK_SAUCER_SPAWN_FAST : 0;
 
-    if (this.saucers.length === 0 && this.saucerSpawnTimer <= spawnThreshold) {
+    const maxSaucers = this.wave < 4 ? 1 : this.wave < 7 ? 2 : 3;
+    if (this.saucers.length < maxSaucers && this.saucerSpawnTimer <= spawnThreshold) {
       this.spawnSaucer();
-      // Spawn faster when lurking
+      const waveSpawnMult = Math.max(0.4, 1 - (this.wave - 1) * 0.08);
       this.saucerSpawnTimer = isLurking
         ? randomRange(LURK_SAUCER_SPAWN_FAST, LURK_SAUCER_SPAWN_FAST + 2)
-        : randomRange(SAUCER_SPAWN_MIN, SAUCER_SPAWN_MAX);
+        : randomRange(SAUCER_SPAWN_MIN * waveSpawnMult, SAUCER_SPAWN_MAX * waveSpawnMult);
     }
 
     for (const saucer of this.saucers) {
@@ -860,7 +863,8 @@ export class AsteroidsGame {
       // More accurate when lurking (anti-lurk mechanic)
       const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
       const baseError = isLurking ? 15 : 30;
-      const errorDegrees = clamp(baseError - this.score / 2500, 4, baseError);
+      const waveAccuracyBonus = Math.min(15, this.wave * 2);
+      const errorDegrees = clamp(baseError - this.score / 2500 - waveAccuracyBonus, 4, baseError);
       const errorRadians = (errorDegrees * Math.PI) / 180;
       shotAngle = targetAngle + randomRange(-errorRadians, errorRadians);
     } else {
