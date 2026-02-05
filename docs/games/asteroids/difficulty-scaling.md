@@ -93,7 +93,6 @@ Multiplier: `1 + min(0.5, (wave - 1) * 0.06)`
 - Asteroid split behavior and cap (27)
 - Saucer bullet speed/lifetime
 - Ship stats (thrust, drag, turn speed, bullet speed)
-- Hyperspace fail chance (scales with crowdedness)
 
 ## Design Rationale
 

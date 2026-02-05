@@ -1,18 +1,20 @@
 import {
   ASTEROID_CAP,
+  ASTEROID_SPEED_Q8_8,
   EXTRA_LIFE_SCORE_STEP,
   FIXED_TIMESTEP,
-  HYPERSPACE_COOLDOWN,
-  LURK_SAUCER_SPAWN_FAST,
-  LURK_TIME_THRESHOLD,
+  LURK_SAUCER_SPAWN_FAST_FRAMES,
+  LURK_TIME_THRESHOLD_FRAMES,
   MAX_DEBRIS,
   MAX_FRAME_DELTA,
   MAX_PARTICLES,
   MAX_SUBSTEPS,
-  SAUCER_BULLET_LIFETIME,
-  SAUCER_BULLET_SPEED,
-  SAUCER_SPAWN_MAX,
-  SAUCER_SPAWN_MIN,
+  SAUCER_BULLET_LIFETIME_FRAMES,
+  SAUCER_BULLET_SPEED_Q8_8,
+  SAUCER_SPAWN_MAX_FRAMES,
+  SAUCER_SPAWN_MIN_FRAMES,
+  SAUCER_SPEED_LARGE_Q8_8,
+  SAUCER_SPEED_SMALL_Q8_8,
   SCORE_LARGE_ASTEROID,
   SCORE_LARGE_SAUCER,
   SCORE_MEDIUM_ASTEROID,
@@ -22,27 +24,63 @@ import {
   SHAKE_INTENSITY_LARGE,
   SHAKE_INTENSITY_MEDIUM,
   SHAKE_INTENSITY_SMALL,
-  SHIP_BULLET_COOLDOWN,
-  SHIP_BULLET_LIFETIME,
+  SHIP_BULLET_COOLDOWN_FRAMES,
+  SHIP_BULLET_LIFETIME_FRAMES,
   SHIP_BULLET_LIMIT,
-  SHIP_BULLET_SPEED,
-  SHIP_DRAG,
-  SHIP_MAX_SPEED,
+  SHIP_BULLET_SPEED_Q8_8,
+  SHIP_FACING_UP_BAM,
+  SHIP_MAX_SPEED_SQ_Q16_16,
   SHIP_RADIUS,
-  SHIP_RESPAWN_DELAY,
-  SHIP_SPAWN_INVULNERABLE,
-  SHIP_THRUST,
-  SHIP_TURN_SPEED,
+  SHIP_RESPAWN_FRAMES,
+  SHIP_SPAWN_INVULNERABLE_FRAMES,
+  SHIP_THRUST_Q8_8,
+  SHIP_TURN_SPEED_BAM,
   STARTING_LIVES,
   STORAGE_HIGH_SCORE_KEY,
   WORLD_HEIGHT,
+  WORLD_HEIGHT_Q12_4,
   WORLD_WIDTH,
+  WORLD_WIDTH_Q12_4,
 } from "./constants";
 import { AudioSystem } from "./AudioSystem";
 import { Autopilot, type GameStateSnapshot } from "./Autopilot";
+import {
+  applyDrag,
+  atan2BAM,
+  BAMToRadians,
+  clampSpeedQ8_8,
+  cosBAM,
+  displaceQ12_4,
+  fromQ12_4,
+  fromQ8_8,
+  sinBAM,
+  toQ12_4,
+  velocityQ8_8,
+} from "./fixed-point";
 import { InputController } from "./input";
-import { angleToVector, clamp, getGameRng, randomInt, randomRange, setGameSeed, wrapX, wrapY } from "./math";
-import type { Asteroid, AsteroidSize, Bullet, Debris, GameMode, Particle, Saucer, Ship, Star } from "./types";
+import {
+  clamp,
+  getGameRng,
+  randomInt,
+  setGameSeed,
+  visualRandomInt,
+  visualRandomRange,
+  wrapX,
+  wrapXQ12_4,
+  wrapY,
+  wrapYQ12_4,
+} from "./math";
+import type {
+  Asteroid,
+  AsteroidSize,
+  Bullet,
+  Debris,
+  GameMode,
+  Particle,
+  Saucer,
+  Ship,
+  Star,
+} from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
   large: 48,
@@ -50,32 +88,20 @@ const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
   small: 16,
 };
 
-const ASTEROID_SPEED_RANGE_BY_SIZE: Record<AsteroidSize, [number, number]> = {
-  large: [34, 58],
-  medium: [62, 94],
-  small: [98, 142],
-};
-
 const SAUCER_RADIUS_LARGE = 22;
 const SAUCER_RADIUS_SMALL = 16;
 
-function shortestDelta(from: number, to: number, size: number): number {
+function shortestDeltaQ12_4(from: number, to: number, size: number): number {
   let delta = to - from;
-
-  if (delta > size / 2) {
-    delta -= size;
-  }
-
-  if (delta < -size / 2) {
-    delta += size;
-  }
-
+  const half = size >> 1;
+  if (delta > half) delta -= size;
+  if (delta < -half) delta += size;
   return delta;
 }
 
-function collisionDistanceSquared(ax: number, ay: number, bx: number, by: number): number {
-  const dx = shortestDelta(ax, bx, WORLD_WIDTH);
-  const dy = shortestDelta(ay, by, WORLD_HEIGHT);
+function collisionDistSqQ12_4(ax: number, ay: number, bx: number, by: number): number {
+  const dx = shortestDeltaQ12_4(ax, bx, WORLD_WIDTH_Q12_4);
+  const dy = shortestDeltaQ12_4(ay, by, WORLD_HEIGHT_Q12_4);
   return dx * dx + dy * dy;
 }
 
@@ -136,7 +162,7 @@ export class AsteroidsGame {
 
   private saucerBullets: Bullet[] = [];
 
-  private saucerSpawnTimer = randomRange(SAUCER_SPAWN_MIN, SAUCER_SPAWN_MAX);
+  private saucerSpawnTimer = randomInt(SAUCER_SPAWN_MIN_FRAMES, SAUCER_SPAWN_MAX_FRAMES);
 
   private nextId = 1;
 
@@ -168,8 +194,8 @@ export class AsteroidsGame {
   private shakeIntensity = 0;
   private shakeRotation = 0;
 
-  // Thrust timing for audio
-  private lastThrustTime = 0;
+  // Thrust timing (frame-count based)
+  private thrustParticleTimer = 0;
 
   // Anti-lurking: time since last asteroid destroyed by player
   private timeSinceLastKill = 0;
@@ -179,6 +205,9 @@ export class AsteroidsGame {
 
   // Game seed for deterministic RNG (ZK-friendly)
   private gameSeed = 0;
+
+  // Frame counter for deterministic timing
+  private frameCount = 0;
 
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyDown(event);
@@ -397,12 +426,15 @@ export class AsteroidsGame {
     this.particles = [];
     this.debris = [];
     this.timeSinceLastKill = 0;
+    this.frameCount = 0;
     this.ship = this.createShip();
     this.shakeIntensity = 0;
     this.autopilot.setEnabled(false);
     this.spawnWave();
-    const waveSpawnMult = Math.max(0.4, 1 - (this.wave - 1) * 0.08);
-    this.saucerSpawnTimer = randomRange(SAUCER_SPAWN_MIN * waveSpawnMult, SAUCER_SPAWN_MAX * waveSpawnMult);
+    const waveMultPct = Math.max(40, 100 - (this.wave - 1) * 8);
+    const spawnMin = ((SAUCER_SPAWN_MIN_FRAMES * waveMultPct) / 100) | 0;
+    const spawnMax = ((SAUCER_SPAWN_MAX_FRAMES * waveMultPct) / 100) | 0;
+    this.saucerSpawnTimer = randomInt(spawnMin, spawnMax);
   }
 
   private storePreviousPositions(): void {
@@ -437,19 +469,20 @@ export class AsteroidsGame {
   }
 
   private updateSimulation(dt: number): void {
+    this.frameCount++;
     this.updateShip(dt);
-    this.updateAsteroids(dt);
-    this.updateBullets(dt);
-    this.updateSaucers(dt);
-    this.updateSaucerBullets(dt);
+    this.updateAsteroids();
+    this.updateBullets();
+    this.updateSaucers();
+    this.updateSaucerBullets();
     this.updateParticles(dt);
     this.updateDebris(dt);
     this.updateScreenShake();
     this.handleCollisions();
     this.pruneDestroyedEntities();
 
-    // Anti-lurking timer
-    this.timeSinceLastKill += dt;
+    // Anti-lurking timer (frame count)
+    this.timeSinceLastKill++;
 
     if (this.mode === "playing" && this.asteroids.length === 0 && this.saucers.length === 0) {
       this.spawnWave();
@@ -457,9 +490,9 @@ export class AsteroidsGame {
   }
 
   private createShip(): Ship {
-    const x = WORLD_WIDTH * 0.5;
-    const y = WORLD_HEIGHT * 0.5;
-    const angle = -Math.PI * 0.5;
+    const x = toQ12_4(WORLD_WIDTH * 0.5); // 7680
+    const y = toQ12_4(WORLD_HEIGHT * 0.5); // 5760
+    const angle = SHIP_FACING_UP_BAM; // 192 (points up)
     return {
       id: this.nextId++,
       x,
@@ -475,9 +508,71 @@ export class AsteroidsGame {
       canControl: true,
       fireCooldown: 0,
       respawnTimer: 0,
-      invulnerableTimer: SHIP_SPAWN_INVULNERABLE,
-      hyperspaceCooldown: 0,
+      invulnerableTimer: SHIP_SPAWN_INVULNERABLE_FRAMES,
     };
+  }
+
+  private getShipSpawnPoint(): { x: number; y: number } {
+    return {
+      x: toQ12_4(WORLD_WIDTH * 0.5),
+      y: toQ12_4(WORLD_HEIGHT * 0.5),
+    };
+  }
+
+  private queueShipRespawn(delayFrames: number): void {
+    this.ship.canControl = false;
+    this.ship.respawnTimer = delayFrames;
+    this.ship.vx = 0;
+    this.ship.vy = 0;
+    this.ship.fireCooldown = 0;
+    this.ship.invulnerableTimer = 0;
+  }
+
+  private isShipSpawnAreaClear(spawnX: number, spawnY: number, clearRadiusQ12_4 = 1920): boolean {
+    const blockedByAsteroid = this.asteroids.some((asteroid) => {
+      const hitDist = (asteroid.radius << 4) + clearRadiusQ12_4;
+      return collisionDistSqQ12_4(asteroid.x, asteroid.y, spawnX, spawnY) < hitDist * hitDist;
+    });
+
+    if (blockedByAsteroid) {
+      return false;
+    }
+
+    const blockedBySaucer = this.saucers.some((saucer) => {
+      if (!saucer.alive) return false;
+      const hitDist = (saucer.radius << 4) + clearRadiusQ12_4;
+      return collisionDistSqQ12_4(saucer.x, saucer.y, spawnX, spawnY) < hitDist * hitDist;
+    });
+
+    if (blockedBySaucer) {
+      return false;
+    }
+
+    return !this.saucerBullets.some((bullet) => {
+      if (!bullet.alive) return false;
+      const hitDist = (bullet.radius << 4) + clearRadiusQ12_4;
+      return collisionDistSqQ12_4(bullet.x, bullet.y, spawnX, spawnY) < hitDist * hitDist;
+    });
+  }
+
+  private trySpawnShipAtCenter(): boolean {
+    const { x: spawnX, y: spawnY } = this.getShipSpawnPoint();
+
+    if (!this.isShipSpawnAreaClear(spawnX, spawnY)) {
+      return false;
+    }
+
+    this.ship.x = spawnX;
+    this.ship.y = spawnY;
+    this.ship.prevX = spawnX;
+    this.ship.prevY = spawnY;
+    this.ship.vx = 0;
+    this.ship.vy = 0;
+    this.ship.angle = SHIP_FACING_UP_BAM;
+    this.ship.prevAngle = SHIP_FACING_UP_BAM;
+    this.ship.canControl = true;
+    this.ship.invulnerableTimer = SHIP_SPAWN_INVULNERABLE_FRAMES;
+    return true;
   }
 
   private spawnWave(): void {
@@ -485,41 +580,49 @@ export class AsteroidsGame {
     this.timeSinceLastKill = 0;
 
     const largeCount = Math.min(16, 4 + (this.wave - 1) * 2);
+    const { x: avoidX, y: avoidY } = this.getShipSpawnPoint();
+    // 180px in Q12.4 = 2880; squared = 8,294,400
+    const safeDistSq = 2880 * 2880;
 
     for (let i = 0; i < largeCount; i += 1) {
-      let x = randomRange(0, WORLD_WIDTH);
-      let y = randomRange(0, WORLD_HEIGHT);
+      let x = randomInt(0, WORLD_WIDTH_Q12_4);
+      let y = randomInt(0, WORLD_HEIGHT_Q12_4);
 
       let guard = 0;
 
-      while (
-        collisionDistanceSquared(x, y, WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5) < 180 * 180 &&
-        guard < 20
-      ) {
-        x = randomRange(0, WORLD_WIDTH);
-        y = randomRange(0, WORLD_HEIGHT);
+      while (collisionDistSqQ12_4(x, y, avoidX, avoidY) < safeDistSq && guard < 20) {
+        x = randomInt(0, WORLD_WIDTH_Q12_4);
+        y = randomInt(0, WORLD_HEIGHT_Q12_4);
         guard += 1;
       }
 
       this.asteroids.push(this.createAsteroid("large", x, y));
     }
+
+    // Use the same spawn policy as death-respawn: ship enters only when center is safe.
+    this.queueShipRespawn(0);
+    this.trySpawnShipAtCenter();
   }
 
   private createAsteroid(size: AsteroidSize, x: number, y: number): Asteroid {
-    const [minSpeed, maxSpeed] = ASTEROID_SPEED_RANGE_BY_SIZE[size];
-    const moveAngle = randomRange(0, Math.PI * 2);
-    const direction = angleToVector(moveAngle);
-    const waveSpeedMult = 1 + Math.min(0.5, (this.wave - 1) * 0.06);
-    const speed = randomRange(minSpeed, maxSpeed) * waveSpeedMult;
+    const [minQ8_8, maxQ8_8] = ASTEROID_SPEED_Q8_8[size];
+    const moveAngle = randomInt(0, 256); // BAM
+    let speed = randomInt(minQ8_8, maxQ8_8);
+    // Wave speed multiplier: speed * (1 + min(0.5, (wave-1)*0.06))
+    // Integer: speed + speed * min(128, (wave-1)*15) >> 8
+    speed = speed + ((speed * Math.min(128, (this.wave - 1) * 15)) >> 8);
+    const { vx, vy } = velocityQ8_8(moveAngle, speed);
     const vertices = this.createAsteroidVertices();
-    const startAngle = randomRange(0, Math.PI * 2);
+    const startAngle = randomInt(0, 256); // BAM
+    // spin: +-3 BAM/frame (was +-0.7 rad/s -> +-0.7/60/(2pi/256) ~ +-0.47 -> +-1-3)
+    const spin = randomInt(-3, 4);
 
     return {
       id: this.nextId++,
       x,
       y,
-      vx: direction.x * speed,
-      vy: direction.y * speed,
+      vx,
+      vy,
       angle: startAngle,
       alive: true,
       radius: ASTEROID_RADIUS_BY_SIZE[size],
@@ -527,17 +630,18 @@ export class AsteroidsGame {
       prevY: y,
       prevAngle: startAngle,
       size,
-      spin: randomRange(-0.7, 0.7),
+      spin,
       vertices,
     };
   }
 
   private createAsteroidVertices(): number[] {
-    const vertexCount = randomInt(9, 14);
+    // Vertices are visual-only; use visual RNG
+    const vertexCount = visualRandomInt(9, 14);
     const vertices: number[] = [];
 
     for (let i = 0; i < vertexCount; i += 1) {
-      vertices.push(randomRange(0.72, 1.2));
+      vertices.push(visualRandomRange(0.72, 1.2));
     }
 
     return vertices;
@@ -546,58 +650,19 @@ export class AsteroidsGame {
   private updateShip(dt: number): void {
     const ship = this.ship;
 
-    ship.fireCooldown = Math.max(0, ship.fireCooldown - dt);
-    ship.hyperspaceCooldown = Math.max(0, ship.hyperspaceCooldown - dt);
+    if (ship.fireCooldown > 0) ship.fireCooldown--;
 
     if (!ship.canControl) {
-      ship.respawnTimer -= dt;
+      if (ship.respawnTimer > 0) ship.respawnTimer--;
 
       if (ship.respawnTimer <= 0) {
-        const clearRadius = 120;
-        const spawnX = WORLD_WIDTH * 0.5;
-        const spawnY = WORLD_HEIGHT * 0.5;
-
-        // Check asteroids
-        const blockedByAsteroid = this.asteroids.some(
-          (asteroid) =>
-            collisionDistanceSquared(asteroid.x, asteroid.y, spawnX, spawnY) <
-            (asteroid.radius + clearRadius) * (asteroid.radius + clearRadius),
-        );
-
-        // Check saucers
-        const blockedBySaucer = this.saucers.some(
-          (saucer) =>
-            saucer.alive &&
-            collisionDistanceSquared(saucer.x, saucer.y, spawnX, spawnY) <
-            (saucer.radius + clearRadius) * (saucer.radius + clearRadius),
-        );
-
-        // Check saucer bullets
-        const blockedByBullet = this.saucerBullets.some(
-          (bullet) =>
-            bullet.alive &&
-            collisionDistanceSquared(bullet.x, bullet.y, spawnX, spawnY) <
-            (bullet.radius + clearRadius) * (bullet.radius + clearRadius),
-        );
-
-        if (!blockedByAsteroid && !blockedBySaucer && !blockedByBullet) {
-          ship.x = spawnX;
-          ship.y = spawnY;
-          ship.prevX = spawnX;
-          ship.prevY = spawnY;
-          ship.vx = 0;
-          ship.vy = 0;
-          ship.angle = -Math.PI * 0.5;
-          ship.prevAngle = ship.angle;
-          ship.canControl = true;
-          ship.invulnerableTimer = SHIP_SPAWN_INVULNERABLE;
-        }
+        this.trySpawnShipAtCenter();
       }
 
       return;
     }
 
-    ship.invulnerableTimer = Math.max(0, ship.invulnerableTimer - dt);
+    if (ship.invulnerableTimer > 0) ship.invulnerableTimer--;
 
     // Get autopilot input if enabled
     const aiInput = this.autopilot.isEnabled()
@@ -609,184 +674,182 @@ export class AsteroidsGame {
     const turnRight = aiInput ? aiInput.right : this.input.isDown("ArrowRight");
     const thrust = aiInput ? aiInput.thrust : this.input.isDown("ArrowUp");
     const fire = aiInput ? aiInput.fire : this.input.isDown("Space");
-    const hyperspace = aiInput ? aiInput.hyperspace : this.input.consumePress("ShiftLeft");
 
     if (turnLeft) {
-      ship.angle -= SHIP_TURN_SPEED * dt;
+      ship.angle = (ship.angle - SHIP_TURN_SPEED_BAM) & 0xff;
     }
 
     if (turnRight) {
-      ship.angle += SHIP_TURN_SPEED * dt;
+      ship.angle = (ship.angle + SHIP_TURN_SPEED_BAM) & 0xff;
     }
 
     if (thrust) {
-      const direction = angleToVector(ship.angle);
-      ship.vx += direction.x * SHIP_THRUST * dt;
-      ship.vy += direction.y * SHIP_THRUST * dt;
+      const accelVx = (cosBAM(ship.angle) * SHIP_THRUST_Q8_8) >> 14;
+      const accelVy = (sinBAM(ship.angle) * SHIP_THRUST_Q8_8) >> 14;
+      ship.vx += accelVx;
+      ship.vy += accelVy;
 
-      // Thrust particles and sound
-      const now = Date.now();
-      if (now - this.lastThrustTime > 80) {
+      // Thrust particles and sound (every 5 frames)
+      this.thrustParticleTimer++;
+      if (this.thrustParticleTimer >= 5) {
         this.spawnThrustParticles(ship);
         this.audio.playThrust();
-        this.lastThrustTime = now;
+        this.thrustParticleTimer = 0;
       }
     }
 
-    const dragFactor = Math.pow(SHIP_DRAG, dt * 60);
-    ship.vx *= dragFactor;
-    ship.vy *= dragFactor;
+    ship.vx = applyDrag(ship.vx);
+    ship.vy = applyDrag(ship.vy);
 
-    const speed = Math.hypot(ship.vx, ship.vy);
-
-    if (speed > SHIP_MAX_SPEED) {
-      const scale = SHIP_MAX_SPEED / speed;
-      ship.vx *= scale;
-      ship.vy *= scale;
-    }
+    ({ vx: ship.vx, vy: ship.vy } = clampSpeedQ8_8(ship.vx, ship.vy, SHIP_MAX_SPEED_SQ_Q16_16));
 
     if (fire && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
       this.spawnShipBullet();
-      ship.fireCooldown = SHIP_BULLET_COOLDOWN;
+      ship.fireCooldown = SHIP_BULLET_COOLDOWN_FRAMES;
     }
 
-    // Only allow manual hyperspace (AI doesn't use it - too risky)
-    if (!aiInput && hyperspace && ship.hyperspaceCooldown <= 0) {
-      this.useHyperspace();
-    }
-
-    ship.x = wrapX(ship.x + ship.vx * dt);
-    ship.y = wrapY(ship.y + ship.vy * dt);
+    // Q8.8 velocity >> 4 -> Q12.4 displacement
+    ship.x = wrapXQ12_4(ship.x + (ship.vx >> 4));
+    ship.y = wrapYQ12_4(ship.y + (ship.vy >> 4));
   }
 
-  /** Create a snapshot of game state for the autopilot AI */
+  /** Create a snapshot of game state for the autopilot AI (converts to float px/s) */
   private getGameStateSnapshot(): GameStateSnapshot {
+    const toFloat = <
+      T extends {
+        x: number;
+        y: number;
+        vx: number;
+        vy: number;
+        angle: number;
+        prevX: number;
+        prevY: number;
+        prevAngle: number;
+      },
+    >(
+      e: T,
+    ): T => ({
+      ...e,
+      x: fromQ12_4(e.x),
+      y: fromQ12_4(e.y),
+      vx: fromQ8_8(e.vx) * 60, // back to px/s for Autopilot
+      vy: fromQ8_8(e.vy) * 60,
+      angle: BAMToRadians(e.angle),
+      prevX: fromQ12_4(e.prevX),
+      prevY: fromQ12_4(e.prevY),
+      prevAngle: BAMToRadians(e.prevAngle),
+    });
     return {
-      ship: this.ship,
-      asteroids: this.asteroids.filter((a) => a.alive),
-      saucers: this.saucers.filter((s) => s.alive),
-      bullets: this.bullets.filter((b) => b.alive),
-      saucerBullets: this.saucerBullets.filter((b) => b.alive),
+      ship: toFloat(this.ship) as Ship,
+      asteroids: this.asteroids.filter((a) => a.alive).map((a) => toFloat(a) as Asteroid),
+      saucers: this.saucers.filter((s) => s.alive).map((s) => toFloat(s) as Saucer),
+      bullets: this.bullets.filter((b) => b.alive).map((b) => toFloat(b) as Bullet),
+      saucerBullets: this.saucerBullets.filter((b) => b.alive).map((b) => toFloat(b) as Bullet),
     };
   }
 
   private spawnShipBullet(): void {
     const ship = this.ship;
-    const direction = angleToVector(ship.angle);
-    const bulletSpeed = SHIP_BULLET_SPEED + Math.hypot(ship.vx, ship.vy) * 0.35;
+    const { dx, dy } = displaceQ12_4(ship.angle, ship.radius + 6);
+    const startX = wrapXQ12_4(ship.x + dx);
+    const startY = wrapYQ12_4(ship.y + dy);
 
-    const startX = ship.x + direction.x * (ship.radius + 6);
-    const startY = ship.y + direction.y * (ship.radius + 6);
+    // Bullet speed = base + ship speed boost
+    // Approximate ship speed magnitude: (|vx| + |vy|) * 3/4
+    const shipSpeedApprox = ((Math.abs(ship.vx) + Math.abs(ship.vy)) * 3) >> 2;
+    // 89/256 ~ 0.35
+    const bulletSpeedQ8_8 = SHIP_BULLET_SPEED_Q8_8 + ((shipSpeedApprox * 89) >> 8);
+    const { vx: bvx, vy: bvy } = velocityQ8_8(ship.angle, bulletSpeedQ8_8);
 
     const bullet: Bullet = {
       id: this.nextId++,
       x: startX,
       y: startY,
-      vx: ship.vx + direction.x * bulletSpeed,
-      vy: ship.vy + direction.y * bulletSpeed,
+      vx: ship.vx + bvx,
+      vy: ship.vy + bvy,
       angle: ship.angle,
       alive: true,
       radius: 2,
       prevX: startX,
       prevY: startY,
       prevAngle: ship.angle,
-      life: SHIP_BULLET_LIFETIME,
+      life: SHIP_BULLET_LIFETIME_FRAMES,
       fromSaucer: false,
     };
 
     this.bullets.push(bullet);
     this.audio.playShoot();
-    this.spawnMuzzleFlash(ship.x + direction.x * (ship.radius + 8), ship.y + direction.y * (ship.radius + 8));
+
+    // Muzzle flash at slightly further offset
+    const { dx: mfDx, dy: mfDy } = displaceQ12_4(ship.angle, ship.radius + 8);
+    this.spawnMuzzleFlash(fromQ12_4(ship.x + mfDx), fromQ12_4(ship.y + mfDy));
   }
 
-  private useHyperspace(): void {
-    const ship = this.ship;
-    ship.hyperspaceCooldown = HYPERSPACE_COOLDOWN;
-
-    this.spawnHyperspaceEffect(ship.x, ship.y);
-    this.audio.playHyperspace();
-
-    const crowdedness = clamp(this.asteroids.length / 18, 0, 1);
-    const failChance = 0.12 + crowdedness * 0.2;
-
-    if (getGameRng().nextBool(failChance)) {
-      this.destroyShip();
-      return;
-    }
-
-    ship.x = randomRange(40, WORLD_WIDTH - 40);
-    ship.y = randomRange(40, WORLD_HEIGHT - 40);
-    ship.prevX = ship.x;
-    ship.prevY = ship.y;
-    ship.vx = 0;
-    ship.vy = 0;
-    ship.invulnerableTimer = Math.max(ship.invulnerableTimer, 0.8);
-
-    this.spawnHyperspaceEffect(ship.x, ship.y);
-  }
-
-  private updateAsteroids(dt: number): void {
+  private updateAsteroids(): void {
     for (const asteroid of this.asteroids) {
       if (!asteroid.alive) {
         continue;
       }
 
-      asteroid.x = wrapX(asteroid.x + asteroid.vx * dt);
-      asteroid.y = wrapY(asteroid.y + asteroid.vy * dt);
-      asteroid.angle += asteroid.spin * dt;
+      asteroid.x = wrapXQ12_4(asteroid.x + (asteroid.vx >> 4));
+      asteroid.y = wrapYQ12_4(asteroid.y + (asteroid.vy >> 4));
+      asteroid.angle = (asteroid.angle + asteroid.spin) & 0xff;
     }
   }
 
-  private updateBullets(dt: number): void {
+  private updateBullets(): void {
     for (const bullet of this.bullets) {
       if (!bullet.alive) {
         continue;
       }
 
-      bullet.life -= dt;
+      bullet.life--;
 
       if (bullet.life <= 0) {
         bullet.alive = false;
         continue;
       }
 
-      bullet.x = wrapX(bullet.x + bullet.vx * dt);
-      bullet.y = wrapY(bullet.y + bullet.vy * dt);
+      bullet.x = wrapXQ12_4(bullet.x + (bullet.vx >> 4));
+      bullet.y = wrapYQ12_4(bullet.y + (bullet.vy >> 4));
     }
   }
 
-  private updateSaucerBullets(dt: number): void {
+  private updateSaucerBullets(): void {
     for (const bullet of this.saucerBullets) {
       if (!bullet.alive) {
         continue;
       }
 
-      bullet.life -= dt;
+      bullet.life--;
 
       if (bullet.life <= 0) {
         bullet.alive = false;
         continue;
       }
 
-      bullet.x = wrapX(bullet.x + bullet.vx * dt);
-      bullet.y = wrapY(bullet.y + bullet.vy * dt);
+      bullet.x = wrapXQ12_4(bullet.x + (bullet.vx >> 4));
+      bullet.y = wrapYQ12_4(bullet.y + (bullet.vy >> 4));
     }
   }
 
-  private updateSaucers(dt: number): void {
-    this.saucerSpawnTimer -= dt;
+  private updateSaucers(): void {
+    if (this.saucerSpawnTimer > 0) this.saucerSpawnTimer--;
 
     // Anti-lurking: spawn saucers faster if player isn't killing asteroids
-    const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
-    const spawnThreshold = isLurking ? LURK_SAUCER_SPAWN_FAST : 0;
+    const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
+    const spawnThreshold = isLurking ? LURK_SAUCER_SPAWN_FAST_FRAMES : 0;
 
     const maxSaucers = this.wave < 4 ? 1 : this.wave < 7 ? 2 : 3;
     if (this.saucers.length < maxSaucers && this.saucerSpawnTimer <= spawnThreshold) {
       this.spawnSaucer();
-      const waveSpawnMult = Math.max(0.4, 1 - (this.wave - 1) * 0.08);
+      // waveSpawnMult as integer percentage: max(40, 100 - (wave-1)*8)
+      const waveMultPct = Math.max(40, 100 - (this.wave - 1) * 8);
+      const spawnMin = ((SAUCER_SPAWN_MIN_FRAMES * waveMultPct) / 100) | 0;
+      const spawnMax = ((SAUCER_SPAWN_MAX_FRAMES * waveMultPct) / 100) | 0;
       this.saucerSpawnTimer = isLurking
-        ? randomRange(LURK_SAUCER_SPAWN_FAST, LURK_SAUCER_SPAWN_FAST + 2)
-        : randomRange(SAUCER_SPAWN_MIN * waveSpawnMult, SAUCER_SPAWN_MAX * waveSpawnMult);
+        ? randomInt(LURK_SAUCER_SPAWN_FAST_FRAMES, LURK_SAUCER_SPAWN_FAST_FRAMES + 120)
+        : randomInt(spawnMin, spawnMax);
     }
 
     for (const saucer of this.saucers) {
@@ -794,50 +857,56 @@ export class AsteroidsGame {
         continue;
       }
 
-      saucer.x += saucer.vx * dt;
-      saucer.y = wrapY(saucer.y + saucer.vy * dt);
+      // Saucer doesn't wrap X (exits screen)
+      saucer.x = saucer.x + (saucer.vx >> 4);
+      saucer.y = wrapYQ12_4(saucer.y + (saucer.vy >> 4));
 
-      if (saucer.x < -80 || saucer.x > WORLD_WIDTH + 80) {
+      // Off-screen check in Q12.4
+      if (saucer.x < toQ12_4(-80) || saucer.x > toQ12_4(WORLD_WIDTH + 80)) {
         saucer.alive = false;
         continue;
       }
 
-      saucer.driftTimer -= dt;
+      if (saucer.driftTimer > 0) saucer.driftTimer--;
       if (saucer.driftTimer <= 0) {
-        saucer.driftTimer = randomRange(0.8, 2);
-        saucer.vy = randomRange(-38, 38);
+        saucer.driftTimer = randomInt(48, 120);
+        // drift vy: +-38 px/s -> +-38/60*256 ~ +-163 Q8.8
+        saucer.vy = randomInt(-163, 164);
       }
 
-      saucer.fireCooldown -= dt;
+      if (saucer.fireCooldown > 0) saucer.fireCooldown--;
 
       if (saucer.fireCooldown <= 0) {
         this.spawnSaucerBullet(saucer);
-        // Fire faster when lurking
-        const fireSpeedMult = isLurking ? 0.7 : 1;
         saucer.fireCooldown = saucer.small
-          ? randomRange(0.65, 1.1) * fireSpeedMult
-          : randomRange(1.1, 1.6) * fireSpeedMult;
+          ? isLurking
+            ? randomInt(27, 46)
+            : randomInt(39, 66)
+          : isLurking
+            ? randomInt(46, 67)
+            : randomInt(66, 96);
       }
     }
   }
 
   private spawnSaucer(): void {
-    const enterFromLeft = getGameRng().nextBool();
+    const enterFromLeft = getGameRng().next() % 2 === 0;
     // Anti-lurking: more likely to spawn small (deadly) saucer when lurking
-    const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
-    const smallChance = isLurking ? 0.9 : this.score > 4000 ? 0.7 : 0.22;
-    const small = getGameRng().nextBool(smallChance);
-    const speed = small ? 95 : 70;
+    const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
+    const smallPct = isLurking ? 90 : this.score > 4000 ? 70 : 22;
+    const small = getGameRng().next() % 100 < smallPct;
+    const speedQ8_8 = small ? SAUCER_SPEED_SMALL_Q8_8 : SAUCER_SPEED_LARGE_Q8_8;
 
-    const startX = enterFromLeft ? -30 : WORLD_WIDTH + 30;
-    const startY = randomRange(72, WORLD_HEIGHT - 72);
+    const startX = toQ12_4(enterFromLeft ? -30 : WORLD_WIDTH + 30);
+    const startY = randomInt(toQ12_4(72), toQ12_4(WORLD_HEIGHT - 72));
 
     const saucer: Saucer = {
       id: this.nextId++,
       x: startX,
       y: startY,
-      vx: enterFromLeft ? speed : -speed,
-      vy: randomRange(-22, 22),
+      vx: enterFromLeft ? speedQ8_8 : -speedQ8_8,
+      // +-22 px/s -> +-22/60*256 ~ +-94 Q8.8
+      vy: randomInt(-94, 95),
       angle: 0,
       alive: true,
       radius: small ? SAUCER_RADIUS_SMALL : SAUCER_RADIUS_LARGE,
@@ -845,8 +914,8 @@ export class AsteroidsGame {
       prevY: startY,
       prevAngle: 0,
       small,
-      fireCooldown: randomRange(0.3, 0.8),
-      driftTimer: randomRange(0.8, 2),
+      fireCooldown: randomInt(18, 48),
+      driftTimer: randomInt(48, 120),
     };
 
     this.saucers.push(saucer);
@@ -857,38 +926,40 @@ export class AsteroidsGame {
     let shotAngle: number;
 
     if (saucer.small) {
-      const dx = shortestDelta(saucer.x, this.ship.x, WORLD_WIDTH);
-      const dy = shortestDelta(saucer.y, this.ship.y, WORLD_HEIGHT);
-      const targetAngle = Math.atan2(dy, dx);
-      // More accurate when lurking (anti-lurk mechanic)
-      const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
-      const baseError = isLurking ? 15 : 30;
-      const waveAccuracyBonus = Math.min(15, this.wave * 2);
-      const errorDegrees = clamp(baseError - this.score / 2500 - waveAccuracyBonus, 4, baseError);
-      const errorRadians = (errorDegrees * Math.PI) / 180;
-      shotAngle = targetAngle + randomRange(-errorRadians, errorRadians);
+      // Aimed shot using atan2BAM
+      const dx = shortestDeltaQ12_4(saucer.x, this.ship.x, WORLD_WIDTH_Q12_4);
+      const dy = shortestDeltaQ12_4(saucer.y, this.ship.y, WORLD_HEIGHT_Q12_4);
+      const targetAngle = atan2BAM(dy, dx);
+      // Error in BAM: 30deg ~ 21 BAM, 15deg ~ 11 BAM, 4deg ~ 3 BAM
+      const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
+      const baseErrorBAM = isLurking ? 11 : 21;
+      const scoreBonus = (this.score / 2500) | 0; // integer division
+      const waveBonus = Math.min(11, this.wave * 1); // ~ wave*2 deg -> wave*1.4 BAM ~ wave*1
+      const errorBAM = clamp(baseErrorBAM - scoreBonus - waveBonus, 3, baseErrorBAM);
+      shotAngle = (targetAngle + randomInt(-errorBAM, errorBAM + 1)) & 0xff;
     } else {
-      shotAngle = randomRange(0, Math.PI * 2);
+      // Random shot
+      shotAngle = randomInt(0, 256);
     }
 
-    const direction = angleToVector(shotAngle);
-
-    const startX = wrapX(saucer.x + direction.x * (saucer.radius + 4));
-    const startY = wrapY(saucer.y + direction.y * (saucer.radius + 4));
+    const { vx, vy } = velocityQ8_8(shotAngle, SAUCER_BULLET_SPEED_Q8_8);
+    const { dx: offDx, dy: offDy } = displaceQ12_4(shotAngle, saucer.radius + 4);
+    const startX = wrapXQ12_4(saucer.x + offDx);
+    const startY = wrapYQ12_4(saucer.y + offDy);
 
     const bullet: Bullet = {
       id: this.nextId++,
       x: startX,
       y: startY,
-      vx: direction.x * SAUCER_BULLET_SPEED,
-      vy: direction.y * SAUCER_BULLET_SPEED,
+      vx,
+      vy,
       angle: shotAngle,
       alive: true,
-      radius: 2.3,
+      radius: 2,
       prevX: startX,
       prevY: startY,
       prevAngle: shotAngle,
-      life: SAUCER_BULLET_LIFETIME,
+      life: SAUCER_BULLET_LIFETIME_FRAMES,
       fromSaucer: true,
     };
 
@@ -896,21 +967,17 @@ export class AsteroidsGame {
   }
 
   private handleCollisions(): void {
+    // Bullet-asteroid collisions
     for (const bullet of this.bullets) {
-      if (!bullet.alive) {
-        continue;
-      }
+      if (!bullet.alive) continue;
 
       for (const asteroid of this.asteroids) {
-        if (!asteroid.alive) {
-          continue;
-        }
+        if (!asteroid.alive) continue;
 
-        const hitDistance = bullet.radius + asteroid.radius;
-
+        const hitDistQ12_4 = (bullet.radius + asteroid.radius) << 4;
         if (
-          collisionDistanceSquared(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
-          hitDistance * hitDistance
+          collisionDistSqQ12_4(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
+          hitDistQ12_4 * hitDistQ12_4
         ) {
           bullet.alive = false;
           this.destroyAsteroid(asteroid, true);
@@ -919,21 +986,17 @@ export class AsteroidsGame {
       }
     }
 
+    // Saucer bullet-asteroid collisions
     for (const bullet of this.saucerBullets) {
-      if (!bullet.alive) {
-        continue;
-      }
+      if (!bullet.alive) continue;
 
       for (const asteroid of this.asteroids) {
-        if (!asteroid.alive) {
-          continue;
-        }
+        if (!asteroid.alive) continue;
 
-        const hitDistance = bullet.radius + asteroid.radius;
-
+        const hitDistQ12_4 = (bullet.radius + asteroid.radius) << 4;
         if (
-          collisionDistanceSquared(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
-          hitDistance * hitDistance
+          collisionDistSqQ12_4(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
+          hitDistQ12_4 * hitDistQ12_4
         ) {
           bullet.alive = false;
           this.destroyAsteroid(asteroid, false);
@@ -942,26 +1005,26 @@ export class AsteroidsGame {
       }
     }
 
+    // Player bullet-saucer collisions
     for (const bullet of this.bullets) {
-      if (!bullet.alive) {
-        continue;
-      }
+      if (!bullet.alive) continue;
 
       for (const saucer of this.saucers) {
-        if (!saucer.alive) {
-          continue;
-        }
+        if (!saucer.alive) continue;
 
-        const hitDistance = bullet.radius + saucer.radius;
-
+        const hitDistQ12_4 = (bullet.radius + saucer.radius) << 4;
         if (
-          collisionDistanceSquared(bullet.x, bullet.y, saucer.x, saucer.y) <=
-          hitDistance * hitDistance
+          collisionDistSqQ12_4(bullet.x, bullet.y, saucer.x, saucer.y) <=
+          hitDistQ12_4 * hitDistQ12_4
         ) {
           bullet.alive = false;
           saucer.alive = false;
           this.addScore(saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER);
-          this.spawnExplosion(saucer.x, saucer.y, saucer.small ? "medium" : "large");
+          this.spawnExplosion(
+            fromQ12_4(saucer.x),
+            fromQ12_4(saucer.y),
+            saucer.small ? "medium" : "large",
+          );
           this.addScreenShake(saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE);
           this.audio.playExplosion(saucer.small ? "medium" : "large");
           break;
@@ -975,50 +1038,39 @@ export class AsteroidsGame {
 
     const ship = this.ship;
 
+    // Ship-asteroid collisions (fudge factor: radius * 0.88 -> (radius * 225) >> 8)
     for (const asteroid of this.asteroids) {
-      if (!asteroid.alive) {
-        continue;
-      }
+      if (!asteroid.alive) continue;
 
-      const collisionDistance = ship.radius + asteroid.radius * 0.88;
-
+      const adjustedRadius = (asteroid.radius * 225) >> 8;
+      const hitDistQ12_4 = (ship.radius + adjustedRadius) << 4;
       if (
-        collisionDistanceSquared(ship.x, ship.y, asteroid.x, asteroid.y) <=
-        collisionDistance * collisionDistance
+        collisionDistSqQ12_4(ship.x, ship.y, asteroid.x, asteroid.y) <=
+        hitDistQ12_4 * hitDistQ12_4
       ) {
         this.destroyShip();
         return;
       }
     }
 
+    // Ship-saucer bullet collisions
     for (const bullet of this.saucerBullets) {
-      if (!bullet.alive) {
-        continue;
-      }
+      if (!bullet.alive) continue;
 
-      const collisionDistance = ship.radius + bullet.radius;
-
-      if (
-        collisionDistanceSquared(ship.x, ship.y, bullet.x, bullet.y) <=
-        collisionDistance * collisionDistance
-      ) {
+      const hitDistQ12_4 = (ship.radius + bullet.radius) << 4;
+      if (collisionDistSqQ12_4(ship.x, ship.y, bullet.x, bullet.y) <= hitDistQ12_4 * hitDistQ12_4) {
         bullet.alive = false;
         this.destroyShip();
         return;
       }
     }
 
+    // Ship-saucer collisions
     for (const saucer of this.saucers) {
-      if (!saucer.alive) {
-        continue;
-      }
+      if (!saucer.alive) continue;
 
-      const collisionDistance = ship.radius + saucer.radius;
-
-      if (
-        collisionDistanceSquared(ship.x, ship.y, saucer.x, saucer.y) <=
-        collisionDistance * collisionDistance
-      ) {
+      const hitDistQ12_4 = (ship.radius + saucer.radius) << 4;
+      if (collisionDistSqQ12_4(ship.x, ship.y, saucer.x, saucer.y) <= hitDistQ12_4 * hitDistQ12_4) {
         saucer.alive = false;
         this.destroyShip();
         return;
@@ -1030,7 +1082,6 @@ export class AsteroidsGame {
     asteroid.alive = false;
 
     if (awardScore) {
-      // Reset anti-lurking timer when player destroys asteroid
       this.timeSinceLastKill = 0;
 
       if (asteroid.size === "large") {
@@ -1042,12 +1093,17 @@ export class AsteroidsGame {
       }
     }
 
-    // Spawn explosion and debris
-    this.spawnExplosion(asteroid.x, asteroid.y, asteroid.size);
-    this.spawnDebris(asteroid.x, asteroid.y, asteroid.size);
+    // Spawn explosion and debris (convert to pixel coords for visual effects)
+    const px = fromQ12_4(asteroid.x);
+    const py = fromQ12_4(asteroid.y);
+    this.spawnExplosion(px, py, asteroid.size);
+    this.spawnDebris(px, py, asteroid.size);
     this.addScreenShake(
-      asteroid.size === "large" ? SHAKE_INTENSITY_MEDIUM :
-      asteroid.size === "medium" ? SHAKE_INTENSITY_SMALL : SHAKE_INTENSITY_SMALL * 0.5
+      asteroid.size === "large"
+        ? SHAKE_INTENSITY_MEDIUM
+        : asteroid.size === "medium"
+          ? SHAKE_INTENSITY_SMALL
+          : SHAKE_INTENSITY_SMALL * 0.5,
     );
     this.audio.playExplosion(asteroid.size);
 
@@ -1061,30 +1117,29 @@ export class AsteroidsGame {
 
     for (let i = 0; i < splitCount; i += 1) {
       const child = this.createAsteroid(childSize, asteroid.x, asteroid.y);
-      child.vx += asteroid.vx * 0.18;
-      child.vy += asteroid.vy * 0.18;
+      // Velocity inheritance: (vx * 46) >> 8 ~ 0.18
+      child.vx += (asteroid.vx * 46) >> 8;
+      child.vy += (asteroid.vy * 46) >> 8;
       this.asteroids.push(child);
     }
   }
 
   private destroyShip(): void {
-    this.ship.canControl = false;
-    this.ship.respawnTimer = SHIP_RESPAWN_DELAY;
-    this.ship.vx = 0;
-    this.ship.vy = 0;
-    this.ship.invulnerableTimer = 0;
+    this.queueShipRespawn(SHIP_RESPAWN_FRAMES);
     this.lives -= 1;
 
-    // Big explosion effect
-    this.spawnExplosion(this.ship.x, this.ship.y, "large");
-    this.spawnDebris(this.ship.x, this.ship.y, "large");
+    // Big explosion effect (convert to pixel coords for visual effects)
+    const px = fromQ12_4(this.ship.x);
+    const py = fromQ12_4(this.ship.y);
+    this.spawnExplosion(px, py, "large");
+    this.spawnDebris(px, py, "large");
     this.addScreenShake(SHAKE_INTENSITY_LARGE);
     this.audio.playExplosion("large");
 
     if (this.lives <= 0) {
       this.mode = "game-over";
       this.ship.canControl = false;
-      this.ship.respawnTimer = 999;
+      this.ship.respawnTimer = 99999;
       this.saveHighScore();
     }
   }
@@ -1099,10 +1154,10 @@ export class AsteroidsGame {
       // Extra life celebration effect
       for (let i = 0; i < 20; i++) {
         this.spawnParticle(
-          WORLD_WIDTH * 0.5 + randomRange(-100, 100),
-          WORLD_HEIGHT * 0.5 + randomRange(-50, 50),
+          WORLD_WIDTH * 0.5 + visualRandomRange(-100, 100),
+          WORLD_HEIGHT * 0.5 + visualRandomRange(-50, 50),
           "spark",
-          "#ffd700"
+          "#ffd700",
         );
       }
     }
@@ -1122,26 +1177,32 @@ export class AsteroidsGame {
   }
 
   // Particle system
-  private spawnParticle(x: number, y: number, type: Particle["type"], color: string, count = 1): void {
+  private spawnParticle(
+    x: number,
+    y: number,
+    type: Particle["type"],
+    color: string,
+    count = 1,
+  ): void {
     for (let i = 0; i < count; i++) {
       if (this.particles.length >= MAX_PARTICLES) break;
 
-      const angle = randomRange(0, Math.PI * 2);
-      const speed = randomRange(20, 120);
-      const life = randomRange(0.3, 0.8);
+      const angle = visualRandomRange(0, Math.PI * 2);
+      const speed = visualRandomRange(20, 120);
+      const life = visualRandomRange(0.3, 0.8);
 
       this.particles.push({
         id: this.nextId++,
-        x: x + randomRange(-5, 5),
-        y: y + randomRange(-5, 5),
+        x: x + visualRandomRange(-5, 5),
+        y: y + visualRandomRange(-5, 5),
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         life,
         maxLife: life,
-        size: randomRange(1, 3),
+        size: visualRandomRange(1, 3),
         color,
         alpha: 1,
-        decay: randomRange(0.8, 1.2),
+        decay: visualRandomRange(0.8, 1.2),
         type,
       });
     }
@@ -1152,7 +1213,7 @@ export class AsteroidsGame {
     const colors = ["#ff6b35", "#f7931e", "#ffd700", "#ffffff"];
 
     for (let i = 0; i < particleCount; i++) {
-      this.spawnParticle(x, y, "spark", colors[randomInt(0, colors.length)]);
+      this.spawnParticle(x, y, "spark", colors[visualRandomInt(0, colors.length)]);
     }
 
     // Add smoke particles
@@ -1164,18 +1225,13 @@ export class AsteroidsGame {
   }
 
   private spawnThrustParticles(ship: Ship): void {
-    const direction = angleToVector(ship.angle + Math.PI);
-    const x = ship.x + direction.x * ship.radius;
-    const y = ship.y + direction.y * ship.radius;
+    // Opposite direction (angle + 128 BAM = +180deg)
+    const { dx, dy } = displaceQ12_4((ship.angle + 128) & 0xff, ship.radius);
+    const x = fromQ12_4(ship.x + dx);
+    const y = fromQ12_4(ship.y + dy);
 
     this.spawnParticle(x, y, "spark", "#ffaa44", 2);
     this.spawnParticle(x, y, "smoke", "#666666", 1);
-  }
-
-  private spawnHyperspaceEffect(x: number, y: number): void {
-    for (let i = 0; i < 30; i++) {
-      this.spawnParticle(x, y, "glow", "#44aaff", 1);
-    }
   }
 
   private spawnDebris(x: number, y: number, size: AsteroidSize | "large"): void {
@@ -1184,27 +1240,27 @@ export class AsteroidsGame {
     for (let i = 0; i < debrisCount; i++) {
       if (this.debris.length >= MAX_DEBRIS) break;
 
-      const angle = randomRange(0, Math.PI * 2);
-      const speed = randomRange(30, 90);
-      const life = randomRange(0.5, 1.2);
+      const angle = visualRandomRange(0, Math.PI * 2);
+      const speed = visualRandomRange(30, 90);
+      const life = visualRandomRange(0.5, 1.2);
       const vertices: number[] = [];
-      const vertexCount = randomInt(4, 7);
+      const vertexCount = visualRandomInt(4, 7);
 
       for (let j = 0; j < vertexCount; j++) {
-        vertices.push(randomRange(0.5, 1));
+        vertices.push(visualRandomRange(0.5, 1));
       }
 
       this.debris.push({
         id: this.nextId++,
-        x: x + randomRange(-10, 10),
-        y: y + randomRange(-10, 10),
+        x: x + visualRandomRange(-10, 10),
+        y: y + visualRandomRange(-10, 10),
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        angle: randomRange(0, Math.PI * 2),
-        spin: randomRange(-2, 2),
+        angle: visualRandomRange(0, Math.PI * 2),
+        spin: visualRandomRange(-2, 2),
         life,
         maxLife: life,
-        size: randomRange(3, 8),
+        size: visualRandomRange(3, 8),
         vertices,
       });
     }
@@ -1253,14 +1309,14 @@ export class AsteroidsGame {
     this.stars.length = 0;
 
     for (let i = 0; i < count; i += 1) {
-      const baseAlpha = randomRange(0.2, 0.95);
+      const baseAlpha = visualRandomRange(0.2, 0.95);
       this.stars.push({
-        x: randomRange(0, WORLD_WIDTH),
-        y: randomRange(0, WORLD_HEIGHT),
+        x: visualRandomRange(0, WORLD_WIDTH),
+        y: visualRandomRange(0, WORLD_HEIGHT),
         alpha: baseAlpha,
         baseAlpha,
-        twinkleSpeed: randomRange(0.8, 2.5),
-        twinklePhase: randomRange(0, Math.PI * 2),
+        twinkleSpeed: visualRandomRange(0.8, 2.5),
+        twinklePhase: visualRandomRange(0, Math.PI * 2),
       });
     }
   }
@@ -1274,8 +1330,12 @@ export class AsteroidsGame {
 
     // Deep space background
     const gradient = ctx.createRadialGradient(
-      this.cssWidth / 2, this.cssHeight / 2, 0,
-      this.cssWidth / 2, this.cssHeight / 2, Math.max(this.cssWidth, this.cssHeight)
+      this.cssWidth / 2,
+      this.cssHeight / 2,
+      0,
+      this.cssWidth / 2,
+      this.cssHeight / 2,
+      Math.max(this.cssWidth, this.cssHeight),
     );
     gradient.addColorStop(0, "#0a0f1a");
     gradient.addColorStop(1, "#020408");
@@ -1336,14 +1396,14 @@ export class AsteroidsGame {
       return;
     }
 
-    if (ship.invulnerableTimer > 0 && Math.floor(ship.invulnerableTimer * 18) % 2 === 0) {
+    if (ship.invulnerableTimer > 0 && Math.floor(ship.invulnerableTimer / 3) % 2 === 0) {
       return;
     }
 
-    // Interpolate position for smooth rendering
-    const renderX = lerpWrap(ship.prevX, ship.x, alpha, WORLD_WIDTH);
-    const renderY = lerpWrap(ship.prevY, ship.y, alpha, WORLD_HEIGHT);
-    const renderAngle = lerpAngle(ship.prevAngle, ship.angle, alpha);
+    // Convert from fixed-point, then interpolate
+    const renderX = lerpWrap(fromQ12_4(ship.prevX), fromQ12_4(ship.x), alpha, WORLD_WIDTH);
+    const renderY = lerpWrap(fromQ12_4(ship.prevY), fromQ12_4(ship.y), alpha, WORLD_HEIGHT);
+    const renderAngle = lerpAngle(BAMToRadians(ship.prevAngle), BAMToRadians(ship.angle), alpha);
 
     ctx.save();
     ctx.translate(renderX, renderY);
@@ -1391,10 +1451,24 @@ export class AsteroidsGame {
       const vertices = asteroid.vertices;
       const vertexCount = vertices.length;
 
-      // Interpolate position for smooth rendering
-      const renderX = lerpWrap(asteroid.prevX, asteroid.x, alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(asteroid.prevY, asteroid.y, alpha, WORLD_HEIGHT);
-      const renderAngle = lerpAngle(asteroid.prevAngle, asteroid.angle, alpha);
+      // Convert from fixed-point, then interpolate
+      const renderX = lerpWrap(
+        fromQ12_4(asteroid.prevX),
+        fromQ12_4(asteroid.x),
+        alpha,
+        WORLD_WIDTH,
+      );
+      const renderY = lerpWrap(
+        fromQ12_4(asteroid.prevY),
+        fromQ12_4(asteroid.y),
+        alpha,
+        WORLD_HEIGHT,
+      );
+      const renderAngle = lerpAngle(
+        BAMToRadians(asteroid.prevAngle),
+        BAMToRadians(asteroid.angle),
+        alpha,
+      );
 
       ctx.save();
       ctx.translate(renderX, renderY);
@@ -1432,9 +1506,9 @@ export class AsteroidsGame {
         continue;
       }
 
-      // Interpolate position for smooth rendering
-      const renderX = lerpWrap(bullet.prevX, bullet.x, alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(bullet.prevY, bullet.y, alpha, WORLD_HEIGHT);
+      // Convert from fixed-point, then interpolate
+      const renderX = lerpWrap(fromQ12_4(bullet.prevX), fromQ12_4(bullet.x), alpha, WORLD_WIDTH);
+      const renderY = lerpWrap(fromQ12_4(bullet.prevY), fromQ12_4(bullet.y), alpha, WORLD_HEIGHT);
 
       ctx.fillStyle = "#fef3c7";
       ctx.fillRect(renderX - 1.2, renderY - 1.2, 2.4, 2.4);
@@ -1453,9 +1527,9 @@ export class AsteroidsGame {
       const w = saucer.small ? 22 : 30;
       const h = saucer.small ? 9 : 12;
 
-      // Interpolate position for smooth rendering
-      const renderX = lerpWrap(saucer.prevX, saucer.x, alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(saucer.prevY, saucer.y, alpha, WORLD_HEIGHT);
+      // Convert from fixed-point, then interpolate
+      const renderX = lerpWrap(fromQ12_4(saucer.prevX), fromQ12_4(saucer.x), alpha, WORLD_WIDTH);
+      const renderY = lerpWrap(fromQ12_4(saucer.prevY), fromQ12_4(saucer.y), alpha, WORLD_HEIGHT);
 
       ctx.save();
       ctx.translate(renderX, renderY);
@@ -1499,7 +1573,7 @@ export class AsteroidsGame {
         particle.x - particle.size * 0.5,
         particle.y - particle.size * 0.5,
         particle.size,
-        particle.size
+        particle.size,
       );
     }
 
@@ -1545,7 +1619,7 @@ export class AsteroidsGame {
     ctx.shadowBlur = 10;
     ctx.shadowColor = "#4ade80";
     ctx.fillStyle = "#d6fff0";
-    ctx.font = "600 20px 'Orbitron', 'Eurostile', sans-serif";
+    ctx.font = "600 20px 'Monaspace Neon', 'Monaspace Krypton', monospace";
     ctx.textBaseline = "top";
 
     const scoreLabel = `SCORE ${this.score.toString().padStart(5, "0")}`;
@@ -1557,7 +1631,7 @@ export class AsteroidsGame {
     ctx.fillText(waveLabel, WORLD_WIDTH - 145, WORLD_HEIGHT - 40);
 
     // Display seed for ZK verification
-    ctx.font = "500 12px 'IBM Plex Mono', monospace";
+    ctx.font = "500 12px 'Monaspace Krypton', monospace";
     ctx.fillStyle = "#6b7280";
     ctx.fillText(`SEED ${this.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`, 20, 44);
 
@@ -1567,7 +1641,7 @@ export class AsteroidsGame {
     // Autopilot indicator
     if (this.autopilot.isEnabled()) {
       ctx.save();
-      ctx.font = "600 16px 'Orbitron', 'Eurostile', sans-serif";
+      ctx.font = "600 16px 'Monaspace Neon', 'Monaspace Krypton', monospace";
       ctx.shadowBlur = 15;
       ctx.shadowColor = "#22d3ee";
       ctx.fillStyle = "#22d3ee";
@@ -1581,7 +1655,12 @@ export class AsteroidsGame {
     ctx.restore();
   }
 
-  private drawShipLives(ctx: CanvasRenderingContext2D, startX: number, startY: number, count: number): void {
+  private drawShipLives(
+    ctx: CanvasRenderingContext2D,
+    startX: number,
+    startY: number,
+    count: number,
+  ): void {
     const shipSize = 10;
     const spacing = 22;
     const maxDisplay = Math.min(count, 10); // Cap display at 10 ships
@@ -1612,7 +1691,7 @@ export class AsteroidsGame {
 
     // If more than 10 lives, show "+N" indicator
     if (count > 10) {
-      ctx.font = "500 14px 'IBM Plex Mono', monospace";
+      ctx.font = "500 14px 'Monaspace Krypton', monospace";
       ctx.fillStyle = "#d6fff0";
       ctx.fillText(`+${count - 10}`, startX + maxDisplay * spacing + 5, startY - 5);
     }
@@ -1631,8 +1710,12 @@ export class AsteroidsGame {
 
     // Vignette effect
     const gradient = ctx.createRadialGradient(
-      WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_HEIGHT * 0.3,
-      WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_HEIGHT * 0.8
+      WORLD_WIDTH / 2,
+      WORLD_HEIGHT / 2,
+      WORLD_HEIGHT * 0.3,
+      WORLD_WIDTH / 2,
+      WORLD_HEIGHT / 2,
+      WORLD_HEIGHT * 0.8,
     );
     gradient.addColorStop(0, "rgba(0, 8, 14, 0.6)");
     gradient.addColorStop(1, "rgba(0, 8, 14, 0.9)");
@@ -1644,7 +1727,7 @@ export class AsteroidsGame {
     ctx.fillStyle = "#d6fff0";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.font = "700 56px 'Orbitron', 'Eurostile', sans-serif";
+    ctx.font = "700 56px 'Monaspace Neon', 'Monaspace Krypton', monospace";
 
     if (this.mode === "menu") {
       // Animated title
@@ -1655,9 +1738,9 @@ export class AsteroidsGame {
       ctx.fillText("ASTEROIDS", 0, 0);
       ctx.restore();
 
-      ctx.font = "600 24px 'IBM Plex Mono', 'SFMono-Regular', monospace";
+      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
       ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.46);
-      ctx.fillText("Space: Fire  Shift: Hyperspace", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
+      ctx.fillText("Space: Fire", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
       ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.58);
 
       // Autopilot hint in cyan
@@ -1673,7 +1756,7 @@ export class AsteroidsGame {
 
     if (this.mode === "paused") {
       ctx.fillText("PAUSED", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.45);
-      ctx.font = "600 24px 'IBM Plex Mono', 'SFMono-Regular', monospace";
+      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
       if (this.pauseFromHidden) {
         ctx.fillText("Tab hidden: auto-paused", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.56);
       }
@@ -1684,7 +1767,7 @@ export class AsteroidsGame {
       ctx.shadowColor = "#ef4444";
       ctx.fillStyle = "#ff6b6b";
       ctx.fillText("GAME OVER", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.42);
-      ctx.font = "600 28px 'IBM Plex Mono', 'SFMono-Regular', monospace";
+      ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
       ctx.fillStyle = "#d6fff0";
       ctx.fillText(
         `Final Score: ${this.score.toString().padStart(5, "0")}`,

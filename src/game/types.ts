@@ -27,7 +27,6 @@ export interface Ship extends Entity {
   fireCooldown: number;
   respawnTimer: number;
   invulnerableTimer: number;
-  hyperspaceCooldown: number;
 }
 
 export interface Asteroid extends Entity {

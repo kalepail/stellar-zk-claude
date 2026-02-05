@@ -1,5 +1,5 @@
 import {
-  SHIP_BULLET_LIFETIME,
+  SHIP_BULLET_RANGE,
   SHIP_BULLET_SPEED,
   SHIP_MAX_SPEED,
   SHIP_RADIUS,
@@ -64,7 +64,6 @@ export interface AutopilotInput {
   right: boolean;
   thrust: boolean;
   fire: boolean;
-  hyperspace: boolean;
 }
 
 export interface GameStateSnapshot {
@@ -143,7 +142,6 @@ export class Autopilot {
       right: false,
       thrust: false,
       fire: false,
-      hyperspace: false,
     };
 
     if (!this.enabled || !state.ship.canControl || !state.ship.alive) {
@@ -225,7 +223,7 @@ export class Autopilot {
   private assessThreat(
     ship: Ship,
     entity: Asteroid | Saucer | Bullet,
-    type: "asteroid" | "saucer" | "bullet"
+    type: "asteroid" | "saucer" | "bullet",
   ): Threat | null {
     const delta = this.shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
@@ -238,14 +236,7 @@ export class Autopilot {
     const relVy = entity.vy - ship.vy;
 
     // Time to closest approach
-    const timeToImpact = this.timeToClosestApproach(
-      0,
-      0,
-      relVx,
-      relVy,
-      delta.x,
-      delta.y
-    );
+    const timeToImpact = this.timeToClosestApproach(0, 0, relVx, relVy, delta.x, delta.y);
 
     // Only care about future threats
     if (timeToImpact < 0 || timeToImpact > COLLISION_LOOKAHEAD) {
@@ -345,10 +336,7 @@ export class Autopilot {
     return targets[0];
   }
 
-  private scoreTarget(
-    ship: Ship,
-    entity: Asteroid | Saucer
-  ): Target | null {
+  private scoreTarget(ship: Ship, entity: Asteroid | Saucer): Target | null {
     const delta = this.shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 
@@ -417,16 +405,12 @@ export class Autopilot {
   // INPUT GENERATION
   // ============================================================================
 
-  private generateEvasionInput(
-    ship: Ship,
-    criticalThreats: Threat[]
-  ): AutopilotInput {
+  private generateEvasionInput(ship: Ship, criticalThreats: Threat[]): AutopilotInput {
     const input: AutopilotInput = {
       left: false,
       right: false,
       thrust: false,
       fire: false,
-      hyperspace: false,
     };
 
     // Calculate escape vector (away from all threats, weighted by danger)
@@ -485,14 +469,13 @@ export class Autopilot {
     ship: Ship,
     target: Target,
     threats: Threat[],
-    gameTime: number
+    gameTime: number,
   ): AutopilotInput {
     const input: AutopilotInput = {
       left: false,
       right: false,
       thrust: false,
       fire: false,
-      hyperspace: false,
     };
 
     // Calculate angle to target
@@ -510,7 +493,7 @@ export class Autopilot {
     // Fire if aimed
     if (Math.abs(angleDiff) < AIM_TOLERANCE) {
       // Check bullet will reach target
-      const bulletRange = SHIP_BULLET_SPEED * SHIP_BULLET_LIFETIME;
+      const bulletRange = SHIP_BULLET_RANGE;
       if (target.distance < bulletRange * 0.9) {
         // Rate limit shots
         if (gameTime - this.lastShotTime > SHOT_PATIENCE) {
@@ -564,7 +547,6 @@ export class Autopilot {
       right: false,
       thrust: false,
       fire: false,
-      hyperspace: false,
     };
 
     // If there are any threats, rotate toward center for safety
@@ -614,7 +596,7 @@ export class Autopilot {
     vx: number,
     vy: number,
     dx: number,
-    dy: number
+    dy: number,
   ): number {
     const vMagSq = vx * vx + vy * vy;
     if (vMagSq < 0.001) return 999; // Essentially stationary

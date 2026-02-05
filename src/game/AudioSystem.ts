@@ -5,7 +5,10 @@ export class AudioSystem {
 
   enable(): void {
     if (!this.ctx) {
-      this.ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      this.ctx = new (
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      )();
     }
     if (this.ctx?.state === "suspended") {
       this.ctx.resume();
@@ -107,21 +110,6 @@ export class AudioSystem {
       osc.start(this.ctx!.currentTime + i * 0.08);
       osc.stop(this.ctx!.currentTime + i * 0.08 + 0.2);
     });
-  }
-
-  playHyperspace(): void {
-    if (!this.enabled || !this.ctx) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(200, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.3);
-    gain.gain.setValueAtTime(this.volume * 0.3, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.3);
   }
 
   private createNoiseBuffer(duration: number): AudioBuffer {

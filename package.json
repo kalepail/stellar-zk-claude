@@ -21,6 +21,8 @@
     "check": "bun run typecheck && bun run lint && bun run format:check"
   },
   "dependencies": {
+    "@fontsource/monaspace-krypton": "^5.2.5",
+    "@fontsource/monaspace-neon": "^5.2.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -65,7 +65,7 @@ Note: Perplexity MCP outputs do not currently include a call/result identifier i
 ## Synthesis: Build-Ready Mechanics
 
 ## Core rules (ship, rocks, UFO)
-- Inertial ship with rotate/thrust/fire/hyperspace.
+- Inertial ship with rotate/thrust/fire.
 - Wraparound world for ship, asteroids, and shots.
 - Splits: large -> 2 medium, medium -> 2 small, small -> removed.
 - UFO variants: large (random fire), small (aimed fire with increasing accuracy as score rises).

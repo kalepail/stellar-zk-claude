@@ -11,6 +11,8 @@ Asteroids docs are flat in this directory:
 
 - `docs/games/asteroids/difficulty-scaling.md`
   - Difficulty curve design: wave scaling, ZK proof cost targets, and what changed vs classic Asteroids.
+- `docs/games/asteroids/feature-decisions.md`
+  - Product-level feature decisions and omissions for the playable build.
 
 Primary research entry points:
 - `docs/games/asteroids/asteroids-research-compendium-2026-02-05.md`

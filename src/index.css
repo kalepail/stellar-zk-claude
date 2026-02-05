@@ -1,5 +1,7 @@
 :root {
-  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  --font-body: "Monaspace Krypton", "SFMono-Regular", "Consolas", monospace;
+  --font-display: "Monaspace Neon", "Monaspace Krypton", "SFMono-Regular", "Consolas", monospace;
+  font-family: var(--font-body);
   line-height: 1.4;
   font-weight: 400;
   color: #d4f7ea;
@@ -14,6 +16,11 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  font-family: var(--font-body);
+  font-feature-settings:
+    "liga" 1,
+    "calt" 1;
+  text-rendering: optimizeLegibility;
   background:
     radial-gradient(circle at 18% 16%, rgba(76, 175, 255, 0.2), transparent 45%),
     radial-gradient(circle at 84% 80%, rgba(84, 255, 188, 0.16), transparent 40%),

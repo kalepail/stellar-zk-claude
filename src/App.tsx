@@ -18,8 +18,8 @@ function App() {
       <section className="footnote">
         <p>
           Controls: <strong>Arrow Keys</strong> move and turn, <strong>Space</strong> fires,
-          <strong> Shift</strong> hyperspaces, <strong>P</strong> pauses, <strong>R</strong>{" "}
-          restarts, <strong>Esc</strong> quits to menu.
+          <strong> P</strong> pauses, <strong>R</strong> restarts, <strong>Esc</strong> quits to
+          menu.
         </p>
       </section>
     </main>

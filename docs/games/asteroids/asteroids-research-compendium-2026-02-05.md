@@ -79,7 +79,7 @@ Important traceability note: Perplexity MCP payloads in these sessions did not e
 ## 4) Canonical Mechanics (Consolidated)
 
 ## Controls and feel
-- Ship uses inertial movement: rotate + thrust + fire + hyperspace.
+- Ship uses inertial movement: rotate + thrust + fire.
 - World wraps on both axes for ship, asteroids, and bullets.
 
 ## Asteroid behavior
@@ -117,7 +117,7 @@ Important traceability note: Perplexity MCP payloads in these sessions did not e
 ## Input architecture
 - Event handlers update input state (and optionally edge-trigger queues).
 - Simulation consumes input in fixed-step update, not in render.
-- Keep one-shot actions (fire/pause/hyperspace) robust with edge-trigger tracking.
+- Keep one-shot actions (pause/restart) robust with edge-trigger tracking.
 
 ## Visibility handling
 - Use `visibilitychange` to pause simulation on hidden tabs.

@@ -8,7 +8,7 @@ export class SeededRng {
 
   constructor(seed: number) {
     // Must be non-zero; use default if 0 provided
-    this.state = (seed >>> 0) || 0xdeadbeef;
+    this.state = seed >>> 0 || 0xdeadbeef;
   }
 
   /** Get current seed state (for serialization) */

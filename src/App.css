@@ -10,21 +10,30 @@
 
 .headline {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.6rem;
   text-align: center;
+  justify-items: center;
 }
 
 .headline h1 {
   margin: 0;
-  letter-spacing: 0.08em;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-size: clamp(2rem, 4.2vw, 3rem);
+  text-shadow:
+    0 0 14px rgba(82, 255, 191, 0.28),
+    0 0 1px rgba(214, 255, 240, 0.9);
 }
 
 .headline p {
   margin: 0;
-  opacity: 0.86;
-  font-size: clamp(0.9rem, 2.2vw, 1.05rem);
+  max-width: 68ch;
+  opacity: 0.9;
+  font-size: clamp(0.96rem, 2.1vw, 1.08rem);
+  line-height: 1.58;
+  color: rgba(212, 247, 234, 0.92);
 }
 
 .game-panel {
@@ -49,10 +58,13 @@
 
 .footnote {
   text-align: center;
-  font-size: 0.88rem;
-  opacity: 0.82;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  opacity: 0.88;
 }
 
 .footnote strong {
+  font-family: var(--font-display);
+  font-weight: 600;
   color: #d6fff0;
 }

@@ -3,7 +3,6 @@ const GAME_KEYS = new Set([
   "ArrowRight",
   "ArrowUp",
   "Space",
-  "ShiftLeft",
   "KeyP",
   "Enter",
   "KeyR",

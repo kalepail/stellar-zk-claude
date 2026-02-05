@@ -1,12 +1,16 @@
-import { WORLD_HEIGHT, WORLD_WIDTH } from "./constants";
+import { WORLD_HEIGHT, WORLD_HEIGHT_Q12_4, WORLD_WIDTH, WORLD_WIDTH_Q12_4 } from "./constants";
 import { SeededRng } from "./rng";
 import type { Vec2 } from "./types";
 
-// Global game RNG instance
+// Global game RNG instance (deterministic — used in ZK proofs)
 let gameRng: SeededRng = new SeededRng(Date.now());
+
+// Visual-only RNG instance (NOT used in ZK proofs)
+let visualRng: SeededRng = new SeededRng(Date.now() ^ 0x12345678);
 
 export function setGameSeed(seed: number): void {
   gameRng = new SeededRng(seed);
+  visualRng = new SeededRng(seed ^ 0x12345678);
 }
 
 export function getGameRng(): SeededRng {
@@ -23,6 +27,15 @@ export function randomRange(min: number, max: number): number {
 
 export function randomInt(min: number, maxExclusive: number): number {
   return gameRng.nextRange(min, maxExclusive);
+}
+
+// Visual-only random functions (NOT used in ZK proofs)
+export function visualRandomRange(min: number, max: number): number {
+  return visualRng.nextFloatRange(min, max);
+}
+
+export function visualRandomInt(min: number, maxExclusive: number): number {
+  return visualRng.nextRange(min, maxExclusive);
 }
 
 export function angleToVector(angle: number): Vec2 {
@@ -75,4 +88,16 @@ export function lerp(a: number, b: number, t: number): number {
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export function wrapXQ12_4(x: number): number {
+  if (x < 0) return x + WORLD_WIDTH_Q12_4;
+  if (x >= WORLD_WIDTH_Q12_4) return x - WORLD_WIDTH_Q12_4;
+  return x;
+}
+
+export function wrapYQ12_4(y: number): number {
+  if (y < 0) return y + WORLD_HEIGHT_Q12_4;
+  if (y >= WORLD_HEIGHT_Q12_4) return y - WORLD_HEIGHT_Q12_4;
+  return y;
 }

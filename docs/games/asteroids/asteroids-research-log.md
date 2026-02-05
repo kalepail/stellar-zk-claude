@@ -166,7 +166,7 @@ Master synthesis reference: `docs/games/asteroids/asteroids-research-compendium-
 ## Consolidated Gameplay Findings (for clone baseline)
 
 ## Core feel
-- Inertial ship controls (rotate, thrust, fire, hyperspace).
+- Inertial ship controls (rotate, thrust, fire).
 - Screen-wrap world for ship, asteroids, and shots.
 - Asteroids split large -> medium -> small; each size faster/harder.
 - UFO variants: large (less accurate/random), small (aimed and deadlier over progression).
