@@ -1,0 +1,23 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Cloudflare
+.wrangler
+.dev.vars
+
+# IDE (keep .vscode for shared OXC/project settings)
+.idea
+.claude
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

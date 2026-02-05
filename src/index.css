@@ -1,0 +1,26 @@
+:root {
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  line-height: 1.4;
+  font-weight: 400;
+  color: #d4f7ea;
+  background: #04070b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(76, 175, 255, 0.2), transparent 45%),
+    radial-gradient(circle at 84% 80%, rgba(84, 255, 188, 0.16), transparent 40%),
+    linear-gradient(160deg, #050a11 0%, #04070b 45%, #0b131d 100%);
+  color: #d4f7ea;
+}
+
+#root {
+  min-height: 100vh;
+}

@@ -1,0 +1,58 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  padding: clamp(1rem, 3vw, 2rem);
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.headline {
+  display: grid;
+  gap: 0.45rem;
+  text-align: center;
+}
+
+.headline h1 {
+  margin: 0;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+}
+
+.headline p {
+  margin: 0;
+  opacity: 0.86;
+  font-size: clamp(0.9rem, 2.2vw, 1.05rem);
+}
+
+.game-panel {
+  border: 1px solid rgba(166, 255, 228, 0.25);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(12, 22, 30, 0.7), rgba(5, 12, 18, 0.9));
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: clamp(0.5rem, 1.5vw, 0.8rem);
+}
+
+.asteroids-canvas {
+  width: 100%;
+  display: block;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  outline: none;
+  touch-action: manipulation;
+  background: #05080d;
+}
+
+.footnote {
+  text-align: center;
+  font-size: 0.88rem;
+  opacity: 0.82;
+}
+
+.footnote strong {
+  color: #d6fff0;
+}
