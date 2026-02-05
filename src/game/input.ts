@@ -8,6 +8,11 @@ const GAME_KEYS = new Set([
   "KeyR",
   "KeyA", // Autopilot toggle
   "Escape", // Return to menu
+  "KeyD", // Download tape
+  "KeyL", // Load tape
+  "Digit1", // Replay speed 1x
+  "Digit2", // Replay speed 2x
+  "Digit4", // Replay speed 4x
 ]);
 
 export class InputController {

@@ -58,9 +58,12 @@ import {
   velocityQ8_8,
 } from "./fixed-point";
 import { InputController } from "./input";
+import type { InputSource } from "./input-source";
+import { LiveInputSource, TapeInputSource } from "./input-source";
 import {
   clamp,
   getGameRng,
+  getGameRngState,
   randomInt,
   setGameSeed,
   visualRandomInt,
@@ -70,6 +73,7 @@ import {
   wrapY,
   wrapYQ12_4,
 } from "./math";
+import { deserializeTape, serializeTape, TapeRecorder } from "./tape";
 import type {
   Asteroid,
   AsteroidSize,
@@ -123,16 +127,24 @@ function lerpAngle(prev: number, curr: number, alpha: number): number {
   return prev + delta * alpha;
 }
 
-export class AsteroidsGame {
-  private readonly canvas: HTMLCanvasElement;
+export interface GameConfig {
+  canvas?: HTMLCanvasElement;
+  headless?: boolean;
+  seed?: number;
+}
 
-  private readonly ctx: CanvasRenderingContext2D;
+export class AsteroidsGame {
+  private readonly canvas: HTMLCanvasElement | null;
+
+  private readonly ctx: CanvasRenderingContext2D | null;
 
   private readonly input = new InputController();
 
   private readonly audio = new AudioSystem();
 
   private readonly autopilot = new Autopilot();
+
+  private readonly headless: boolean;
 
   private readonly stars: Star[] = [];
 
@@ -209,6 +221,25 @@ export class AsteroidsGame {
   // Frame counter for deterministic timing
   private frameCount = 0;
 
+  // Input source abstraction (live keyboard/autopilot or tape replay)
+  private inputSource: InputSource | null = null;
+
+  // Tape recording
+  private recorder: TapeRecorder | null = null;
+
+  // Replay state
+  private replaySpeed = 1;
+  private replayPaused = false;
+  private replayTapeSource: TapeInputSource | null = null;
+
+  // Current frame input (read at start of updateSimulation, used by updateShip)
+  private currentFrameInput: { left: boolean; right: boolean; thrust: boolean; fire: boolean } = {
+    left: false,
+    right: false,
+    thrust: false,
+    fire: false,
+  };
+
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyDown(event);
   };
@@ -251,19 +282,41 @@ export class AsteroidsGame {
     this.rafId = window.requestAnimationFrame(this.frameHandler);
   };
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas;
+  constructor(config: GameConfig | HTMLCanvasElement) {
+    // Backward compatible: accept raw canvas or config object
+    const cfg: GameConfig =
+      typeof HTMLCanvasElement !== "undefined" && config instanceof HTMLCanvasElement
+        ? { canvas: config }
+        : (config as GameConfig);
+
+    this.headless = cfg.headless === true;
+    this.canvas = cfg.canvas ?? null;
+    this.ctx = null;
+    this.ship = this.createShip();
+
+    if (this.headless) {
+      // Headless mode: no rendering, no events, no audio
+      if (cfg.seed !== undefined) {
+        this.gameSeed = cfg.seed;
+        setGameSeed(this.gameSeed);
+      }
+      return;
+    }
+
+    // Interactive mode
+    if (!this.canvas) {
+      throw new Error("Canvas required for non-headless mode.");
+    }
+
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute("aria-label", "Asteroids game canvas");
 
     const ctx = this.canvas.getContext("2d", { alpha: false });
-
     if (!ctx) {
       throw new Error("Unable to create 2D context.");
     }
-
-    this.ctx = ctx;
-    this.ship = this.createShip();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypass readonly for init
+    (this as any).ctx = ctx;
 
     this.loadHighScore();
     this.seedStars(120);
@@ -281,7 +334,9 @@ export class AsteroidsGame {
       this.rafId = null;
     }
 
-    this.detachEvents();
+    if (!this.headless) {
+      this.detachEvents();
+    }
   }
 
   private attachEvents(): void {
@@ -289,7 +344,7 @@ export class AsteroidsGame {
     window.addEventListener("keyup", this.keyUpHandler, { passive: false });
     window.addEventListener("resize", this.resizeHandler);
     document.addEventListener("visibilitychange", this.visibilityHandler);
-    this.canvas.addEventListener("pointerdown", this.pointerDownHandler);
+    this.canvas!.addEventListener("pointerdown", this.pointerDownHandler);
   }
 
   private detachEvents(): void {
@@ -297,11 +352,11 @@ export class AsteroidsGame {
     window.removeEventListener("keyup", this.keyUpHandler);
     window.removeEventListener("resize", this.resizeHandler);
     document.removeEventListener("visibilitychange", this.visibilityHandler);
-    this.canvas.removeEventListener("pointerdown", this.pointerDownHandler);
+    this.canvas!.removeEventListener("pointerdown", this.pointerDownHandler);
   }
 
   private resize(): void {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.canvas!.getBoundingClientRect();
     const width = Math.max(320, rect.width || WORLD_WIDTH);
     const height = Math.max(320, rect.height || WORLD_HEIGHT);
     const dpr = window.devicePixelRatio || 1;
@@ -310,11 +365,11 @@ export class AsteroidsGame {
     this.cssWidth = width;
     this.cssHeight = height;
 
-    this.canvas.width = Math.floor(width * dpr);
-    this.canvas.height = Math.floor(height * dpr);
+    this.canvas!.width = Math.floor(width * dpr);
+    this.canvas!.height = Math.floor(height * dpr);
 
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.ctx.imageSmoothingEnabled = false;
+    this.ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx!.imageSmoothingEnabled = false;
 
     this.viewScale = Math.min(width / WORLD_WIDTH, height / WORLD_HEIGHT);
     this.viewOffsetX = (width - WORLD_WIDTH * this.viewScale) * 0.5;
@@ -349,6 +404,35 @@ export class AsteroidsGame {
       }
 
       // Update game time for animations
+      this.gameTime += deltaSeconds;
+    } else if (this.mode === "replay") {
+      // Replay mode: accumulator-based, same as playing but with speed multiplier
+      if (this.lastTimeMs === 0) {
+        this.lastTimeMs = timestampMs;
+      }
+
+      let deltaSeconds = (timestampMs - this.lastTimeMs) / 1000;
+      this.lastTimeMs = timestampMs;
+      deltaSeconds = Math.min(MAX_FRAME_DELTA, Math.max(0, deltaSeconds));
+
+      if (!this.replayPaused && this.replayTapeSource && !this.replayTapeSource.isComplete()) {
+        this.accumulator += deltaSeconds * this.replaySpeed;
+        let steps = 0;
+        const maxSteps = MAX_SUBSTEPS * this.replaySpeed;
+
+        while (this.accumulator >= FIXED_TIMESTEP && steps < maxSteps) {
+          if (this.replayTapeSource.isComplete()) break;
+          this.storePreviousPositions();
+          this.updateSimulation(FIXED_TIMESTEP);
+          this.accumulator -= FIXED_TIMESTEP;
+          steps += 1;
+        }
+
+        if (steps >= maxSteps) {
+          this.accumulator = 0;
+        }
+      }
+
       this.gameTime += deltaSeconds;
     } else {
       this.lastTimeMs = 0;
@@ -391,6 +475,29 @@ export class AsteroidsGame {
       this.autopilot.toggle();
     }
 
+    // Download tape with 'D' key in game-over
+    if (this.input.consumePress("KeyD") && this.mode === "game-over") {
+      this.downloadTape();
+    }
+
+    // Load tape with 'L' key in menu
+    if (this.input.consumePress("KeyL") && this.mode === "menu") {
+      this.triggerFileLoad();
+    }
+
+    // Replay speed controls
+    if (this.mode === "replay") {
+      if (this.input.consumePress("Digit1")) { this.replaySpeed = 1; this.accumulator = 0; }
+      if (this.input.consumePress("Digit2")) { this.replaySpeed = 2; this.accumulator = 0; }
+      if (this.input.consumePress("Digit4")) { this.replaySpeed = 4; this.accumulator = 0; }
+      if (this.input.consumePress("Space")) {
+        this.replayPaused = !this.replayPaused;
+        // Reset timing to avoid accumulator jump after unpause
+        this.lastTimeMs = 0;
+        this.accumulator = 0;
+      }
+    }
+
     // Return to menu with Escape
     if (this.input.consumePress("Escape") && this.mode !== "menu") {
       this.mode = "menu";
@@ -406,12 +513,14 @@ export class AsteroidsGame {
       this.shakeY = 0;
       this.shakeRotation = 0;
       this.autopilot.setEnabled(false);
+      this.replayTapeSource = null;
+      this.inputSource = null;
     }
   }
 
-  private startNewGame(): void {
+  startNewGame(seed?: number): void {
     // Generate deterministic seed for ZK-friendly RNG
-    this.gameSeed = Date.now();
+    this.gameSeed = seed ?? Date.now();
     setGameSeed(this.gameSeed);
 
     this.mode = "playing";
@@ -430,6 +539,24 @@ export class AsteroidsGame {
     this.ship = this.createShip();
     this.shakeIntensity = 0;
     this.autopilot.setEnabled(false);
+
+    // Set up recording
+    this.recorder = new TapeRecorder();
+
+    // Set up live input source (unless an external source is already set)
+    if (!this.inputSource || this.inputSource instanceof TapeInputSource) {
+      this.inputSource = new LiveInputSource(
+        this.input,
+        this.autopilot,
+        () => this.autopilot.update(this.getGameStateSnapshot(), FIXED_TIMESTEP, this.gameTime),
+      );
+    }
+
+    // Reset replay state
+    this.replayTapeSource = null;
+    this.replaySpeed = 1;
+    this.replayPaused = false;
+
     this.spawnWave();
     const waveMultPct = Math.max(40, 100 - (this.wave - 1) * 8);
     const spawnMin = ((SAUCER_SPAWN_MIN_FRAMES * waveMultPct) / 100) | 0;
@@ -470,21 +597,41 @@ export class AsteroidsGame {
 
   private updateSimulation(dt: number): void {
     this.frameCount++;
+
+    // Read input for this frame (always, even when ship can't be controlled)
+    this.currentFrameInput = this.inputSource
+      ? this.inputSource.getFrameInput()
+      : { left: false, right: false, thrust: false, fire: false };
+
+    // Record input for tape (one byte per frame, always)
+    this.recorder?.record(this.currentFrameInput);
+
     this.updateShip(dt);
     this.updateAsteroids();
     this.updateBullets();
     this.updateSaucers();
     this.updateSaucerBullets();
-    this.updateParticles(dt);
-    this.updateDebris(dt);
-    this.updateScreenShake();
+
+    if (!this.headless) {
+      this.updateParticles(dt);
+      this.updateDebris(dt);
+      this.updateScreenShake();
+    }
+
     this.handleCollisions();
     this.pruneDestroyedEntities();
 
     // Anti-lurking timer (frame count)
     this.timeSinceLastKill++;
 
-    if (this.mode === "playing" && this.asteroids.length === 0 && this.saucers.length === 0) {
+    // Advance input source cursor
+    this.inputSource?.advance();
+
+    if (
+      (this.mode === "playing" || this.mode === "replay") &&
+      this.asteroids.length === 0 &&
+      this.saucers.length === 0
+    ) {
       this.spawnWave();
     }
   }
@@ -647,7 +794,7 @@ export class AsteroidsGame {
     return vertices;
   }
 
-  private updateShip(dt: number): void {
+  private updateShip(_dt: number): void {
     const ship = this.ship;
 
     if (ship.fireCooldown > 0) ship.fireCooldown--;
@@ -664,16 +811,12 @@ export class AsteroidsGame {
 
     if (ship.invulnerableTimer > 0) ship.invulnerableTimer--;
 
-    // Get autopilot input if enabled
-    const aiInput = this.autopilot.isEnabled()
-      ? this.autopilot.update(this.getGameStateSnapshot(), dt, this.gameTime)
-      : null;
-
-    // Determine effective input (autopilot OR manual)
-    const turnLeft = aiInput ? aiInput.left : this.input.isDown("ArrowLeft");
-    const turnRight = aiInput ? aiInput.right : this.input.isDown("ArrowRight");
-    const thrust = aiInput ? aiInput.thrust : this.input.isDown("ArrowUp");
-    const fire = aiInput ? aiInput.fire : this.input.isDown("Space");
+    // Get input from the current frame input (already read+recorded in updateSimulation)
+    const frameInput = this.currentFrameInput;
+    const turnLeft = frameInput.left;
+    const turnRight = frameInput.right;
+    const thrust = frameInput.thrust;
+    const fire = frameInput.fire;
 
     if (turnLeft) {
       ship.angle = (ship.angle - SHIP_TURN_SPEED_BAM) & 0xff;
@@ -1137,10 +1280,14 @@ export class AsteroidsGame {
     this.audio.playExplosion("large");
 
     if (this.lives <= 0) {
-      this.mode = "game-over";
+      if (this.mode !== "replay") {
+        this.mode = "game-over";
+      }
       this.ship.canControl = false;
       this.ship.respawnTimer = 99999;
-      this.saveHighScore();
+      if (!this.headless) {
+        this.saveHighScore();
+      }
     }
   }
 
@@ -1184,6 +1331,7 @@ export class AsteroidsGame {
     color: string,
     count = 1,
   ): void {
+    if (this.headless) return;
     for (let i = 0; i < count; i++) {
       if (this.particles.length >= MAX_PARTICLES) break;
 
@@ -1235,6 +1383,7 @@ export class AsteroidsGame {
   }
 
   private spawnDebris(x: number, y: number, size: AsteroidSize | "large"): void {
+    if (this.headless) return;
     const debrisCount = size === "large" ? 8 : size === "medium" ? 5 : 3;
 
     for (let i = 0; i < debrisCount; i++) {
@@ -1322,6 +1471,7 @@ export class AsteroidsGame {
   }
 
   private render(alpha: number): void {
+    if (this.headless || !this.ctx) return;
     const ctx = this.ctx;
 
     ctx.save();
@@ -1392,7 +1542,7 @@ export class AsteroidsGame {
   private drawShip(ctx: CanvasRenderingContext2D, alpha: number): void {
     const ship = this.ship;
 
-    if (!ship.canControl && this.mode === "game-over") {
+    if (!ship.canControl && (this.mode === "game-over" || this.lives <= 0)) {
       return;
     }
 
@@ -1706,6 +1856,11 @@ export class AsteroidsGame {
       return;
     }
 
+    if (this.mode === "replay") {
+      this.drawReplayOverlay(ctx);
+      return;
+    }
+
     ctx.save();
 
     // Vignette effect
@@ -1748,10 +1903,15 @@ export class AsteroidsGame {
       ctx.fillStyle = "#22d3ee";
       ctx.fillText("A: Toggle Autopilot", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
 
+      // Tape load hint in purple
+      ctx.shadowColor = "#a855f7";
+      ctx.fillStyle = "#a855f7";
+      ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.70);
+
       ctx.shadowBlur = 10;
       ctx.shadowColor = "#4ade80";
       ctx.fillStyle = "#4ade80";
-      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.74);
+      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.78);
     }
 
     if (this.mode === "paused") {
@@ -1774,10 +1934,224 @@ export class AsteroidsGame {
         WORLD_WIDTH * 0.5,
         WORLD_HEIGHT * 0.56,
       );
-      ctx.fillText("Press Enter, R, or Tap to Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.68);
+      ctx.fillText("Press Enter, R, or Tap to Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
+
+      // Tape save hint
+      ctx.shadowColor = "#a855f7";
+      ctx.fillStyle = "#a855f7";
+      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+      ctx.fillText("D: Save Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.72);
     }
 
     ctx.restore();
+  }
+
+  // =========================================================================
+  // Public API (for headless verification, replay, scripts)
+  // =========================================================================
+
+  /** Run one simulation step (storePreviousPositions + updateSimulation). */
+  stepSimulation(): void {
+    this.storePreviousPositions();
+    this.updateSimulation(FIXED_TIMESTEP);
+  }
+
+  /** Replace the current input source. */
+  setInputSource(source: InputSource): void {
+    this.inputSource = source;
+  }
+
+  getScore(): number {
+    return this.score;
+  }
+  getFrameCount(): number {
+    return this.frameCount;
+  }
+  getRngState(): number {
+    return getGameRngState();
+  }
+  getLives(): number {
+    return this.lives;
+  }
+  getWave(): number {
+    return this.wave;
+  }
+  getMode(): GameMode {
+    return this.mode;
+  }
+  getGameSeed(): number {
+    return this.gameSeed;
+  }
+
+  /** Build a serialized tape from the current recording. */
+  getTape(): Uint8Array | null {
+    if (!this.recorder) return null;
+    return serializeTape(
+      this.gameSeed,
+      this.recorder.getInputs(),
+      this.score,
+      getGameRngState(),
+    );
+  }
+
+  // =========================================================================
+  // Visual Replay
+  // =========================================================================
+
+  /** Load a tape and enter visual replay mode. */
+  loadReplay(tapeData: Uint8Array): void {
+    const tape = deserializeTape(tapeData);
+    this.startNewGame(tape.header.seed);
+    this.mode = "replay";
+    this.replaySpeed = 1;
+    this.replayPaused = false;
+    this.lastTimeMs = 0;
+    this.accumulator = 0;
+    const tapeSource = new TapeInputSource(tape.inputs);
+    this.replayTapeSource = tapeSource;
+    this.inputSource = tapeSource;
+    // Stop recording during replay
+    this.recorder = null;
+  }
+
+  private drawReplayOverlay(ctx: CanvasRenderingContext2D): void {
+    const tapeComplete = this.replayTapeSource?.isComplete() ?? false;
+
+    // Show completion overlay with vignette when tape is finished
+    if (tapeComplete) {
+      ctx.save();
+
+      const gradient = ctx.createRadialGradient(
+        WORLD_WIDTH / 2,
+        WORLD_HEIGHT / 2,
+        WORLD_HEIGHT * 0.3,
+        WORLD_WIDTH / 2,
+        WORLD_HEIGHT / 2,
+        WORLD_HEIGHT * 0.8,
+      );
+      gradient.addColorStop(0, "rgba(0, 8, 14, 0.6)");
+      gradient.addColorStop(1, "rgba(0, 8, 14, 0.9)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      ctx.font = "700 40px 'Monaspace Neon', 'Monaspace Krypton', monospace";
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#a855f7";
+      ctx.fillStyle = "#a855f7";
+      ctx.fillText("REPLAY COMPLETE", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.38);
+
+      ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#d6fff0";
+      ctx.fillText(
+        `Final Score: ${this.score.toString().padStart(5, "0")}`,
+        WORLD_WIDTH * 0.5,
+        WORLD_HEIGHT * 0.50,
+      );
+      ctx.fillText(`Wave: ${this.wave}`, WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.57);
+
+      ctx.font = "500 14px 'Monaspace Krypton', monospace";
+      ctx.fillStyle = "#6b7280";
+      ctx.fillText(
+        `Seed: 0x${this.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`,
+        WORLD_WIDTH * 0.5,
+        WORLD_HEIGHT * 0.64,
+      );
+
+      ctx.font = "600 22px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+      ctx.fillStyle = "#4ade80";
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#4ade80";
+      ctx.fillText("Press Esc to Exit", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.76);
+
+      ctx.restore();
+      return;
+    }
+
+    ctx.save();
+
+    // "REPLAY" label top-center
+    ctx.font = "600 18px 'Monaspace Neon', 'Monaspace Krypton', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#a855f7";
+    ctx.fillStyle = "#a855f7";
+    const pulse = 0.7 + Math.sin(this.gameTime * 4) * 0.3;
+    ctx.globalAlpha = pulse;
+    ctx.fillText("REPLAY", WORLD_WIDTH / 2, 18);
+    ctx.globalAlpha = 1;
+
+    if (this.replayTapeSource) {
+      const current = this.replayTapeSource.getCurrentFrame();
+      const total = this.replayTapeSource.getTotalFrames();
+
+      // Frame counter
+      ctx.font = "500 14px 'Monaspace Krypton', monospace";
+      ctx.fillStyle = "#d6fff0";
+      ctx.shadowBlur = 0;
+      ctx.fillText(`Frame ${current} / ${total}`, WORLD_WIDTH / 2, 42);
+
+      // Speed indicator
+      const speedLabel = this.replayPaused ? "PAUSED" : `${this.replaySpeed}x`;
+      ctx.fillText(speedLabel, WORLD_WIDTH / 2, 60);
+
+      // Progress bar
+      const barY = WORLD_HEIGHT - 10;
+      const barH = 4;
+      const progress = total > 0 ? current / total : 0;
+
+      ctx.fillStyle = "#333";
+      ctx.fillRect(20, barY, WORLD_WIDTH - 40, barH);
+
+      ctx.fillStyle = "#a855f7";
+      ctx.fillRect(20, barY, (WORLD_WIDTH - 40) * progress, barH);
+
+      // Key hints
+      ctx.font = "500 12px 'Monaspace Krypton', monospace";
+      ctx.fillStyle = "#6b7280";
+      ctx.textAlign = "center";
+      ctx.fillText(
+        "1/2/4: Speed    Space: Pause    Esc: Exit",
+        WORLD_WIDTH / 2,
+        WORLD_HEIGHT - 20,
+      );
+    }
+
+    ctx.restore();
+  }
+
+  private downloadTape(): void {
+    const tape = this.getTape();
+    if (!tape) return;
+
+    const seedHex = this.gameSeed.toString(16).padStart(8, "0");
+    const filename = `asteroids-${seedHex}-${this.score}.tape`;
+
+    const blob = new Blob([tape.buffer as ArrayBuffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private triggerFileLoad(): void {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".tape";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void file.arrayBuffer().then((buf) => {
+        this.loadReplay(new Uint8Array(buf));
+      });
+    });
+    input.click();
   }
 
   private loadHighScore(): void {

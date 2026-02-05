@@ -1,4 +1,4 @@
-export type GameMode = "menu" | "playing" | "paused" | "game-over";
+export type GameMode = "menu" | "playing" | "paused" | "game-over" | "replay";
 
 export type AsteroidSize = "large" | "medium" | "small";
 
