@@ -1,12 +1,28 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./constants";
+import { SeededRng } from "./rng";
 import type { Vec2 } from "./types";
 
+// Global game RNG instance
+let gameRng: SeededRng = new SeededRng(Date.now());
+
+export function setGameSeed(seed: number): void {
+  gameRng = new SeededRng(seed);
+}
+
+export function getGameRng(): SeededRng {
+  return gameRng;
+}
+
+export function getGameRngState(): number {
+  return gameRng.getState();
+}
+
 export function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+  return gameRng.nextFloatRange(min, max);
 }
 
 export function randomInt(min: number, maxExclusive: number): number {
-  return Math.floor(randomRange(min, maxExclusive));
+  return gameRng.nextRange(min, maxExclusive);
 }
 
 export function angleToVector(angle: number): Vec2 {

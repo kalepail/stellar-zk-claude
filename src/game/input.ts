@@ -7,6 +7,8 @@ const GAME_KEYS = new Set([
   "KeyP",
   "Enter",
   "KeyR",
+  "KeyA", // Autopilot toggle
+  "Escape", // Return to menu
 ]);
 
 export class InputController {

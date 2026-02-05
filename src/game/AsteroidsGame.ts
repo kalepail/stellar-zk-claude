@@ -39,8 +39,9 @@ import {
   WORLD_WIDTH,
 } from "./constants";
 import { AudioSystem } from "./AudioSystem";
+import { Autopilot, type GameStateSnapshot } from "./Autopilot";
 import { InputController } from "./input";
-import { angleToVector, clamp, randomInt, randomRange, wrapX, wrapY } from "./math";
+import { angleToVector, clamp, getGameRng, randomInt, randomRange, setGameSeed, wrapX, wrapY } from "./math";
 import type { Asteroid, AsteroidSize, Bullet, Debris, GameMode, Particle, Saucer, Ship, Star } from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
@@ -104,6 +105,8 @@ export class AsteroidsGame {
   private readonly input = new InputController();
 
   private readonly audio = new AudioSystem();
+
+  private readonly autopilot = new Autopilot();
 
   private readonly stars: Star[] = [];
 
@@ -173,6 +176,9 @@ export class AsteroidsGame {
 
   // Game time for animations (star twinkle, etc.)
   private gameTime = 0;
+
+  // Game seed for deterministic RNG (ZK-friendly)
+  private gameSeed = 0;
 
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyDown(event);
@@ -350,9 +356,35 @@ export class AsteroidsGame {
     if (this.input.consumePress("KeyR") && this.mode !== "menu") {
       this.startNewGame();
     }
+
+    // Toggle autopilot with 'A' key
+    if (this.input.consumePress("KeyA") && this.mode === "playing") {
+      this.autopilot.toggle();
+    }
+
+    // Return to menu with Escape
+    if (this.input.consumePress("Escape") && this.mode !== "menu") {
+      this.mode = "menu";
+      this.asteroids = [];
+      this.bullets = [];
+      this.saucers = [];
+      this.saucerBullets = [];
+      this.particles = [];
+      this.debris = [];
+      this.ship = this.createShip();
+      this.shakeIntensity = 0;
+      this.shakeX = 0;
+      this.shakeY = 0;
+      this.shakeRotation = 0;
+      this.autopilot.setEnabled(false);
+    }
   }
 
   private startNewGame(): void {
+    // Generate deterministic seed for ZK-friendly RNG
+    this.gameSeed = Date.now();
+    setGameSeed(this.gameSeed);
+
     this.mode = "playing";
     this.score = 0;
     this.lives = STARTING_LIVES;
@@ -368,6 +400,7 @@ export class AsteroidsGame {
     this.timeSinceLastKill = 0;
     this.ship = this.createShip();
     this.shakeIntensity = 0;
+    this.autopilot.setEnabled(false);
     this.spawnWave();
   }
 
@@ -564,15 +597,27 @@ export class AsteroidsGame {
 
     ship.invulnerableTimer = Math.max(0, ship.invulnerableTimer - dt);
 
-    if (this.input.isDown("ArrowLeft")) {
+    // Get autopilot input if enabled
+    const aiInput = this.autopilot.isEnabled()
+      ? this.autopilot.update(this.getGameStateSnapshot(), dt, this.gameTime)
+      : null;
+
+    // Determine effective input (autopilot OR manual)
+    const turnLeft = aiInput ? aiInput.left : this.input.isDown("ArrowLeft");
+    const turnRight = aiInput ? aiInput.right : this.input.isDown("ArrowRight");
+    const thrust = aiInput ? aiInput.thrust : this.input.isDown("ArrowUp");
+    const fire = aiInput ? aiInput.fire : this.input.isDown("Space");
+    const hyperspace = aiInput ? aiInput.hyperspace : this.input.consumePress("ShiftLeft");
+
+    if (turnLeft) {
       ship.angle -= SHIP_TURN_SPEED * dt;
     }
 
-    if (this.input.isDown("ArrowRight")) {
+    if (turnRight) {
       ship.angle += SHIP_TURN_SPEED * dt;
     }
 
-    if (this.input.isDown("ArrowUp")) {
+    if (thrust) {
       const direction = angleToVector(ship.angle);
       ship.vx += direction.x * SHIP_THRUST * dt;
       ship.vy += direction.y * SHIP_THRUST * dt;
@@ -598,21 +643,29 @@ export class AsteroidsGame {
       ship.vy *= scale;
     }
 
-    if (
-      this.input.isDown("Space") &&
-      ship.fireCooldown <= 0 &&
-      this.bullets.length < SHIP_BULLET_LIMIT
-    ) {
+    if (fire && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
       this.spawnShipBullet();
       ship.fireCooldown = SHIP_BULLET_COOLDOWN;
     }
 
-    if (this.input.consumePress("ShiftLeft") && ship.hyperspaceCooldown <= 0) {
+    // Only allow manual hyperspace (AI doesn't use it - too risky)
+    if (!aiInput && hyperspace && ship.hyperspaceCooldown <= 0) {
       this.useHyperspace();
     }
 
     ship.x = wrapX(ship.x + ship.vx * dt);
     ship.y = wrapY(ship.y + ship.vy * dt);
+  }
+
+  /** Create a snapshot of game state for the autopilot AI */
+  private getGameStateSnapshot(): GameStateSnapshot {
+    return {
+      ship: this.ship,
+      asteroids: this.asteroids.filter((a) => a.alive),
+      saucers: this.saucers.filter((s) => s.alive),
+      bullets: this.bullets.filter((b) => b.alive),
+      saucerBullets: this.saucerBullets.filter((b) => b.alive),
+    };
   }
 
   private spawnShipBullet(): void {
@@ -654,7 +707,7 @@ export class AsteroidsGame {
     const crowdedness = clamp(this.asteroids.length / 18, 0, 1);
     const failChance = 0.12 + crowdedness * 0.2;
 
-    if (Math.random() < failChance) {
+    if (getGameRng().nextBool(failChance)) {
       this.destroyShip();
       return;
     }
@@ -766,11 +819,11 @@ export class AsteroidsGame {
   }
 
   private spawnSaucer(): void {
-    const enterFromLeft = Math.random() > 0.5;
+    const enterFromLeft = getGameRng().nextBool();
     // Anti-lurking: more likely to spawn small (deadly) saucer when lurking
     const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD;
     const smallChance = isLurking ? 0.9 : this.score > 4000 ? 0.7 : 0.22;
-    const small = Math.random() < smallChance;
+    const small = getGameRng().nextBool(smallChance);
     const speed = small ? 95 : 70;
 
     const startX = enterFromLeft ? -30 : WORLD_WIDTH + 30;
@@ -1499,8 +1552,27 @@ export class AsteroidsGame {
     ctx.fillText(highLabel, WORLD_WIDTH - 230, 18);
     ctx.fillText(waveLabel, WORLD_WIDTH - 145, WORLD_HEIGHT - 40);
 
+    // Display seed for ZK verification
+    ctx.font = "500 12px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = "#6b7280";
+    ctx.fillText(`SEED ${this.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`, 20, 44);
+
     // Draw ship lives as icons instead of text
     this.drawShipLives(ctx, 20, WORLD_HEIGHT - 45, this.lives);
+
+    // Autopilot indicator
+    if (this.autopilot.isEnabled()) {
+      ctx.save();
+      ctx.font = "600 16px 'Orbitron', 'Eurostile', sans-serif";
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#22d3ee";
+      ctx.fillStyle = "#22d3ee";
+      const pulse = 0.7 + Math.sin(this.gameTime * 4) * 0.3;
+      ctx.globalAlpha = pulse;
+      ctx.fillText("AUTOPILOT", WORLD_WIDTH / 2 - 50, 18);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
 
     ctx.restore();
   }
@@ -1580,13 +1652,19 @@ export class AsteroidsGame {
       ctx.restore();
 
       ctx.font = "600 24px 'IBM Plex Mono', 'SFMono-Regular', monospace";
-      ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.48);
-      ctx.fillText("Space: Fire  Shift: Hyperspace", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.54);
-      ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.6);
+      ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.46);
+      ctx.fillText("Space: Fire  Shift: Hyperspace", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
+      ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.58);
+
+      // Autopilot hint in cyan
+      ctx.shadowColor = "#22d3ee";
+      ctx.fillStyle = "#22d3ee";
+      ctx.fillText("A: Toggle Autopilot", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
 
       ctx.shadowBlur = 10;
+      ctx.shadowColor = "#4ade80";
       ctx.fillStyle = "#4ade80";
-      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.72);
+      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.74);
     }
 
     if (this.mode === "paused") {
