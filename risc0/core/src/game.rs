@@ -6,6 +6,7 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
+use core::mem;
 
 use crate::constants::*;
 use crate::fixed_point::*;
@@ -50,10 +51,13 @@ fn shortest_delta_q12_4(from: i32, to: i32, size: i32) -> i32 {
 }
 
 /// Distance-squared between two Q12.4 points with wrapping.
+/// Returns i32: max delta is 7680 (half of 15360), so max dist_sq is
+/// 7680^2 + 5760^2 = 92,160,000 which fits comfortably in i32 (max ~2.1B).
+/// Using i32 avoids expensive 64-bit multiply on the 32-bit RISC-V zkVM target.
 #[inline]
-fn collision_dist_sq_q12_4(ax: i32, ay: i32, bx: i32, by: i32) -> i64 {
-    let dx = shortest_delta_q12_4(ax, bx, WORLD_WIDTH_Q12_4) as i64;
-    let dy = shortest_delta_q12_4(ay, by, WORLD_HEIGHT_Q12_4) as i64;
+fn collision_dist_sq_q12_4(ax: i32, ay: i32, bx: i32, by: i32) -> i32 {
+    let dx = shortest_delta_q12_4(ax, bx, WORLD_WIDTH_Q12_4);
+    let dy = shortest_delta_q12_4(ay, by, WORLD_HEIGHT_Q12_4);
     dx * dx + dy * dy
 }
 
@@ -103,6 +107,14 @@ pub struct AsteroidsGame {
 
     // Game mode
     game_over: bool,
+
+    // Scratch buffers reused each frame to avoid per-frame heap allocation.
+    // In the zkVM's bump allocator, per-frame Vecs are never freed, causing
+    // ~2.7 MB of cumulative heap waste and hundreds of expensive page-in events.
+    scratch_destroyed_asteroids: Vec<(usize, bool)>,
+    scratch_saucer_destroyed_asteroids: Vec<(usize, bool)>,
+    scratch_destroyed_saucers: Vec<usize>,
+    scratch_bullets_to_spawn: Vec<Bullet>,
 }
 
 impl AsteroidsGame {
@@ -142,6 +154,10 @@ impl AsteroidsGame {
             saucer_spawn_timer: 0,
             current_input: FrameInput::default(),
             game_over: false,
+            scratch_destroyed_asteroids: Vec::with_capacity(8),
+            scratch_saucer_destroyed_asteroids: Vec::with_capacity(8),
+            scratch_destroyed_saucers: Vec::with_capacity(3),
+            scratch_bullets_to_spawn: Vec::with_capacity(3),
         };
 
         // Spawn first wave (matches startNewGame -> spawnWave)
@@ -321,10 +337,10 @@ impl AsteroidsGame {
     }
 
     fn is_ship_spawn_area_clear(&self, spawn_x: i32, spawn_y: i32) -> bool {
-        let clear_radius_q12_4: i64 = 1920; // 120px * 16
+        let clear_radius_q12_4: i32 = 1920; // 120px * 16
 
         for asteroid in &self.asteroids {
-            let hit_dist = (asteroid.radius as i64) * 16 + clear_radius_q12_4;
+            let hit_dist = asteroid.radius * 16 + clear_radius_q12_4;
             if collision_dist_sq_q12_4(asteroid.x, asteroid.y, spawn_x, spawn_y) < hit_dist * hit_dist {
                 return false;
             }
@@ -334,7 +350,7 @@ impl AsteroidsGame {
             if !saucer.alive {
                 continue;
             }
-            let hit_dist = (saucer.radius as i64) * 16 + clear_radius_q12_4;
+            let hit_dist = saucer.radius * 16 + clear_radius_q12_4;
             if collision_dist_sq_q12_4(saucer.x, saucer.y, spawn_x, spawn_y) < hit_dist * hit_dist {
                 return false;
             }
@@ -344,7 +360,7 @@ impl AsteroidsGame {
             if !bullet.alive {
                 continue;
             }
-            let hit_dist = (bullet.radius as i64) * 16 + clear_radius_q12_4;
+            let hit_dist = bullet.radius * 16 + clear_radius_q12_4;
             if collision_dist_sq_q12_4(bullet.x, bullet.y, spawn_x, spawn_y) < hit_dist * hit_dist {
                 return false;
             }
@@ -380,8 +396,8 @@ impl AsteroidsGame {
 
         let large_count = 16i32.min(4 + (self.wave - 1) * 2);
         let (avoid_x, avoid_y) = self.get_ship_spawn_point();
-        // 180px in Q12.4 = 2880; squared = 8,294,400
-        let safe_dist_sq: i64 = 2880 * 2880;
+        // 180px in Q12.4 = 2880; squared = 8,294,400 (fits i32)
+        let safe_dist_sq: i32 = 2880 * 2880;
 
         for _ in 0..large_count {
             let mut x = self.rng.next_range(0, WORLD_WIDTH_Q12_4);
@@ -524,9 +540,9 @@ impl AsteroidsGame {
         let wave = self.wave;
         let time_since_last_kill = self.time_since_last_kill;
 
-        // We need to collect saucer bullets to spawn, because we can't borrow self mutably
-        // while iterating saucers. Collect spawn requests.
-        let mut bullets_to_spawn: Vec<Bullet> = Vec::with_capacity(3);
+        // Take scratch buffer out of self to collect bullets while iterating saucers.
+        let mut bullets_to_spawn = mem::take(&mut self.scratch_bullets_to_spawn);
+        bullets_to_spawn.clear();
 
         for saucer in &mut self.saucers {
             if !saucer.alive {
@@ -585,7 +601,8 @@ impl AsteroidsGame {
             }
         }
 
-        self.saucer_bullets.extend(bullets_to_spawn);
+        self.saucer_bullets.extend(bullets_to_spawn.drain(..));
+        self.scratch_bullets_to_spawn = bullets_to_spawn;
     }
 
     fn spawn_saucer(&mut self) {
@@ -679,9 +696,15 @@ impl AsteroidsGame {
         // 5. Ship-saucer bullet
         // 6. Ship-saucer
 
-        // Collect asteroid destruction events: (index, award_score)
-        let mut destroyed_asteroids: Vec<(usize, bool)> = Vec::with_capacity(8);
-        let mut destroyed_saucers: Vec<usize> = Vec::with_capacity(3);
+        // Take scratch buffers out of self to avoid borrow conflicts.
+        // mem::take swaps with empty Vecs (no allocation); we restore at the end
+        // to preserve allocated capacity across frames.
+        let mut destroyed_asteroids = mem::take(&mut self.scratch_destroyed_asteroids);
+        let mut destroyed_saucers = mem::take(&mut self.scratch_destroyed_saucers);
+        let mut saucer_destroyed_asteroids = mem::take(&mut self.scratch_saucer_destroyed_asteroids);
+        destroyed_asteroids.clear();
+        destroyed_saucers.clear();
+        saucer_destroyed_asteroids.clear();
 
         // 1. Player bullet-asteroid
         for bullet in &mut self.bullets {
@@ -692,7 +715,7 @@ impl AsteroidsGame {
                 if !asteroid.alive {
                     continue;
                 }
-                let hit_dist = ((bullet.radius + asteroid.radius) as i64) * 16;
+                let hit_dist = (bullet.radius + asteroid.radius) * 16;
                 if collision_dist_sq_q12_4(bullet.x, bullet.y, asteroid.x, asteroid.y)
                     <= hit_dist * hit_dist
                 {
@@ -709,7 +732,6 @@ impl AsteroidsGame {
         }
 
         // 2. Saucer bullet-asteroid
-        let mut saucer_destroyed_asteroids: Vec<(usize, bool)> = Vec::with_capacity(8);
         for bullet in &mut self.saucer_bullets {
             if !bullet.alive {
                 continue;
@@ -718,7 +740,7 @@ impl AsteroidsGame {
                 if !asteroid.alive {
                     continue;
                 }
-                let hit_dist = ((bullet.radius + asteroid.radius) as i64) * 16;
+                let hit_dist = (bullet.radius + asteroid.radius) * 16;
                 if collision_dist_sq_q12_4(bullet.x, bullet.y, asteroid.x, asteroid.y)
                     <= hit_dist * hit_dist
                 {
@@ -732,7 +754,7 @@ impl AsteroidsGame {
         for &(i, _) in &saucer_destroyed_asteroids {
             self.asteroids[i].alive = false;
         }
-        destroyed_asteroids.extend(saucer_destroyed_asteroids);
+        destroyed_asteroids.extend(saucer_destroyed_asteroids.drain(..));
 
         // 3. Player bullet-saucer
         for bullet in &mut self.bullets {
@@ -743,7 +765,7 @@ impl AsteroidsGame {
                 if !saucer.alive {
                     continue;
                 }
-                let hit_dist = ((bullet.radius + saucer.radius) as i64) * 16;
+                let hit_dist = (bullet.radius + saucer.radius) * 16;
                 if collision_dist_sq_q12_4(bullet.x, bullet.y, saucer.x, saucer.y)
                     <= hit_dist * hit_dist
                 {
@@ -755,20 +777,23 @@ impl AsteroidsGame {
         }
 
         // Mark destroyed saucers and award score
-        for &i in &destroyed_saucers {
+        for i in destroyed_saucers.drain(..) {
             let saucer = &self.saucers[i];
             let points = if saucer.small { SCORE_SMALL_SAUCER } else { SCORE_LARGE_SAUCER };
             self.saucers[i].alive = false;
             self.add_score(points);
-            // Explosion effects are visual-only
         }
 
         // Process destroyed asteroids (scoring + splitting)
-        // Sort by index descending so we can safely push children
-        // Actually, TS processes them in iteration order. We should match that.
-        for (i, award_score) in destroyed_asteroids {
+        // TS processes them in iteration order. We match that.
+        for (i, award_score) in destroyed_asteroids.drain(..) {
             self.destroy_asteroid_at(i, award_score);
         }
+
+        // Restore scratch buffers (empty but retain allocated capacity)
+        self.scratch_destroyed_asteroids = destroyed_asteroids;
+        self.scratch_destroyed_saucers = destroyed_saucers;
+        self.scratch_saucer_destroyed_asteroids = saucer_destroyed_asteroids;
 
         // 4-6. Ship collisions
         if !self.ship.can_control || self.ship.invulnerable_timer > 0 {
@@ -781,7 +806,7 @@ impl AsteroidsGame {
                 continue;
             }
             let adjusted_radius = (asteroid.radius * 225) >> 8; // 0.88 fudge
-            let hit_dist = ((self.ship.radius + adjusted_radius) as i64) * 16;
+            let hit_dist = (self.ship.radius + adjusted_radius) * 16;
             if collision_dist_sq_q12_4(self.ship.x, self.ship.y, asteroid.x, asteroid.y)
                 <= hit_dist * hit_dist
             {
@@ -795,7 +820,7 @@ impl AsteroidsGame {
             if !bullet.alive {
                 continue;
             }
-            let hit_dist = ((self.ship.radius + bullet.radius) as i64) * 16;
+            let hit_dist = (self.ship.radius + bullet.radius) * 16;
             if collision_dist_sq_q12_4(self.ship.x, self.ship.y, bullet.x, bullet.y)
                 <= hit_dist * hit_dist
             {
@@ -810,7 +835,7 @@ impl AsteroidsGame {
             if !saucer.alive {
                 continue;
             }
-            let hit_dist = ((self.ship.radius + saucer.radius) as i64) * 16;
+            let hit_dist = (self.ship.radius + saucer.radius) * 16;
             if collision_dist_sq_q12_4(self.ship.x, self.ship.y, saucer.x, saucer.y)
                 <= hit_dist * hit_dist
             {

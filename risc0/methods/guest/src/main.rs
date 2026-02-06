@@ -1,7 +1,8 @@
 //! ZK Guest program: replays an Asteroids game tape inside the RISC Zero zkVM.
 //!
-//! INPUT (private, from host via env::read):
-//!   - tape_bytes: Vec<u8>  — raw .tape file bytes
+//! INPUT (private, from host via env::read_slice):
+//!   - tape_len: u32 (4 bytes LE)  — byte length of the tape
+//!   - tape_bytes: [u8]            — raw .tape file bytes (word-padded)
 //!
 //! VERIFICATION (inside guest, NOT visible to verifier):
 //!   - Parses tape (validates magic, version, CRC-32)
@@ -39,9 +40,17 @@ fn main() {
     #[cfg(not(feature = "cycle-prof"))]
     let mut _t = 0u64;
 
-    // Read the raw tape bytes from the host (private input)
-    let tape_bytes: Vec<u8> = env::read();
-    cycle_mark!("env::read", _t);
+    // Read the raw tape bytes from the host (private input).
+    // Using read_slice bypasses serde deserialization, which otherwise inflates
+    // each u8 to a u32 word (4x memory and cycle overhead).
+    let mut len_buf = [0u8; 4];
+    env::read_slice(&mut len_buf);
+    let tape_len = u32::from_le_bytes(len_buf) as usize;
+    let padded_len = (tape_len + 3) & !3;
+    let mut tape_bytes = vec![0u8; padded_len];
+    env::read_slice(&mut tape_bytes);
+    tape_bytes.truncate(tape_len);
+    cycle_mark!("env::read_slice", _t);
 
     // Parse and validate the tape (magic, version, CRC-32 integrity)
     let tape = deserialize_tape(&tape_bytes)

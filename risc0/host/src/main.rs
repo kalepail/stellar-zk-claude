@@ -56,11 +56,19 @@ fn main() {
     println!("  Local verification PASSED");
     println!();
 
-    // Build the executor environment with the tape bytes as input
+    // Build the executor environment with the tape bytes as raw input.
+    // Using write_slice bypasses serde serialization, which otherwise inflates
+    // each u8 to a u32 word (4x overhead) inside the zkVM guest.
     println!("Building executor environment...");
+    let tape_len = tape_bytes.len() as u32;
+    // Pad to word boundary for zkVM word-aligned reads
+    let mut padded_tape = tape_bytes.clone();
+    while padded_tape.len() % 4 != 0 {
+        padded_tape.push(0);
+    }
     let env = ExecutorEnv::builder()
-        .write(&tape_bytes)
-        .unwrap()
+        .write_slice(&tape_len.to_le_bytes())
+        .write_slice(&padded_tape)
         .build()
         .unwrap();
 

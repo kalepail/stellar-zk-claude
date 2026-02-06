@@ -39,10 +39,15 @@ fn main() {
     println!("  Exp. Score: {}", tape.footer.final_score);
     println!();
 
-    // Build executor environment
+    // Build executor environment using raw write_slice (no serde overhead)
+    let tape_len = tape_bytes.len() as u32;
+    let mut padded_tape = tape_bytes.clone();
+    while padded_tape.len() % 4 != 0 {
+        padded_tape.push(0);
+    }
     let env = ExecutorEnv::builder()
-        .write(&tape_bytes)
-        .unwrap()
+        .write_slice(&tape_len.to_le_bytes())
+        .write_slice(&padded_tape)
         .build()
         .unwrap();
 
