@@ -79,8 +79,6 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 {
 pub struct AsteroidsGame {
     // RNG
     rng: SeededRng,
-    #[allow(dead_code)]
-    seed: u32,
 
     // Game state
     score: u32,
@@ -88,7 +86,6 @@ pub struct AsteroidsGame {
     wave: i32,
     frame_count: u32,
     next_extra_life_score: u32,
-    next_id: u32,
     time_since_last_kill: i32,
 
     // Entities
@@ -104,10 +101,6 @@ pub struct AsteroidsGame {
     // Current frame input
     current_input: FrameInput,
 
-    // Thrust particle timer (gameplay state since it affects RNG via visual calls? NO)
-    // Actually in TS, thrust particles use visualRng so it doesn't affect gameplay.
-    // The thrustParticleTimer only controls visual effects. Skip it.
-
     // Game mode
     game_over: bool,
 }
@@ -115,8 +108,6 @@ pub struct AsteroidsGame {
 impl AsteroidsGame {
     /// Create a new game with the given seed and initialize all state.
     pub fn new(seed: u32) -> Self {
-        init_tables();
-
         let rng = SeededRng::new(seed);
 
         let ship_x = to_q12_4(WORLD_WIDTH / 2);  // 7680
@@ -137,19 +128,17 @@ impl AsteroidsGame {
 
         let mut game = Self {
             rng,
-            seed,
             score: 0,
             lives: STARTING_LIVES,
             wave: 0,
             frame_count: 0,
             next_extra_life_score: EXTRA_LIFE_SCORE_STEP,
-            next_id: 2, // ship took id 1
             time_since_last_kill: 0,
             ship,
-            asteroids: Vec::new(),
-            bullets: Vec::new(),
-            saucers: Vec::new(),
-            saucer_bullets: Vec::new(),
+            asteroids: Vec::with_capacity(ASTEROID_CAP + 2),
+            bullets: Vec::with_capacity(SHIP_BULLET_LIMIT),
+            saucers: Vec::with_capacity(3),
+            saucer_bullets: Vec::with_capacity(12),
             saucer_spawn_timer: 0,
             current_input: FrameInput::default(),
             game_over: false,
@@ -315,7 +304,6 @@ impl AsteroidsGame {
             from_saucer: false,
         };
 
-        self.next_id += 1;
         self.bullets.push(bullet);
         // Audio is visual-only, skipped
     }
@@ -434,8 +422,6 @@ impl AsteroidsGame {
         let start_angle = self.rng.next_range(0, 256);
         let spin = self.rng.next_range(-3, 4); // +-3 BAM/frame
 
-        self.next_id += 1;
-
         Asteroid {
             x,
             y,
@@ -541,7 +527,7 @@ impl AsteroidsGame {
 
         // We need to collect saucer bullets to spawn, because we can't borrow self mutably
         // while iterating saucers. Collect spawn requests.
-        let mut bullets_to_spawn: Vec<Bullet> = Vec::new();
+        let mut bullets_to_spawn: Vec<Bullet> = Vec::with_capacity(3);
 
         for saucer in &mut self.saucers {
             if !saucer.alive {
@@ -574,7 +560,6 @@ impl AsteroidsGame {
                 // Spawn saucer bullet
                 let bullet = Self::create_saucer_bullet(
                     &mut self.rng,
-                    &mut self.next_id,
                     saucer,
                     ship_x,
                     ship_y,
@@ -633,14 +618,12 @@ impl AsteroidsGame {
             drift_timer: self.rng.next_range(48, 120),
         };
 
-        self.next_id += 1;
         self.saucers.push(saucer);
     }
 
     /// Create a saucer bullet. This is a static-ish method to avoid borrow conflicts.
     fn create_saucer_bullet(
         rng: &mut SeededRng,
-        next_id: &mut u32,
         saucer: &Saucer,
         ship_x: i32,
         ship_y: i32,
@@ -672,8 +655,6 @@ impl AsteroidsGame {
         let start_x = wrap_x_q12_4(saucer.x + off_dx);
         let start_y = wrap_y_q12_4(saucer.y + off_dy);
 
-        *next_id += 1;
-
         Bullet {
             x: start_x,
             y: start_y,
@@ -701,8 +682,8 @@ impl AsteroidsGame {
         // 6. Ship-saucer
 
         // Collect asteroid destruction events: (index, award_score)
-        let mut destroyed_asteroids: Vec<(usize, bool)> = Vec::new();
-        let mut destroyed_saucers: Vec<usize> = Vec::new();
+        let mut destroyed_asteroids: Vec<(usize, bool)> = Vec::with_capacity(8);
+        let mut destroyed_saucers: Vec<usize> = Vec::with_capacity(3);
 
         // 1. Player bullet-asteroid
         for bullet in &mut self.bullets {
@@ -730,7 +711,7 @@ impl AsteroidsGame {
         }
 
         // 2. Saucer bullet-asteroid
-        let mut saucer_destroyed_asteroids: Vec<(usize, bool)> = Vec::new();
+        let mut saucer_destroyed_asteroids: Vec<(usize, bool)> = Vec::with_capacity(8);
         for bullet in &mut self.saucer_bullets {
             if !bullet.alive {
                 continue;

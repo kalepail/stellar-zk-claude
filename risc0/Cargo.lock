@@ -1178,7 +1178,6 @@ dependencies = [
  "clap",
  "methods",
  "risc0-zkvm",
- "serde",
  "tracing-subscriber 0.3.22",
 ]
 

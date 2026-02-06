@@ -44,6 +44,7 @@ pub enum TapeError {
     UnsupportedVersion(u8),
     Truncated { expected: usize, got: usize },
     CrcMismatch { stored: u32, computed: u32 },
+    ReservedBitsSet { frame: u32, byte: u8 },
 }
 
 impl core::fmt::Display for TapeError {
@@ -57,6 +58,9 @@ impl core::fmt::Display for TapeError {
             }
             TapeError::CrcMismatch { stored, computed } => {
                 write!(f, "CRC mismatch: stored=0x{stored:08x}, computed=0x{computed:08x}")
+            }
+            TapeError::ReservedBitsSet { frame, byte } => {
+                write!(f, "Reserved bits set in frame {frame}: 0x{byte:02x}")
             }
         }
     }
@@ -99,7 +103,16 @@ pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
         });
     }
 
-    let inputs = data[HEADER_SIZE..HEADER_SIZE + frame_count as usize].to_vec();
+    let input_slice = &data[HEADER_SIZE..HEADER_SIZE + frame_count as usize];
+
+    // V-1: Validate reserved bits (upper 4 bits must be zero)
+    for (i, &byte) in input_slice.iter().enumerate() {
+        if byte & 0xF0 != 0 {
+            return Err(TapeError::ReservedBitsSet { frame: i as u32, byte });
+        }
+    }
+
+    let inputs = input_slice.to_vec();
 
     let footer_offset = HEADER_SIZE + frame_count as usize;
     let final_score = read_u32_le(data, footer_offset);
@@ -226,6 +239,31 @@ mod tests {
         assert!(matches!(
             deserialize_tape(&data),
             Err(TapeError::InvalidMagic(0))
+        ));
+    }
+
+    #[test]
+    fn test_reserved_bits_rejected() {
+        let seed: u32 = 0xDEADBEEF;
+        let inputs = vec![0x05u8, 0x1A, 0x00]; // 0x1A has bit 4 set (reserved)
+        let frame_count: u32 = 3;
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&TAPE_MAGIC.to_le_bytes());
+        data.push(TAPE_VERSION);
+        data.extend_from_slice(&[0, 0, 0]);
+        data.extend_from_slice(&seed.to_le_bytes());
+        data.extend_from_slice(&frame_count.to_le_bytes());
+        data.extend_from_slice(&inputs);
+
+        let checksum = crc32(&data);
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&checksum.to_le_bytes());
+
+        assert!(matches!(
+            deserialize_tape(&data),
+            Err(TapeError::ReservedBitsSet { frame: 1, byte: 0x1A })
         ));
     }
 }

@@ -80,14 +80,13 @@ fn main() {
     );
 
     // Extract public outputs from the journal
-    let journal_bytes = receipt.journal.bytes.clone();
-    println!("  Journal size: {} bytes", journal_bytes.len());
+    println!("  Journal size: {} bytes", receipt.journal.bytes.len());
 
     // Decode journal: three u32s committed by the guest via env::commit()
-    // RISC0 serializes u32 as 4 bytes little-endian
-    let proven_seed = u32::from_le_bytes(journal_bytes[0..4].try_into().unwrap());
-    let proven_score = u32::from_le_bytes(journal_bytes[4..8].try_into().unwrap());
-    let proven_frames = u32::from_le_bytes(journal_bytes[8..12].try_into().unwrap());
+    let (proven_seed, proven_score, proven_frames): (u32, u32, u32) = receipt
+        .journal
+        .decode()
+        .expect("Failed to decode journal");
 
     println!();
     println!("=== PROVEN RESULTS ===");
