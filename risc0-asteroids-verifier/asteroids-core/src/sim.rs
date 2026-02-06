@@ -1509,7 +1509,7 @@ mod tests {
 
     #[test]
     fn strict_transition_validator_matches_downloads_fixture() {
-        let bytes = fs::read("../../test-fixtures/from-downloads-asteroids-19c2fc80c3b-16270.tape")
+        let bytes = fs::read("../../test-fixtures/test-real-game.tape")
             .expect("downloads fixture should load");
         let tape = parse_tape(&bytes, 18_000).expect("downloads fixture should parse");
 

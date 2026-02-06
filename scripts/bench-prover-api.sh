@@ -35,7 +35,7 @@ TESTS=(
 )
 
 # Add the large tape if it exists.
-LARGE_TAPE="$(ls "$TAPE_DIR"/*-16270.tape 2>/dev/null | head -n 1)"
+LARGE_TAPE="$(ls "$TAPE_DIR"/test-real-game.tape 2>/dev/null | head -n 1)"
 if [[ -n "$LARGE_TAPE" ]]; then
   large_basename="$(basename "$LARGE_TAPE")"
   TESTS+=(

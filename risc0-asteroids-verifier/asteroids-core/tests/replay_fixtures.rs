@@ -31,7 +31,7 @@ fn verifies_medium_fixture() {
 
 #[test]
 fn verifies_downloads_fixture() {
-    let bytes = load("test-fixtures/from-downloads-asteroids-19c2fc80c3b-16270.tape");
+    let bytes = load("test-fixtures/test-real-game.tape");
     let journal = verify_tape(&bytes, 18_000).expect("downloads fixture must verify");
 
     assert!(journal.frame_count > 0);
