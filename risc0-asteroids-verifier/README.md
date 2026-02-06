@@ -44,3 +44,33 @@ Optional journal output:
 ```bash
 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --journal-out ./journal.json
 ```
+
+## Coverage + Performance Harness
+
+From repo root:
+
+```bash
+bash scripts/bench-risc0.sh
+```
+
+The script writes artifacts to:
+
+- `risc0-asteroids-verifier/benchmarks/runs/<timestamp>/summary.md`
+- `risc0-asteroids-verifier/benchmarks/runs/<timestamp>/metrics.csv`
+- per-run logs / pprof artifacts in the same directory.
+
+Run with regression checks enabled:
+
+```bash
+bash scripts/bench-risc0.sh --check
+```
+
+Include secure medium proving (slow):
+
+```bash
+bash scripts/bench-risc0.sh --full --check
+```
+
+Thresholds are defined in:
+
+- `risc0-asteroids-verifier/benchmarks/thresholds.env`
