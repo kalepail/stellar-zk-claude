@@ -107,3 +107,125 @@ impl fmt::Display for VerifyError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for VerifyError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_code_display_is_stable() {
+        assert_eq!(
+            RuleCode::GlobalModeLivesConsistency.to_string(),
+            "GLOBAL_MODE_LIVES_CONSISTENCY"
+        );
+        assert_eq!(
+            RuleCode::GlobalWaveNonZero.to_string(),
+            "GLOBAL_WAVE_NONZERO"
+        );
+        assert_eq!(
+            RuleCode::GlobalNextExtraLifeScore.to_string(),
+            "GLOBAL_NEXT_EXTRA_LIFE_SCORE"
+        );
+        assert_eq!(RuleCode::ShipBounds.to_string(), "SHIP_BOUNDS");
+        assert_eq!(RuleCode::ShipAngleRange.to_string(), "SHIP_ANGLE_RANGE");
+        assert_eq!(
+            RuleCode::ShipCooldownRange.to_string(),
+            "SHIP_COOLDOWN_RANGE"
+        );
+        assert_eq!(
+            RuleCode::ShipRespawnTimerRange.to_string(),
+            "SHIP_RESPAWN_TIMER_RANGE"
+        );
+        assert_eq!(
+            RuleCode::ShipInvulnerabilityRange.to_string(),
+            "SHIP_INVULNERABILITY_RANGE"
+        );
+        assert_eq!(
+            RuleCode::PlayerBulletLimit.to_string(),
+            "PLAYER_BULLET_LIMIT"
+        );
+        assert_eq!(
+            RuleCode::PlayerBulletState.to_string(),
+            "PLAYER_BULLET_STATE"
+        );
+        assert_eq!(
+            RuleCode::SaucerBulletState.to_string(),
+            "SAUCER_BULLET_STATE"
+        );
+        assert_eq!(RuleCode::AsteroidState.to_string(), "ASTEROID_STATE");
+        assert_eq!(RuleCode::SaucerState.to_string(), "SAUCER_STATE");
+        assert_eq!(RuleCode::SaucerCap.to_string(), "SAUCER_CAP");
+    }
+
+    #[test]
+    fn verify_error_display_includes_context() {
+        assert!(VerifyError::TapeTooShort { actual: 7, min: 28 }
+            .to_string()
+            .contains("need at least 28"));
+        assert!(VerifyError::InvalidMagic { found: 0xDEAD_BEEF }
+            .to_string()
+            .contains("0xdeadbeef"));
+        assert!(VerifyError::UnsupportedVersion { found: 9 }
+            .to_string()
+            .contains("unsupported tape version"));
+        assert_eq!(
+            VerifyError::HeaderReservedNonZero.to_string(),
+            "header reserved bytes are non-zero"
+        );
+        assert!(VerifyError::FrameCountOutOfRange {
+            frame_count: 20_001,
+            max_frames: 18_000
+        }
+        .to_string()
+        .contains("allowed 1..=18000"));
+        assert!(VerifyError::TapeLengthMismatch {
+            expected: 32,
+            actual: 31
+        }
+        .to_string()
+        .contains("expected 32 bytes"));
+        assert!(VerifyError::ReservedInputBitsNonZero {
+            frame: 3,
+            byte: 0xF0
+        }
+        .to_string()
+        .contains("frame 3"));
+        assert!(VerifyError::CrcMismatch {
+            stored: 0x1234_5678,
+            computed: 0xDEAD_BEEF
+        }
+        .to_string()
+        .contains("stored=0x12345678"));
+        assert!(VerifyError::RuleViolation {
+            frame: 12,
+            rule: RuleCode::ShipBounds
+        }
+        .to_string()
+        .contains("rule violation at frame 12"));
+        assert!(VerifyError::FrameCountMismatch {
+            claimed: 10,
+            computed: 9
+        }
+        .to_string()
+        .contains("claimed=10"));
+        assert!(VerifyError::ScoreMismatch {
+            claimed: 100,
+            computed: 99
+        }
+        .to_string()
+        .contains("score mismatch"));
+        assert!(VerifyError::RngMismatch {
+            claimed: 0xABCD_EF01,
+            computed: 0x1020_3040
+        }
+        .to_string()
+        .contains("claimed=0xabcdef01"));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn verify_error_implements_std_error() {
+        fn assert_is_std_error<T: std::error::Error>() {}
+        assert_is_std_error::<VerifyError>();
+    }
+}

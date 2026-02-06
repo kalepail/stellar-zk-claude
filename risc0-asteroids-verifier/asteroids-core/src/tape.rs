@@ -215,9 +215,20 @@ pub fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
 
+    fn footer_offset(frame_count: usize) -> usize {
+        TAPE_HEADER_SIZE + frame_count
+    }
+
     #[test]
     fn crc_matches_known_vector() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn input_byte_roundtrip_for_all_valid_bit_patterns() {
+        for byte in 0u8..=0x0F {
+            assert_eq!(encode_input_byte(decode_input_byte(byte)), byte);
+        }
     }
 
     #[test]
@@ -234,12 +245,66 @@ mod tests {
     }
 
     #[test]
+    fn rejects_tape_too_short() {
+        let bytes = [0u8; TAPE_HEADER_SIZE + TAPE_FOOTER_SIZE - 1];
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::TapeTooShort { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_magic() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[0] ^= 0x01;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::InvalidMagic { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_version() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[4] = TAPE_VERSION + 1;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::UnsupportedVersion { .. })
+        ));
+    }
+
+    #[test]
     fn rejects_nonzero_header_reserved_bytes() {
         let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes[5] = 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
             Err(VerifyError::HeaderReservedNonZero)
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_frame_count() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::FrameCountOutOfRange {
+                frame_count: 0,
+                max_frames: 100
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_frame_count_above_max() {
+        let bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        assert!(matches!(
+            parse_tape(&bytes, 0),
+            Err(VerifyError::FrameCountOutOfRange {
+                frame_count: 1,
+                max_frames: 0
+            })
         ));
     }
 
@@ -251,5 +316,53 @@ mod tests {
             parse_tape(&bytes, 100),
             Err(VerifyError::TapeLengthMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_shorter_than_declared_frame_count() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8, 0x00u8], 0, 0x1111_2222);
+        bytes.pop();
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::TapeLengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_reserved_input_bits_nonzero() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[TAPE_HEADER_SIZE] = 0x80;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::ReservedInputBitsNonZero {
+                frame: 0,
+                byte: 0x80
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_crc_mismatch() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let checksum_offset = footer_offset(1) + 8;
+        bytes[checksum_offset] ^= 0x01;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::CrcMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn serialize_tape_writes_crc_over_header_and_body() {
+        let inputs = [0x01u8, 0x02u8, 0x04u8, 0x08u8];
+        let bytes = serialize_tape(0xABCD_1234, &inputs, 77, 0xCAFEBABE);
+        let checksum_offset = footer_offset(inputs.len()) + 8;
+        let stored = u32::from_le_bytes([
+            bytes[checksum_offset],
+            bytes[checksum_offset + 1],
+            bytes[checksum_offset + 2],
+            bytes[checksum_offset + 3],
+        ]);
+        assert_eq!(stored, crc32(&bytes[..footer_offset(inputs.len())]));
     }
 }

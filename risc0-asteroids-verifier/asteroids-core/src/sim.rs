@@ -1039,11 +1039,142 @@ impl Game {
 mod tests {
     use super::*;
 
+    fn assert_invariant_violation(mutator: impl FnOnce(&mut Game), expected: RuleCode) {
+        let mut game = Game::new(0xDEAD_BEEF);
+        mutator(&mut game);
+        assert_eq!(game.validate_invariants(), Err(expected));
+    }
+
+    fn valid_bullet() -> Bullet {
+        Bullet {
+            x: 100,
+            y: 100,
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: 2,
+            life: 1,
+        }
+    }
+
+    fn valid_saucer() -> Saucer {
+        Saucer {
+            x: 1_000,
+            y: 1_000,
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: SAUCER_RADIUS_LARGE,
+            small: false,
+            fire_cooldown: 0,
+            drift_timer: 0,
+        }
+    }
+
     #[test]
     fn same_seed_and_inputs_are_deterministic() {
         let inputs = [0x00u8, 0x01, 0x04, 0x0C, 0x00, 0x08, 0x02, 0x00];
         let a = replay(0x1234_5678, &inputs);
         let b = replay(0x1234_5678, &inputs);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn strict_replay_matches_regular_replay_on_random_inputs() {
+        let mut rng = SeededRng::new(0xC0FF_EE00);
+
+        for _ in 0..64 {
+            let seed = rng.next();
+            let len = (rng.next() % 128 + 1) as usize;
+            let mut inputs = vec![0u8; len];
+            for input in &mut inputs {
+                *input = (rng.next() & 0x0F) as u8;
+            }
+
+            let regular = replay(seed, &inputs);
+            let strict = replay_strict(seed, &inputs).expect("strict replay should succeed");
+            assert_eq!(regular, strict);
+        }
+    }
+
+    #[test]
+    fn invariant_checks_report_expected_rule_codes() {
+        assert_invariant_violation(|game| game.wave = 0, RuleCode::GlobalWaveNonZero);
+        assert_invariant_violation(
+            |game| {
+                game.mode = GameMode::GameOver;
+                game.lives = 1;
+            },
+            RuleCode::GlobalModeLivesConsistency,
+        );
+        assert_invariant_violation(
+            |game| game.next_extra_life_score = game.score,
+            RuleCode::GlobalNextExtraLifeScore,
+        );
+        assert_invariant_violation(|game| game.ship.x = -1, RuleCode::ShipBounds);
+        assert_invariant_violation(|game| game.ship.angle = 256, RuleCode::ShipAngleRange);
+        assert_invariant_violation(
+            |game| game.ship.fire_cooldown = -1,
+            RuleCode::ShipCooldownRange,
+        );
+        assert_invariant_violation(
+            |game| game.ship.respawn_timer = -1,
+            RuleCode::ShipRespawnTimerRange,
+        );
+        assert_invariant_violation(
+            |game| game.ship.invulnerable_timer = -1,
+            RuleCode::ShipInvulnerabilityRange,
+        );
+
+        assert_invariant_violation(
+            |game| {
+                game.bullets.clear();
+                for _ in 0..(SHIP_BULLET_LIMIT + 1) {
+                    game.bullets.push(valid_bullet());
+                }
+            },
+            RuleCode::PlayerBulletLimit,
+        );
+        assert_invariant_violation(
+            |game| {
+                game.bullets.clear();
+                let mut bullet = valid_bullet();
+                bullet.life = 0;
+                game.bullets.push(bullet);
+            },
+            RuleCode::PlayerBulletState,
+        );
+        assert_invariant_violation(
+            |game| {
+                game.saucer_bullets.clear();
+                let mut bullet = valid_bullet();
+                bullet.x = -1;
+                game.saucer_bullets.push(bullet);
+            },
+            RuleCode::SaucerBulletState,
+        );
+        assert_invariant_violation(
+            |game| game.asteroids[0].angle = 256,
+            RuleCode::AsteroidState,
+        );
+        assert_invariant_violation(
+            |game| {
+                game.wave = 1;
+                game.saucers.clear();
+                game.saucers.push(valid_saucer());
+                game.saucers.push(valid_saucer());
+            },
+            RuleCode::SaucerCap,
+        );
+        assert_invariant_violation(
+            |game| {
+                game.wave = 7;
+                game.saucers.clear();
+                let mut saucer = valid_saucer();
+                saucer.fire_cooldown = -1;
+                game.saucers.push(saucer);
+            },
+            RuleCode::SaucerState,
+        );
     }
 }
