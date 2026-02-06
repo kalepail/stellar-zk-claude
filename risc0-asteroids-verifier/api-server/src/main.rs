@@ -492,13 +492,23 @@ async fn enqueue_proof_job(
         }
 
         if jobs.len() >= state.max_jobs {
-            return json_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                format!(
-                    "job store is at capacity ({}). delete finished jobs or wait for TTL cleanup",
-                    state.max_jobs
-                ),
-            );
+            let oldest = jobs
+                .values()
+                .filter(|j| matches!(j.status, JobStatus::Succeeded | JobStatus::Failed))
+                .min_by_key(|j| j.finished_at_unix_s.unwrap_or(j.created_at_unix_s))
+                .map(|j| j.job_id);
+            if let Some(evict_id) = oldest {
+                tracing::info!(job_id = %evict_id, "evicting oldest finished job to make room");
+                jobs.remove(&evict_id);
+            } else {
+                return json_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    format!(
+                        "job store is at capacity ({}) with no finished jobs to evict",
+                        state.max_jobs
+                    ),
+                );
+            }
         }
 
         jobs.insert(job_id, job);
