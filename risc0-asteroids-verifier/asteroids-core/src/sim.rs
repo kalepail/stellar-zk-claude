@@ -1536,4 +1536,133 @@ mod tests {
                 .expect("post-step state must satisfy invariants");
         }
     }
+
+    #[test]
+    fn wave_does_not_advance_with_saucers_alive() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        let initial_wave = game.wave;
+
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucers.push(valid_saucer());
+
+        game.step(0x00);
+        assert_eq!(game.wave, initial_wave);
+    }
+
+    #[test]
+    fn no_scoring_after_game_over() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+        game.score = 0;
+        game.next_extra_life_score = EXTRA_LIFE_SCORE_STEP;
+
+        game.mode = GameMode::GameOver;
+        game.ship.can_control = false;
+        game.ship.respawn_timer = 99_999;
+        game.lives = 0;
+
+        game.asteroids.push(Asteroid {
+            x: 1_000,
+            y: 1_000,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+
+        for _ in 0..20 {
+            game.step(0x08);
+        }
+
+        assert_eq!(game.score, 0);
+        assert!(game.bullets.is_empty());
+    }
+
+    #[test]
+    fn game_over_prevents_wave_spawn() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        let initial_wave = game.wave;
+
+        game.mode = GameMode::GameOver;
+        game.ship.can_control = false;
+        game.ship.respawn_timer = 99_999;
+        game.lives = 0;
+        game.asteroids.clear();
+        game.saucers.clear();
+
+        for _ in 0..20 {
+            game.step(0x00);
+        }
+
+        assert!(game.asteroids.is_empty());
+        assert_eq!(game.wave, initial_wave);
+    }
+
+    #[test]
+    fn asteroid_cap_limits_split_to_one() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+        game.score = 0;
+        game.next_extra_life_score = EXTRA_LIFE_SCORE_STEP;
+
+        for i in 0..ASTEROID_CAP {
+            game.asteroids.push(Asteroid {
+                x: ((i as i32 * 480) % WORLD_WIDTH_Q12_4),
+                y: 800,
+                vx: 0,
+                vy: 0,
+                angle: 0,
+                alive: true,
+                radius: ASTEROID_RADIUS_SMALL,
+                size: AsteroidSize::Small,
+                spin: 0,
+            });
+        }
+
+        let ax = 3_200;
+        let ay = 3_200;
+        game.asteroids.push(Asteroid {
+            x: ax,
+            y: ay,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+        game.bullets.push(Bullet {
+            x: ax,
+            y: ay,
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: 2,
+            life: SHIP_BULLET_LIFETIME_FRAMES,
+        });
+
+        game.handle_collisions();
+        game.prune_destroyed_entities();
+
+        let alive_count = game.asteroids.iter().filter(|entry| entry.alive).count();
+        let medium_count = game
+            .asteroids
+            .iter()
+            .filter(|entry| entry.alive && matches!(entry.size, AsteroidSize::Medium))
+            .count();
+
+        assert_eq!(medium_count, 1);
+        assert_eq!(alive_count, ASTEROID_CAP + 1);
+    }
 }

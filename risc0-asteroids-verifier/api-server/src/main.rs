@@ -26,6 +26,8 @@ const DEFAULT_JOB_SWEEP_SECS: u64 = 60;
 const DEFAULT_MAX_JOBS: usize = 64;
 const DEFAULT_MIN_SEGMENT_LIMIT_PO2: u32 = 16;
 const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 22;
+const DEFAULT_HTTP_MAX_CONNECTIONS: usize = 25_000;
+const DEFAULT_HTTP_KEEP_ALIVE_SECS: u64 = 75;
 
 #[derive(Debug, Clone, Copy)]
 struct ServerPolicy {
@@ -109,6 +111,9 @@ struct AppState {
     max_jobs: usize,
     job_ttl_secs: u64,
     policy: ServerPolicy,
+    http_workers: Option<usize>,
+    http_max_connections: usize,
+    http_keep_alive_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -221,6 +226,10 @@ struct HealthResponse {
     max_frames: u32,
     min_segment_limit_po2: u32,
     max_segment_limit_po2: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    http_workers: Option<usize>,
+    http_max_connections: usize,
+    http_keep_alive_secs: u64,
 }
 
 impl From<&ProveTapeRequest> for ProveTapeQuery {
@@ -258,6 +267,13 @@ fn read_env_usize(name: &str, default: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default)
+}
+
+fn read_env_optional_usize(name: &str) -> Option<usize> {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
 }
 
 fn read_env_u64(name: &str, default: u64) -> u64 {
@@ -413,6 +429,9 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         max_frames: state.policy.max_frames,
         min_segment_limit_po2: state.policy.min_segment_limit_po2,
         max_segment_limit_po2: state.policy.max_segment_limit_po2,
+        http_workers: state.http_workers,
+        http_max_connections: state.http_max_connections,
+        http_keep_alive_secs: state.http_keep_alive_secs,
     })
 }
 
@@ -627,18 +646,24 @@ async fn main() -> std::io::Result<()> {
     let max_jobs = read_env_usize("MAX_JOBS", DEFAULT_MAX_JOBS);
     let job_ttl_secs = read_env_u64("JOB_TTL_SECS", DEFAULT_JOB_TTL_SECS);
     let job_sweep_secs = read_env_u64("JOB_SWEEP_SECS", DEFAULT_JOB_SWEEP_SECS);
+    let http_workers = read_env_optional_usize("HTTP_WORKERS");
+    let http_max_connections = read_env_usize("HTTP_MAX_CONNECTIONS", DEFAULT_HTTP_MAX_CONNECTIONS);
+    let http_keep_alive_secs = read_env_u64("HTTP_KEEP_ALIVE_SECS", DEFAULT_HTTP_KEEP_ALIVE_SECS);
     let json_limit = read_env_usize("JSON_LIMIT_BYTES", max_tape_bytes.saturating_mul(4));
     let policy = ServerPolicy::from_env();
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}]",
+        "starting risc0 asteroids api: bind_addr={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={}",
         bind_addr,
         prover_concurrency,
         max_tape_bytes,
         max_jobs,
         policy.max_frames,
         policy.min_segment_limit_po2,
-        policy.max_segment_limit_po2
+        policy.max_segment_limit_po2,
+        http_workers,
+        http_max_connections,
+        http_keep_alive_secs
     );
 
     let state = AppState {
@@ -648,10 +673,13 @@ async fn main() -> std::io::Result<()> {
         max_jobs,
         job_ttl_secs,
         policy,
+        http_workers,
+        http_max_connections,
+        http_keep_alive_secs,
     };
     spawn_job_cleanup_task(state.clone(), job_sweep_secs);
 
-    HttpServer::new(move || {
+    let mut server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
             .allow_any_method()
@@ -683,9 +711,14 @@ async fn main() -> std::io::Result<()> {
                 web::post().to(verify_receipt_endpoint),
             )
     })
-    .bind(bind_addr)?
-    .run()
-    .await
+    .max_connections(http_max_connections)
+    .keep_alive(Duration::from_secs(http_keep_alive_secs));
+
+    if let Some(workers) = http_workers {
+        server = server.workers(workers);
+    }
+
+    server.bind(bind_addr)?.run().await
 }
 
 #[cfg(test)]
@@ -712,6 +745,9 @@ mod tests {
             max_jobs: DEFAULT_MAX_JOBS,
             job_ttl_secs: DEFAULT_JOB_TTL_SECS,
             policy: strict_policy(),
+            http_workers: None,
+            http_max_connections: DEFAULT_HTTP_MAX_CONNECTIONS,
+            http_keep_alive_secs: DEFAULT_HTTP_KEEP_ALIVE_SECS,
         }
     }
 

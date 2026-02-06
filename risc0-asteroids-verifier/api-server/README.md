@@ -117,6 +117,9 @@ Most important knobs:
 - `MAX_TAPE_BYTES`: request payload cap
 - `MAX_FRAMES`: upper bound for replay length
 - `MIN_SEGMENT_LIMIT_PO2`, `MAX_SEGMENT_LIMIT_PO2`: allowed segment bounds
+- `HTTP_MAX_CONNECTIONS`: inbound socket ceiling for the Actix server
+- `HTTP_KEEP_ALIVE_SECS`: keep-alive window for idle HTTP connections
+- `HTTP_WORKERS` (optional): explicit number of HTTP workers; unset uses Actix default
 
 ## Vast.ai Deployment (Docker)
 

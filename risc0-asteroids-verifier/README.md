@@ -58,6 +58,12 @@ Optional performance tuning knobs:
 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --receipt-kind composite --segment-limit-po2 20
 ```
 
+Execute-only guest benchmark (no proof generation):
+
+```bash
+cargo run -p host --release --bin benchmark -- --tape ../test-fixtures/test-medium.tape
+```
+
 ## HTTP API
 
 Run the API server locally:
