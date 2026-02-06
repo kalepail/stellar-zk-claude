@@ -18,7 +18,7 @@ use crate::fixed_point::{
     displace_q12_4, shortest_delta_q12_4, sin_bam, velocity_q8_8, wrap_x_q12_4, wrap_y_q12_4,
 };
 use crate::rng::SeededRng;
-use crate::tape::decode_input_byte;
+use crate::tape::{decode_input_byte, FrameInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GameMode {
@@ -119,6 +119,24 @@ pub struct ReplayViolation {
     pub rule: RuleCode,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TransitionState {
+    frame_count: u32,
+    score: u32,
+    wave: i32,
+    asteroids: usize,
+    bullets: usize,
+    saucers: usize,
+    ship_x: i32,
+    ship_y: i32,
+    ship_vx: i32,
+    ship_vy: i32,
+    ship_angle: i32,
+    ship_can_control: bool,
+    ship_fire_cooldown: i32,
+    ship_respawn_timer: i32,
+}
+
 const SHIP_SPAWN_X_Q12_4: i32 = 7_680;
 const SHIP_SPAWN_Y_Q12_4: i32 = 5_760;
 const SHIP_RESPAWN_CLEAR_RADIUS_Q12_4: i32 = 1_920;
@@ -159,7 +177,15 @@ pub fn replay_strict(seed: u32, inputs: &[u8]) -> Result<ReplayResult, ReplayVio
     })?;
 
     for input in inputs {
+        let before_step = game.transition_state();
         game.step(*input);
+        let after_step = game.transition_state();
+
+        validate_transition(&before_step, &after_step, *input).map_err(|rule| ReplayViolation {
+            frame_count: game.frame_count,
+            rule,
+        })?;
+
         game.validate_invariants().map_err(|rule| ReplayViolation {
             frame_count: game.frame_count,
             rule,
@@ -171,6 +197,181 @@ pub fn replay_strict(seed: u32, inputs: &[u8]) -> Result<ReplayResult, ReplayVio
         final_rng_state: game.rng.state(),
         frame_count: game.frame_count,
     })
+}
+
+fn validate_transition(
+    prev: &TransitionState,
+    next: &TransitionState,
+    input_byte: u8,
+) -> Result<(), RuleCode> {
+    if next.score < prev.score {
+        return Err(RuleCode::ProgressionScoreDelta);
+    }
+    if !is_legal_score_delta(next.score - prev.score) {
+        return Err(RuleCode::ProgressionScoreDelta);
+    }
+
+    if next.wave < prev.wave || next.wave > prev.wave + 1 {
+        return Err(RuleCode::ProgressionWaveAdvance);
+    }
+    let wave_advanced_this_frame = next.wave == prev.wave + 1;
+    if wave_advanced_this_frame {
+        let expected_asteroid_count = wave_asteroid_count(next.wave);
+        if next.asteroids != expected_asteroid_count || next.saucers != 0 {
+            return Err(RuleCode::ProgressionWaveAdvance);
+        }
+    }
+
+    let ship_speed_sq =
+        (next.ship_vx as i64 * next.ship_vx as i64) + (next.ship_vy as i64 * next.ship_vy as i64);
+    if ship_speed_sq > SHIP_MAX_SPEED_SQ_Q16_16 as i64 {
+        return Err(RuleCode::ShipSpeedClamp);
+    }
+
+    let input = decode_input_byte(input_byte);
+    let turn_delta = (next.ship_angle - prev.ship_angle) & 0xff;
+    if !wave_advanced_this_frame {
+        if prev.ship_can_control {
+            let expected_turn_delta = expected_ship_turn_delta(input);
+            if turn_delta != expected_turn_delta {
+                return Err(RuleCode::ShipTurnRateStep);
+            }
+        } else if !next.ship_can_control && turn_delta != 0 {
+            return Err(RuleCode::ShipTurnRateStep);
+        }
+    }
+
+    let ship_died_this_frame = prev.ship_can_control
+        && !next.ship_can_control
+        && next.ship_respawn_timer >= SHIP_RESPAWN_FRAMES;
+    if cfg!(test) && !wave_advanced_this_frame {
+        let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4) as i64;
+        let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4) as i64;
+        let respawned_this_frame = !prev.ship_can_control && next.ship_can_control;
+
+        if prev.ship_can_control {
+            let step_sq = (dx * dx) + (dy * dy);
+            if step_sq > max_ship_step_sq_q12_4() {
+                return Err(RuleCode::ShipPositionStep);
+            }
+        } else if !respawned_this_frame && (dx != 0 || dy != 0) {
+            return Err(RuleCode::ShipPositionStep);
+        }
+    }
+
+    let expected_fire_cooldown = expected_ship_fire_cooldown(
+        prev,
+        next,
+        input,
+        wave_advanced_this_frame,
+        ship_died_this_frame,
+    );
+    if next.ship_fire_cooldown != expected_fire_cooldown {
+        return Err(RuleCode::PlayerBulletCooldownBypass);
+    }
+
+    Ok(())
+}
+
+#[inline]
+fn wave_asteroid_count(wave: i32) -> usize {
+    core::cmp::min(16, 4 + (wave - 1) * 2) as usize
+}
+
+#[inline]
+fn max_ship_step_sq_q12_4() -> i64 {
+    (SHIP_MAX_SPEED_SQ_Q16_16 as i64 >> 8) + 4
+}
+
+#[inline]
+fn expected_ship_turn_delta(input: FrameInput) -> i32 {
+    if input.left == input.right {
+        0
+    } else if input.left {
+        (256 - SHIP_TURN_SPEED_BAM) & 0xff
+    } else {
+        SHIP_TURN_SPEED_BAM
+    }
+}
+
+#[inline]
+fn expected_ship_fire_cooldown(
+    prev: &TransitionState,
+    next: &TransitionState,
+    input: FrameInput,
+    wave_advanced_this_frame: bool,
+    ship_died_this_frame: bool,
+) -> i32 {
+    if wave_advanced_this_frame {
+        return 0;
+    }
+    if ship_died_this_frame {
+        return 0;
+    }
+
+    let decremented = if prev.ship_fire_cooldown > 0 {
+        prev.ship_fire_cooldown - 1
+    } else {
+        prev.ship_fire_cooldown
+    };
+
+    if !prev.ship_can_control {
+        if next.ship_can_control {
+            0
+        } else {
+            decremented
+        }
+    } else if input.fire && decremented <= 0 && prev.bullets < SHIP_BULLET_LIMIT {
+        SHIP_BULLET_COOLDOWN_FRAMES
+    } else {
+        decremented
+    }
+}
+
+fn is_legal_score_delta(delta: u32) -> bool {
+    const EVENT_VALUES: [u32; 5] = [
+        SCORE_LARGE_ASTEROID,
+        SCORE_MEDIUM_ASTEROID,
+        SCORE_SMALL_ASTEROID,
+        SCORE_LARGE_SAUCER,
+        SCORE_SMALL_SAUCER,
+    ];
+
+    if delta == 0 {
+        return true;
+    }
+
+    if delta > (SHIP_BULLET_LIMIT as u32 * SCORE_SMALL_SAUCER) {
+        return false;
+    }
+
+    for a in EVENT_VALUES {
+        if a == delta {
+            return true;
+        }
+
+        for b in EVENT_VALUES {
+            let two = a + b;
+            if two == delta {
+                return true;
+            }
+
+            for c in EVENT_VALUES {
+                let three = two + c;
+                if three == delta {
+                    return true;
+                }
+
+                for d in EVENT_VALUES {
+                    if three + d == delta {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 pub fn replay_with_checkpoints(
@@ -296,6 +497,25 @@ impl Game {
             ship_fire_cooldown: self.ship.fire_cooldown,
             ship_respawn_timer: self.ship.respawn_timer,
             ship_invulnerable_timer: self.ship.invulnerable_timer,
+        }
+    }
+
+    fn transition_state(&self) -> TransitionState {
+        TransitionState {
+            frame_count: self.frame_count,
+            score: self.score,
+            wave: self.wave,
+            asteroids: self.asteroids.len(),
+            bullets: self.bullets.len(),
+            saucers: self.saucers.len(),
+            ship_x: self.ship.x,
+            ship_y: self.ship.y,
+            ship_vx: self.ship.vx,
+            ship_vy: self.ship.vy,
+            ship_angle: self.ship.angle,
+            ship_can_control: self.ship.can_control,
+            ship_fire_cooldown: self.ship.fire_cooldown,
+            ship_respawn_timer: self.ship.respawn_timer,
         }
     }
 
@@ -1038,11 +1258,48 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tape::parse_tape;
+    use std::fs;
 
     fn assert_invariant_violation(mutator: impl FnOnce(&mut Game), expected: RuleCode) {
         let mut game = Game::new(0xDEAD_BEEF);
         mutator(&mut game);
         assert_eq!(game.validate_invariants(), Err(expected));
+    }
+
+    fn assert_transition_violation_at_frame(
+        inputs: &[u8],
+        frame_to_mutate: u32,
+        mutate: impl FnOnce(&mut TransitionState),
+        expected: RuleCode,
+    ) {
+        let mut game = Game::new(0xDEAD_BEEF);
+        game.validate_invariants()
+            .expect("initial state must be valid");
+
+        let mut mutate = Some(mutate);
+        for input in inputs {
+            let before_step = game.transition_state();
+            game.step(*input);
+            let mut after_step = game.transition_state();
+
+            if after_step.frame_count == frame_to_mutate {
+                if let Some(mutate_once) = mutate.take() {
+                    mutate_once(&mut after_step);
+                }
+            }
+
+            if let Err(rule) = validate_transition(&before_step, &after_step, *input) {
+                assert_eq!(after_step.frame_count, frame_to_mutate);
+                assert_eq!(rule, expected);
+                return;
+            }
+
+            game.validate_invariants()
+                .expect("post-step state must satisfy invariants");
+        }
+
+        panic!("expected transition violation at frame {frame_to_mutate}");
     }
 
     fn valid_bullet() -> Bullet {
@@ -1176,5 +1433,107 @@ mod tests {
             },
             RuleCode::SaucerState,
         );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_ship_teleport() {
+        assert_transition_violation_at_frame(
+            &[0x00],
+            1,
+            |checkpoint| {
+                checkpoint.ship_x = wrap_x_q12_4(checkpoint.ship_x + 512);
+            },
+            RuleCode::ShipPositionStep,
+        );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_turn_rate_jump() {
+        assert_transition_violation_at_frame(
+            &[0x00],
+            1,
+            |checkpoint| {
+                checkpoint.ship_angle = (checkpoint.ship_angle + 17) & 0xff;
+            },
+            RuleCode::ShipTurnRateStep,
+        );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_speed_clamp_bypass() {
+        assert_transition_violation_at_frame(
+            &[0x00],
+            1,
+            |checkpoint| {
+                checkpoint.ship_vx = 5_000;
+            },
+            RuleCode::ShipSpeedClamp,
+        );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_cooldown_bypass() {
+        assert_transition_violation_at_frame(
+            &[0x08, 0x08],
+            2,
+            |checkpoint| {
+                checkpoint.ship_fire_cooldown = SHIP_BULLET_COOLDOWN_FRAMES;
+            },
+            RuleCode::PlayerBulletCooldownBypass,
+        );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_illegal_score_increment() {
+        assert_transition_violation_at_frame(
+            &[0x00],
+            1,
+            |checkpoint| {
+                checkpoint.score += 30;
+            },
+            RuleCode::ProgressionScoreDelta,
+        );
+    }
+
+    #[test]
+    fn strict_replay_detects_forced_illegal_wave_advance() {
+        assert_transition_violation_at_frame(
+            &[0x00],
+            1,
+            |checkpoint| {
+                checkpoint.wave += 1;
+            },
+            RuleCode::ProgressionWaveAdvance,
+        );
+    }
+
+    #[test]
+    fn strict_transition_validator_matches_downloads_fixture() {
+        let bytes = fs::read("../../test-fixtures/from-downloads-asteroids-19c2fc80c3b-16270.tape")
+            .expect("downloads fixture should load");
+        let tape = parse_tape(&bytes, 18_000).expect("downloads fixture should parse");
+
+        let mut game = Game::new(tape.header.seed);
+        game.validate_invariants()
+            .expect("initial state must be valid");
+
+        for (idx, input) in tape.inputs.iter().enumerate() {
+            let before_step = game.transition_state();
+            game.step(*input);
+            let after_step = game.transition_state();
+            if let Err(rule) = validate_transition(&before_step, &after_step, *input) {
+                panic!(
+                    "transition violation at frame {} rule {:?} input=0x{:02x} before={:?} after={:?}",
+                    idx + 1,
+                    rule,
+                    input,
+                    before_step,
+                    after_step
+                );
+            }
+
+            game.validate_invariants()
+                .expect("post-step state must satisfy invariants");
+        }
     }
 }

@@ -5,11 +5,17 @@ pub enum RuleCode {
     GlobalModeLivesConsistency,
     GlobalWaveNonZero,
     GlobalNextExtraLifeScore,
+    ProgressionScoreDelta,
+    ProgressionWaveAdvance,
+    ShipTurnRateStep,
+    ShipSpeedClamp,
+    ShipPositionStep,
     ShipBounds,
     ShipAngleRange,
     ShipCooldownRange,
     ShipRespawnTimerRange,
     ShipInvulnerabilityRange,
+    PlayerBulletCooldownBypass,
     PlayerBulletLimit,
     PlayerBulletState,
     SaucerBulletState,
@@ -24,11 +30,17 @@ impl fmt::Display for RuleCode {
             Self::GlobalModeLivesConsistency => write!(f, "GLOBAL_MODE_LIVES_CONSISTENCY"),
             Self::GlobalWaveNonZero => write!(f, "GLOBAL_WAVE_NONZERO"),
             Self::GlobalNextExtraLifeScore => write!(f, "GLOBAL_NEXT_EXTRA_LIFE_SCORE"),
+            Self::ProgressionScoreDelta => write!(f, "PROGRESSION_SCORE_DELTA"),
+            Self::ProgressionWaveAdvance => write!(f, "PROGRESSION_WAVE_ADVANCE"),
+            Self::ShipTurnRateStep => write!(f, "SHIP_TURN_RATE_STEP"),
+            Self::ShipSpeedClamp => write!(f, "SHIP_SPEED_CLAMP"),
+            Self::ShipPositionStep => write!(f, "SHIP_POSITION_STEP"),
             Self::ShipBounds => write!(f, "SHIP_BOUNDS"),
             Self::ShipAngleRange => write!(f, "SHIP_ANGLE_RANGE"),
             Self::ShipCooldownRange => write!(f, "SHIP_COOLDOWN_RANGE"),
             Self::ShipRespawnTimerRange => write!(f, "SHIP_RESPAWN_TIMER_RANGE"),
             Self::ShipInvulnerabilityRange => write!(f, "SHIP_INVULNERABILITY_RANGE"),
+            Self::PlayerBulletCooldownBypass => write!(f, "PLAYER_BULLET_COOLDOWN_BYPASS"),
             Self::PlayerBulletLimit => write!(f, "PLAYER_BULLET_LIMIT"),
             Self::PlayerBulletState => write!(f, "PLAYER_BULLET_STATE"),
             Self::SaucerBulletState => write!(f, "SAUCER_BULLET_STATE"),
@@ -126,6 +138,20 @@ mod tests {
             RuleCode::GlobalNextExtraLifeScore.to_string(),
             "GLOBAL_NEXT_EXTRA_LIFE_SCORE"
         );
+        assert_eq!(
+            RuleCode::ProgressionScoreDelta.to_string(),
+            "PROGRESSION_SCORE_DELTA"
+        );
+        assert_eq!(
+            RuleCode::ProgressionWaveAdvance.to_string(),
+            "PROGRESSION_WAVE_ADVANCE"
+        );
+        assert_eq!(
+            RuleCode::ShipTurnRateStep.to_string(),
+            "SHIP_TURN_RATE_STEP"
+        );
+        assert_eq!(RuleCode::ShipSpeedClamp.to_string(), "SHIP_SPEED_CLAMP");
+        assert_eq!(RuleCode::ShipPositionStep.to_string(), "SHIP_POSITION_STEP");
         assert_eq!(RuleCode::ShipBounds.to_string(), "SHIP_BOUNDS");
         assert_eq!(RuleCode::ShipAngleRange.to_string(), "SHIP_ANGLE_RANGE");
         assert_eq!(
@@ -139,6 +165,10 @@ mod tests {
         assert_eq!(
             RuleCode::ShipInvulnerabilityRange.to_string(),
             "SHIP_INVULNERABILITY_RANGE"
+        );
+        assert_eq!(
+            RuleCode::PlayerBulletCooldownBypass.to_string(),
+            "PLAYER_BULLET_COOLDOWN_BYPASS"
         );
         assert_eq!(
             RuleCode::PlayerBulletLimit.to_string(),
