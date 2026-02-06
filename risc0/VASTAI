@@ -1,3 +1,4 @@
+# Requires vast.ai image: nvidia/cuda:12.8.0-devel-ubuntu24.04 (CUDA 13.x is NOT compatible with risc0)
 env >> /etc/environment
 mkdir -p ${DATA_DIRECTORY:-/workspace}
 

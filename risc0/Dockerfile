@@ -1,5 +1,5 @@
 # --- Builder stage ---
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
@@ -24,7 +24,7 @@ COPY . .
 RUN RUSTFLAGS="-C target-cpu=native" cargo build --release --package api-server --features cuda
 
 # --- Runtime stage ---
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
