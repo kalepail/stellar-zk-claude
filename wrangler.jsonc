@@ -37,9 +37,8 @@
         "queue": "stellar-zk-proof-jobs",
         "max_batch_size": 1,
         "max_batch_timeout": 1,
-        "max_retries": 50,
-        "max_concurrency": 1,
-        "retry_delay": 3
+        "max_retries": 10,
+        "max_concurrency": 1
       }
     ]
   },

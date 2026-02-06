@@ -31,6 +31,7 @@ export interface ProverTracking {
   status: "queued" | "running" | "succeeded" | "failed" | null;
   statusUrl: string | null;
   lastPolledAt: string | null;
+  pollingErrors: number;
 }
 
 export interface ProofJournal {
