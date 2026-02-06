@@ -487,9 +487,18 @@ export class AsteroidsGame {
 
     // Replay speed controls
     if (this.mode === "replay") {
-      if (this.input.consumePress("Digit1")) { this.replaySpeed = 1; this.accumulator = 0; }
-      if (this.input.consumePress("Digit2")) { this.replaySpeed = 2; this.accumulator = 0; }
-      if (this.input.consumePress("Digit4")) { this.replaySpeed = 4; this.accumulator = 0; }
+      if (this.input.consumePress("Digit1")) {
+        this.replaySpeed = 1;
+        this.accumulator = 0;
+      }
+      if (this.input.consumePress("Digit2")) {
+        this.replaySpeed = 2;
+        this.accumulator = 0;
+      }
+      if (this.input.consumePress("Digit4")) {
+        this.replaySpeed = 4;
+        this.accumulator = 0;
+      }
       if (this.input.consumePress("Space")) {
         this.replayPaused = !this.replayPaused;
         // Reset timing to avoid accumulator jump after unpause
@@ -545,10 +554,8 @@ export class AsteroidsGame {
 
     // Set up live input source (unless an external source is already set)
     if (!this.inputSource || this.inputSource instanceof TapeInputSource) {
-      this.inputSource = new LiveInputSource(
-        this.input,
-        this.autopilot,
-        () => this.autopilot.update(this.getGameStateSnapshot(), FIXED_TIMESTEP, this.gameTime),
+      this.inputSource = new LiveInputSource(this.input, this.autopilot, () =>
+        this.autopilot.update(this.getGameStateSnapshot(), FIXED_TIMESTEP, this.gameTime),
       );
     }
 
@@ -1906,7 +1913,7 @@ export class AsteroidsGame {
       // Tape load hint in purple
       ctx.shadowColor = "#a855f7";
       ctx.fillStyle = "#a855f7";
-      ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.70);
+      ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.7);
 
       ctx.shadowBlur = 10;
       ctx.shadowColor = "#4ade80";
@@ -1986,12 +1993,7 @@ export class AsteroidsGame {
   /** Build a serialized tape from the current recording. */
   getTape(): Uint8Array | null {
     if (!this.recorder) return null;
-    return serializeTape(
-      this.gameSeed,
-      this.recorder.getInputs(),
-      this.score,
-      getGameRngState(),
-    );
+    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score, getGameRngState());
   }
 
   // =========================================================================
@@ -2049,7 +2051,7 @@ export class AsteroidsGame {
       ctx.fillText(
         `Final Score: ${this.score.toString().padStart(5, "0")}`,
         WORLD_WIDTH * 0.5,
-        WORLD_HEIGHT * 0.50,
+        WORLD_HEIGHT * 0.5,
       );
       ctx.fillText(`Wave: ${this.wave}`, WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.57);
 
@@ -2114,11 +2116,7 @@ export class AsteroidsGame {
       ctx.font = "500 12px 'Monaspace Krypton', monospace";
       ctx.fillStyle = "#6b7280";
       ctx.textAlign = "center";
-      ctx.fillText(
-        "1/2/4: Speed    Space: Pause    Esc: Exit",
-        WORLD_WIDTH / 2,
-        WORLD_HEIGHT - 20,
-      );
+      ctx.fillText("1/2/4: Speed    Space: Pause    Esc: Exit", WORLD_WIDTH / 2, WORLD_HEIGHT - 20);
     }
 
     ctx.restore();

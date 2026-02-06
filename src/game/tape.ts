@@ -156,7 +156,9 @@ export function deserializeTape(data: Uint8Array): Tape {
   const frameCount = view.getUint32(12, true);
 
   if (data.length < HEADER_SIZE + frameCount + FOOTER_SIZE) {
-    throw new Error(`Tape truncated: expected ${HEADER_SIZE + frameCount + FOOTER_SIZE} bytes, got ${data.length}`);
+    throw new Error(
+      `Tape truncated: expected ${HEADER_SIZE + frameCount + FOOTER_SIZE} bytes, got ${data.length}`,
+    );
   }
 
   const inputs = data.slice(HEADER_SIZE, HEADER_SIZE + frameCount);
@@ -168,7 +170,7 @@ export function deserializeTape(data: Uint8Array): Tape {
 
   // Verify CRC-32
   const computed = crc32(data.subarray(0, footerOffset));
-  if ((computed >>> 0) !== (storedChecksum >>> 0)) {
+  if (computed >>> 0 !== storedChecksum >>> 0) {
     throw new Error(
       `CRC mismatch: stored=0x${storedChecksum.toString(16)}, computed=0x${(computed >>> 0).toString(16)}`,
     );

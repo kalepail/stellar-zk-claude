@@ -22,7 +22,12 @@ export class LiveInputSource implements InputSource {
   constructor(
     private readonly input: InputController,
     private readonly autopilot: Autopilot,
-    private readonly getAutopilotInput: () => { left: boolean; right: boolean; thrust: boolean; fire: boolean } | null,
+    private readonly getAutopilotInput: () => {
+      left: boolean;
+      right: boolean;
+      thrust: boolean;
+      fire: boolean;
+    } | null,
   ) {}
 
   getFrameInput(): FrameInput {
