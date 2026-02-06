@@ -1,7 +1,7 @@
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   gap: 1rem;
   padding: clamp(1rem, 3vw, 2rem);
   max-width: 1240px;
@@ -29,11 +29,11 @@
 
 .headline p {
   margin: 0;
-  max-width: 68ch;
+  max-width: 74ch;
   opacity: 0.9;
-  font-size: clamp(0.96rem, 2.1vw, 1.08rem);
-  line-height: 1.58;
-  color: rgba(212, 247, 234, 0.92);
+  font-size: clamp(0.94rem, 2.1vw, 1.05rem);
+  line-height: 1.56;
+  color: rgba(212, 247, 234, 0.9);
 }
 
 .game-panel {
@@ -56,6 +56,195 @@
   background: #05080d;
 }
 
+.proof-panel {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid rgba(123, 179, 255, 0.25);
+  border-radius: 14px;
+  padding: clamp(0.8rem, 2vw, 1rem);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(94, 165, 255, 0.15), transparent 42%),
+    linear-gradient(160deg, rgba(8, 16, 29, 0.84), rgba(6, 13, 24, 0.96));
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.proof-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.proof-panel__header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.status-chip--idle {
+  color: #9db0c9;
+  border-color: rgba(157, 176, 201, 0.4);
+  background: rgba(157, 176, 201, 0.14);
+}
+
+.status-chip--queued,
+.status-chip--dispatching,
+.status-chip--retrying,
+.status-chip--prover_running {
+  color: #66c7ff;
+  border-color: rgba(102, 199, 255, 0.45);
+  background: rgba(20, 92, 136, 0.36);
+}
+
+.status-chip--succeeded {
+  color: #90f6c8;
+  border-color: rgba(144, 246, 200, 0.5);
+  background: rgba(26, 108, 71, 0.35);
+}
+
+.status-chip--failed {
+  color: #ff9a9a;
+  border-color: rgba(255, 154, 154, 0.54);
+  background: rgba(125, 32, 32, 0.35);
+}
+
+.proof-panel__intro {
+  margin: 0;
+  opacity: 0.86;
+}
+
+.proof-meta-grid {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.proof-meta-grid div {
+  border: 1px solid rgba(108, 159, 230, 0.24);
+  background: rgba(13, 22, 40, 0.5);
+  border-radius: 8px;
+  padding: 0.42rem 0.55rem;
+}
+
+.proof-meta-grid dt {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(146, 182, 233, 0.9);
+}
+
+.proof-meta-grid dd {
+  margin: 0.15rem 0 0;
+  font-family: var(--font-display);
+  color: #d9f4ff;
+  font-size: 0.88rem;
+}
+
+.proof-placeholder {
+  margin: 0;
+  color: rgba(171, 196, 232, 0.88);
+}
+
+.proof-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.proof-actions button {
+  appearance: none;
+  border: 1px solid rgba(102, 199, 255, 0.58);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(23, 72, 105, 0.8), rgba(13, 45, 73, 0.92));
+  color: #dff4ff;
+  font-family: var(--font-display);
+  font-size: 0.84rem;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  padding: 0.55rem 0.88rem;
+  cursor: pointer;
+}
+
+.proof-actions button:hover:enabled {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(18, 71, 112, 0.35);
+}
+
+.proof-actions button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.proof-actions a {
+  color: #85cbff;
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+
+.proof-actions a:hover {
+  text-decoration: underline;
+}
+
+.proof-job-box {
+  display: grid;
+  gap: 0.38rem;
+  border: 1px solid rgba(104, 161, 237, 0.28);
+  border-radius: 10px;
+  padding: 0.62rem 0.72rem;
+  background: rgba(9, 18, 33, 0.7);
+}
+
+.proof-job-box p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.proof-job-box code {
+  word-break: break-word;
+}
+
+.proof-warning {
+  color: #ffd79f;
+}
+
+.proof-result-box {
+  margin-top: 0.2rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(97, 167, 132, 0.4);
+  display: grid;
+  gap: 0.22rem;
+}
+
+.proof-error,
+.proof-error-inline {
+  margin: 0;
+  color: #ffabab;
+  font-size: 0.9rem;
+}
+
 .footnote {
   text-align: center;
   font-size: 0.9rem;
@@ -67,4 +256,20 @@
   font-family: var(--font-display);
   font-weight: 600;
   color: #d6fff0;
+}
+
+@media (max-width: 760px) {
+  .proof-panel__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .proof-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .proof-actions button {
+    width: 100%;
+  }
 }

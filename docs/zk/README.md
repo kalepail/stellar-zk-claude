@@ -1,37 +1,28 @@
 # ZK Docs Guide
 
-Stellar + ZK protocol, tooling, ecosystem, onboarding, and security references.
+These files are the canonical Stellar ZK reference set for this repository.
 
-Does not own game-specific docs or proving-system analysis — those live in `docs/games/`.
+## File Order
+| File | Purpose |
+|---|---|
+| `00-OVERVIEW.md` | Current-state map and navigation |
+| `01-PROTOCOL-FOUNDATIONS.md` | CAPs, host functions, and protocol constraints |
+| `02-GITHUB-REPOSITORIES.md` | Active repositories by category |
+| `03-PROVING-SYSTEMS.md` | Proving-system selection by workload |
+| `04-PRIVACY-POOLS.md` | Privacy pool architecture patterns |
+| `05-DEVELOPER-TOOLS.md` | Toolchain and implementation workflows |
+| `06-PARTNERSHIPS.md` | Ecosystem integrations that affect architecture |
+| `07-USE-CASES.md` | Product patterns and use-case mapping |
+| `08-ARTICLES-AND-MEDIA.md` | Curated reading and media |
+| `09-GETTING-STARTED.md` | Build-first onboarding paths |
+| `10-SECURITY-BEST-PRACTICES.md` | Security checklist and failure modes |
+| `11-APPLICATION-VERIFICATION-PATTERNS.md` | Reusable deterministic verification patterns |
+| `12-REFERENCE-INDEX.md` | Extended retained sources from prior research sweeps |
 
-## Canonical Sequence (12 files)
-| # | File | Topic |
-|---|------|-------|
-| 00 | `00-OVERVIEW.md` | System map and orientation |
-| 01 | `01-PROTOCOL-FOUNDATIONS.md` | Core protocol concepts and terminology |
-| 02 | `02-GITHUB-REPOSITORIES.md` | Repository landscape and project links |
-| 03 | `03-PROVING-SYSTEMS.md` | Proving-system choices and tradeoffs |
-| 04 | `04-PRIVACY-POOLS.md` | Privacy pool concepts and implementation |
-| 05 | `05-DEVELOPER-TOOLS.md` | Developer tooling and workflow references |
-| 06 | `06-PARTNERSHIPS.md` | Ecosystem and partner landscape |
-| 07 | `07-USE-CASES.md` | Practical usage patterns |
-| 08 | `08-ARTICLES-AND-MEDIA.md` | External reading and media |
-| 09 | `09-GETTING-STARTED.md` | Onboarding path for builders |
-| 10 | `10-SECURITY-BEST-PRACTICES.md` | Security model and guidance |
+## Scope
+- Owns protocol/ecosystem/application-pattern docs.
+- Game-specific implementation detail stays under `docs/games/`.
 
-## Cross-References
-- Integer math for ZK game logic: `docs/games/asteroids/integer-math-reference.md`
-- Noir vs RISC Zero analysis: `docs/games/asteroids/noir-vs-risczero-analysis.md`
-
-## Edit Routing
-| Change | Edit |
-|--------|------|
-| Architecture | `01-PROTOCOL-FOUNDATIONS.md` + update `00-OVERVIEW.md` |
-| Proving stack | `03-PROVING-SYSTEMS.md` |
-| New tool/SDK | `05-DEVELOPER-TOOLS.md` |
-| Onboarding | `09-GETTING-STARTED.md` |
-| Security | `10-SECURITY-BEST-PRACTICES.md` |
-
-## Maintenance
-- Keep section numbering (`00`–`10`) stable unless doing an explicit restructure.
-- Add new files to this README immediately.
+## Style
+- Keep decision-first and implementation-oriented.
+- Keep only canonical docs; update files in place as decisions evolve.
