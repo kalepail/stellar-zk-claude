@@ -27,7 +27,7 @@ git checkout feature/claude-initial-risc0
 cd risc0/
 
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y lsof clang libclang-dev
+DEBIAN_FRONTEND=noninteractive apt-get install -y lsof clang libclang-dev protobuf-compiler
 
 . "$HOME/.cargo/env"
 

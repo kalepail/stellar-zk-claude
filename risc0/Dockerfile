@@ -3,7 +3,7 @@ FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
-    curl build-essential pkg-config libssl-dev clang libclang-dev python3 git \
+    curl build-essential pkg-config libssl-dev clang libclang-dev protobuf-compiler python3 git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust
