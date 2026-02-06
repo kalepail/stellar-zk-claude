@@ -1,625 +1,347 @@
-# ZK Asteroids Score Token — Full System Specification
+# ZK Asteroids Score Token - System Spec (Current Architecture)
 
-## Goal
+Last updated: 2026-02-06
 
-Build an end-to-end system where:
+## Purpose
 
-1. A player plays Asteroids in the browser, authenticated via **passkey** (no seed phrase)
-2. The game tape is sent to a **Cloudflare Worker** backend, which enqueues it for proving on a **VAST AI GPU endpoint**
-3. The Groth16 proof comes back through the queue to the client
-4. The client submits the proof to a **Soroban smart contract** that verifies it on-chain via Nethermind's deployed **RISC Zero verifier**
-5. On successful verification, the contract **mints the score as tokens** to the player's smart wallet
-6. The **OpenZeppelin Relayer** pays all XLM transaction fees — the player never needs XLM
+This document describes the architecture that is actually implemented in this repository today, with emphasis on:
+
+1. The Cloudflare Worker proof gateway (`worker/`)
+2. The RISC Zero Asteroids verifier stack (`risc0-asteroids-verifier/`)
+
+It also calls out planned settlement components that are not yet implemented in this repo.
 
 ---
 
-## System Architecture
+## Current Scope vs Target Scope
+
+### Implemented now
+
+- Browser captures deterministic Asteroids tape bytes.
+- Browser submits tape to Worker endpoint: `POST /api/proofs/jobs`.
+- Worker validates tape format, stores artifacts in R2, and schedules proving through Cloudflare Queues.
+- Worker enforces single-active-job coordination with a Durable Object.
+- Worker dispatches to RISC Zero API server: `POST /api/jobs/prove-tape/raw`.
+- Worker polls prover status: `GET /api/jobs/{job_id}`.
+- Worker stores full prover response and exposes status/result endpoints.
+
+### Planned / not implemented in this repo yet
+
+- Passkey smart-wallet transaction signing flow.
+- Relay submission endpoint (`/api/send`) and fee sponsorship path.
+- Soroban score contract source + on-chain mint integration in this codebase.
+- Worker-side extraction of on-chain proof components (`seal`, `image_id`, `journal_raw`) from receipt JSON.
+
+---
+
+## System Architecture (Implemented)
 
 ```
- Browser (Client)                  Cloudflare                         VAST AI GPU
-┌─────────────────────┐     ┌──────────────────────┐     ┌──────────────────────┐
-│                     │     │                      │     │                      │
-│  Asteroids Game     │     │  CF Worker (API)     │     │  RISC0 Prover        │
-│  (TypeScript)       │     │    │                 │     │  API Server          │
-│                     │     │    ▼                 │     │                      │
-│  Records tape ──────┼────▶│  CF Queue (produce)  │     │  POST /api/jobs/     │
-│                     │     │    │                 │     │  prove-tape/raw      │
-│  SmartAccountKit    │     │    ▼                 │     │  ?receipt_kind=      │
-│  (smart wallet)     │     │  CF Worker (consumer)│────▶│   groth16            │
-│                     │     │    │                 │     │                      │
-│                     │     │    │  poll job status │◀───│  GET /api/jobs/{id}  │
-│  ◀────────────────────────│    │                 │     │                      │
-│  receives proof     │     │    ▼                 │     └──────────────────────┘
-│                     │     │  Return proof to     │
-│  Signs auth entry   │     │  client via response │
-│  with passkey ──────┼──┐  │  or WebSocket        │
-│                     │  │  └──────────────────────┘
-└─────────────────────┘  │
-                         │
-                         │   Stellar Network (Soroban)
-                         │  ┌───────────────────────────────────────────────┐
-                         │  │                                               │
-                         │  │  ┌─────────────────────┐                     │
-                         └──┼─▶│ OpenZeppelin Relayer │                     │
-                            │  │ (pays XLM fees)      │                     │
-                            │  └──────────┬──────────┘                     │
-                            │             │                                 │
-                            │             ▼                                 │
-                            │  ┌─────────────────────┐   ┌──────────────┐  │
-                            │  │ Asteroids Score      │──▶│ RISC Zero    │  │
-                            │  │ Contract             │   │ Router       │  │
-                            │  │                      │   │ (Nethermind) │  │
-                            │  │ submit_score()       │   └──────┬───────┘  │
-                            │  │   ├ sha256(journal)  │          │          │
-                            │  │   ├ verify proof ────┼──────────┘          │
-                            │  │   ├ decode score     │                     │
-                            │  │   ├ check replay     │   ┌──────────────┐  │
-                            │  │   └ mint tokens ─────┼──▶│ Score Token  │  │
-                            │  │                      │   │ (SAC)        │  │
-                            │  └─────────────────────┘   └──────────────┘  │
-                            │                                               │
-                            │  ┌─────────────────────┐                     │
-                            │  │ Smart Account        │                     │
-                            │  │ Factory (OZ)         │                     │
-                            │  │ + WebAuthn Verifier  │                     │
-                            │  └─────────────────────┘                     │
-                            └───────────────────────────────────────────────┘
+Browser (Vite/React)
+  |
+  | POST /api/proofs/jobs (binary .tape)
+  v
+Cloudflare Worker (Hono API)
+  |\
+  | \-- Durable Object: ProofCoordinatorDO (single active job state)
+  | \
+  |  \-- R2: PROOF_ARTIFACTS
+  |        - proof-jobs/{jobId}/input.tape
+  |        - proof-jobs/{jobId}/result.json
+  |
+  \-- Queue: PROOF_QUEUE (max_concurrency=1, max_batch_size=1)
+        |
+        v
+   Queue Consumer (same Worker)
+        |
+        | POST /api/jobs/prove-tape/raw
+        | GET  /api/jobs/{proverJobId}
+        v
+RISC0 API Server (Actix, single-flight)
+        |
+        v
+RISC0 host + zkVM guest + asteroids-core
 ```
 
 ---
 
-## Part 1: Player Authentication (Passkey Smart Wallets)
+## Cloudflare Worker Architecture (`worker/`)
 
-### Technology Stack
+### Runtime components
 
-| Component | Implementation |
-|-----------|---------------|
-| Smart Wallet SDK | `smart-account-kit` (OZ Smart Accounts) |
-| Auth Standard | WebAuthn / FIDO2 (secp256r1) |
-| On-chain Verification | Stellar Protocol 21 native secp256r1 |
-| Account Pattern | `CustomAccountInterface` with `__check_auth` |
-| Factory | Deterministic account deployment via factory contract |
-| Relay | OpenZeppelin Relayer (`@openzeppelin/relayer-plugin-channels`) |
+- HTTP router: `worker/index.ts`, `worker/api/routes.ts`
+- Queue consumer: `worker/queue/consumer.ts`
+- Prover HTTP client: `worker/prover/client.ts`
+- Coordinator Durable Object: `worker/durable/coordinator.ts`
+- Tape validation: `worker/tape.ts`
+- Artifact keying: `worker/keys.ts`
 
-### How It Works
+### Public API surface
 
-1. **First visit**: Browser calls `SmartAccountKit.createWallet()` which:
-   - Triggers WebAuthn `navigator.credentials.create()` — user confirms with biometric/PIN
-   - Extracts secp256r1 public key from the credential
-   - Deploys a smart account contract via the OZ factory (deterministic address from `keyId` salt)
-   - Returns `contractId` (the player's on-chain address)
+- `GET /api/health`
+  - Returns service metadata and the active job (if any).
+  - Response includes:
+    - `service: "stellar-zk-proof-gateway"`
+    - `mode: "single-active-job"`
 
-2. **Return visits**: `SmartAccountKit.connectWallet()` derives the `contractId` deterministically from the credential's `keyId`, or falls back to an indexer lookup.
+- `POST /api/proofs/jobs`
+  - Request body: raw tape bytes (`application/octet-stream`).
+  - Validates tape before enqueue.
+  - On accept (`202`):
+    - Creates DO job record.
+    - Stores tape in R2 (`proof-jobs/{jobId}/input.tape`).
+    - Enqueues `{ jobId }` to `PROOF_QUEUE`.
+    - Returns `status_url` and job state.
+  - On busy (`429`): single-active-job guard rejects new job.
 
-3. **Signing transactions**: When the player submits a proof, the SDK calls `SmartAccountKit.sign()` which:
-   - Iterates auth entries from transaction simulation
-   - For each entry, computes the `SorobanAuthorization` preimage hash
-   - Triggers WebAuthn `navigator.credentials.get()` — user confirms with biometric
-   - Returns a compact 64-byte secp256r1 signature (low-S normalized)
+- `GET /api/proofs/jobs/:jobId`
+  - Returns public job status snapshot from Durable Object.
 
-### NPM Packages Required
+- `GET /api/proofs/jobs/:jobId/result`
+  - Returns stored result artifact JSON from R2 when available.
+  - `409` if result is not ready.
 
-```
-smart-account-kit        # OZ Smart Account SDK (wallet creation, signing, relay)
-@stellar/stellar-sdk     # Stellar/Soroban core
-@openzeppelin/relayer-plugin-channels  # OZ Relayer integration
-```
+### Tape validation performed at ingress
 
-### Key Consideration: Contract Accounts Cannot Pay Fees
+Worker-side validation (`worker/tape.ts`) enforces:
 
-Smart wallet contracts (C-accounts) **cannot** serve as transaction sources — they cannot sign transaction envelopes or consume sequence numbers. This is why a relay is mandatory: the relay's G-account serves as the transaction source and pays fees, while the player's smart wallet only signs **auth entries** (not the transaction envelope itself).
+- Non-empty payload
+- `<= MAX_TAPE_BYTES` (default `2 MiB`)
+- Magic = `0x5A4B5450`
+- Version = `1`
+- Exact byte length = `header + frame_count + footer`
+- CRC32 checksum match
 
----
+Metadata extracted and stored with job:
 
-## Part 2: Fee Sponsorship (Relay Infrastructure)
+- `seed`
+- `frameCount`
+- `finalScore`
+- `finalRngState`
+- `checksum`
 
-### Auth-Entry Signing Pattern (NOT Fee-Bump)
+### Job state model (Durable Object)
 
-For Soroban contract invocations with smart wallets, the correct pattern is **auth-entry signing**, not fee-bump transactions. (There is a known Soroban fee-bump bug in the multidimensional fee model — fee-bumps are unreliable for Soroban txns.)
+`ProofCoordinatorDO` tracks lifecycle per job:
 
-**Flow:**
+- `queued`
+- `dispatching`
+- `prover_running`
+- `retrying`
+- `succeeded`
+- `failed`
 
-1. Client builds a transaction invoking `submit_score()` on the Score Contract
-2. Client simulates in **Recording Mode** → gets auth entries that need signatures
-3. Client signs auth entries using passkey (via `SmartAccountKit.sign()`)
-4. Client re-simulates in **Enforcing Mode** to validate signatures
-5. Client sends the signed transaction XDR to the backend relay
-6. Relay validates: transaction source is not an authorized address, auth entries don't reference the relay
-7. Relay rebuilds the transaction with its own G-account as source
-8. Relay simulates in Enforcing Mode, signs the transaction envelope, submits to Stellar
+Single-active-job semantics are enforced with `active_job_id` in DO storage.
 
-### OpenZeppelin Relayer
+### Queue consumer execution model
 
-- Production-grade relay infrastructure
-- Supports fee abstraction (user pays in USDC instead of XLM, or free)
-- `FeeForwarder` contract for atomic fee collection
-- `@openzeppelin/relayer-plugin-channels` npm package
-- `SmartAccountServer.send()` integrates directly
+Processing is intentionally sequential (one message at a time).
 
-### Backend Relay Endpoint
+Per message:
 
-```typescript
-// POST /api/send
-async function sendTransaction(req) {
-    const { xdr } = req.body;
+1. `beginQueueAttempt` updates queue attempt metadata.
+2. If no prover job exists yet, load input tape from R2 and submit to prover.
+3. Poll prover status (bounded budget per queue delivery).
+4. On success:
+   - Summarize proof fields.
+   - Persist full prover payload in R2 (`result.json`) as `{ stored_at, prover_response }`.
+   - Mark DO job `succeeded` and release active slot.
+5. On retryable errors:
+   - Mark job `retrying`.
+   - Requeue with exponential backoff (`2s` min, capped at `300s`).
+6. On fatal errors:
+   - Mark job `failed` and release active slot.
 
-    // SmartAccountServer handles relay submission via OZ Relayer
-    const server = new SmartAccountServer({
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        relayerUrl: RELAYER_URL,
-        relayerApiKey: RELAYER_API_KEY,
-    });
+### Worker <-> prover HTTP contract used today
 
-    const result = await server.send(xdr);
-    return { hash: result.hash };
-}
-```
+Submission:
 
----
+- `POST {PROVER_BASE_URL}/api/jobs/prove-tape/raw`
+- Query params set by Worker:
+  - `receipt_kind` from `PROVER_RECEIPT_KIND`
+  - `segment_limit_po2` from `PROVER_SEGMENT_LIMIT_PO2` (default `19`)
+  - `max_frames` from `PROVER_MAX_FRAMES` (default `18000`)
+- Headers may include:
+  - `x-api-key`
+  - `CF-Access-Client-Id`
+  - `CF-Access-Client-Secret`
 
-## Part 3: Cloudflare Worker Queue (Proving Pipeline)
+Polling:
 
-### Architecture: CF Workflows
+- `GET {PROVER_BASE_URL}/api/jobs/{proverJobId}`
 
-Use **Cloudflare Workflows** for the proving pipeline. Workflows provide durable multi-step execution with automatic retries, sleep/polling, and state persistence — ideal for the long-running prove cycle (can take minutes to hours for Groth16).
+Worker success summary fields:
 
-```
-Client POST /prove  →  CF Worker (API)  →  Workflow Instance
-                                              │
-                                    step 1: submit tape to VAST AI
-                                              │
-                                    step 2: poll for completion (sleep + retry)
-                                              │
-                                    step 3: extract proof components
-                                              │
-                                    step 4: return to client
-```
+- `elapsedMs`
+- `requestedReceiptKind`
+- `producedReceiptKind`
+- `journal`
+- `stats`
 
-### Workflow Definition
+### Worker defaults from `wrangler.jsonc`
 
-```typescript
-import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
+- `PROVER_RECEIPT_KIND = "composite"`
+- `PROVER_SEGMENT_LIMIT_PO2 = "19"`
+- `PROVER_MAX_FRAMES = "18000"`
+- `PROVER_POLL_INTERVAL_MS = "3000"`
+- `PROVER_POLL_TIMEOUT_MS = "900000"` (15m)
+- `PROVER_POLL_BUDGET_MS = "45000"`
+- `PROVER_REQUEST_TIMEOUT_MS = "30000"`
+- `MAX_TAPE_BYTES = "2097152"`
+- `MAX_QUEUE_ATTEMPTS = "180"`
+- `ALLOW_INSECURE_PROVER_URL = "0"`
 
-export class ProveWorkflow extends WorkflowEntrypoint {
-    async run(event: WorkflowEvent, step: WorkflowStep) {
-        const { tapeBytes, playerAddress } = event.payload;
+Queue consumer config in `wrangler.jsonc`:
 
-        // Step 1: Submit tape to VAST AI prover
-        const jobId = await step.do('submit-tape', async () => {
-            const response = await fetch(
-                `${VAST_AI_URL}/api/jobs/prove-tape/raw?receipt_kind=groth16`,
-                { method: 'POST', body: tapeBytes, headers: { 'X-API-Key': VAST_API_KEY } }
-            );
-            const { job_id } = await response.json();
-            return job_id;
-        });
+- `max_batch_size = 1`
+- `max_concurrency = 1`
+- `max_retries = 100`
+- `retry_delay = 3`
 
-        // Step 2: Poll for proof completion (with backoff)
-        const proof = await step.do('poll-proof', { retries: { limit: 60, delay: '10 seconds' } },
-            async () => {
-                const response = await fetch(`${VAST_AI_URL}/api/jobs/${jobId}`);
-                const job = await response.json();
-
-                if (job.status === 'failed') throw new Error(`Proof failed: ${job.error}`);
-                if (job.status !== 'succeeded') throw new Error('Still proving...'); // triggers retry
-
-                return job.result.proof;
-            }
-        );
-
-        // Step 3: Extract on-chain proof components
-        const components = await step.do('extract-components', async () => {
-            return {
-                seal: extractSealBytes(proof.receipt),
-                imageId: VERIFY_TAPE_ID,
-                journalRaw: extractJournalBytes(proof.receipt),
-                score: proof.journal.final_score,
-            };
-        });
-
-        return components;
-    }
-}
-```
-
-### Client Polling
-
-The client either:
-- **Option A**: Polls a CF Worker endpoint (`GET /prove/{workflow_id}`) for status
-- **Option B**: Connects via WebSocket to a Durable Object that gets notified when the workflow completes
-- **Option C**: Uses `step.waitForEvent()` in the workflow and the client is notified via push
-
-### Wrangler Config
-
-```jsonc
-{
-    "workflows": [{
-        "name": "prove-workflow",
-        "binding": "PROVE_WORKFLOW",
-        "class_name": "ProveWorkflow"
-    }]
-}
-```
+Note: queue-level `max_retries` can cap effective retries before `MAX_QUEUE_ATTEMPTS` is reached.
 
 ---
 
-## Part 4: Soroban Score Contract
+## RISC Zero Asteroids Verifier Architecture (`risc0-asteroids-verifier/`)
 
-### Contracts Involved
+### Workspace crates
 
-| Contract | Role | Status |
-|----------|------|--------|
-| **RISC Zero Router** | Dispatches `verify()` by seal selector | Deployed (Nethermind) |
-| **Groth16 Verifier** | BN254 pairing check on Groth16 proof | Deployed (Nethermind) |
-| **Asteroids Score Contract** | Verifies proof, mints tokens | **To Build** |
-| **Score Token (SAC)** | Standard Stellar asset for score tokens | **To Deploy** |
-| **Smart Account Factory** | Creates passkey wallets | Deployed (OZ Smart Accounts) |
-| **WebAuthn Verifier** | Verifies secp256r1 passkey signatures | Deployed (OZ Smart Accounts) |
+- `asteroids-core/`
+  - Deterministic replay, tape parser/serializer, verification journal.
 
-### Deployed Addresses (Testnet)
+- `methods/guest/`
+  - zkVM guest entrypoint.
+  - Reads `(max_frames, tape_len, tape)` from executor env.
+  - Calls `verify_guest_input` and commits `VerificationJournal`.
 
-| Contract | Address |
-|----------|---------|
-| RISC Zero Router | `CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD` |
-| Groth16 Verifier | `CB54QOGYJJOSLNHRCHTSVGKJ3D5K6B5YO7DD6CRHRBCRNPF2VX2VCMV7` |
-| Mock Verifier | `CCKXGODVBNCGZZIKTU2DIPTXPVSLIG5Z67VYPAL4X5HVSED7VI4OD6A3` |
+- `host/`
+  - Proving library and CLI.
+  - Receipt kind options: `composite | succinct | groth16`.
 
-### RISC Zero Verifier Interface
+- `api-server/`
+  - Async HTTP job interface over host prover.
+  - Single-flight proving policy.
 
-From `NethermindEth/stellar-risc0-verifier` — the **exact** function signature:
+### Verification journal committed by guest
 
-```rust
-fn verify(
-    env: Env,
-    seal: Bytes,            // Variable-length: 4-byte selector + 256-byte Groth16 proof (260 bytes)
-    image_id: BytesN<32>,   // SHA-256 of guest program ELF
-    journal: BytesN<32>,    // SHA-256(raw_journal_bytes) — NOT the raw journal itself
-) -> Result<(), VerifierError>;
-```
+`VerificationJournal` fields:
 
-**Critical**: `journal` parameter is `SHA-256(raw_journal_bytes)`. The raw journal must be hashed before calling `verify()`.
+- `seed: u32`
+- `frame_count: u32`
+- `final_score: u32`
+- `final_rng_state: u32`
+- `tape_checksum: u32`
+- `rules_digest: u32` (`RULES_DIGEST_V1 = 0x41535431`, "AST1")
 
-### Seal Format (260 bytes)
+### Host prover behavior (`host/src/lib.rs`)
 
-```
-[4 bytes: selector]  [64 bytes: G1 point A]  [128 bytes: G2 point B]  [64 bytes: G1 point C]
-```
+`prove_tape`:
 
-### Score Contract — Storage
+1. Validates dev-mode policy (`RISC0_DEV_MODE` + `allow_dev_mode`).
+2. Builds executor env with `max_frames`, original `tape_len`, padded tape bytes, and `segment_limit_po2`.
+3. Proves using requested receipt kind.
+4. Detects produced receipt kind from receipt internals.
+5. In non-dev mode, requires produced kind == requested kind.
+6. Optionally verifies receipt against `VERIFY_TAPE_ID`.
+7. Decodes committed journal.
 
-```rust
-#[contracttype]
-pub enum DataKey {
-    Admin,                   // Address
-    TokenId,                 // Address — score token SAC
-    RouterId,                // Address — RISC Zero router contract
-    ImageId,                 // BytesN<32> — expected guest program image ID
-    Claimed(BytesN<32>),     // journal_digest → bool (prevents replay)
-}
-```
+### API server contract (`api-server/src/main.rs`)
 
-### Score Contract — Functions
+Endpoints:
 
-#### `initialize`
+- `GET /health` (open)
+- `POST /api/jobs/prove-tape/raw` (binary tape body, auth if configured)
+- `GET /api/jobs/{job_id}` (auth if configured)
+- `DELETE /api/jobs/{job_id}` (auth if configured)
 
-```rust
-pub fn initialize(
-    env: Env,
-    admin: Address,
-    token: Address,
-    router: Address,
-    image_id: BytesN<32>,
-)
-```
+Auth:
 
-Sets admin, token, router, and expected image ID. Called once.
+- If `API_KEY` is set, accepts either:
+  - `x-api-key: <API_KEY>`
+  - `Authorization: Bearer <API_KEY>`
 
-#### `submit_score`
+Job model:
 
-```rust
-pub fn submit_score(
-    env: Env,
-    player: Address,
-    seal: Bytes,
-    image_id: BytesN<32>,
-    journal_raw: Bytes,
-) -> u32
-```
+- States: `queued`, `running`, `succeeded`, `failed`
+- Single-flight enforced by:
+  - global semaphore with concurrency `1`
+  - active-job check during enqueue
 
-**Steps:**
+Policy gates on submit query params:
 
-1. `player.require_auth()` — player's smart wallet signs via passkey
-2. Verify `image_id` matches stored value (only our Asteroids guest program accepted)
-3. `let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into()`
-4. Check `DataKey::Claimed(journal_digest)` doesn't exist (replay protection)
-5. Call RISC Zero verifier:
-   ```rust
-   let router_client = RiscZeroVerifierRouterClient::new(&env, &router_addr);
-   router_client.verify(&seal, &image_id, &journal_digest);
-   // Panics on failure → entire transaction rolls back
-   ```
-6. Decode `final_score` from `journal_raw` (bytes 8..12, little-endian u32)
-7. Store `DataKey::Claimed(journal_digest) = true`
-8. Mint tokens:
-   ```rust
-   let token_client = token::StellarAssetClient::new(&env, &token_addr);
-   token_client.mint(&player, &(score as i128));
-   // Auto-authorized because this contract IS the token admin (direct caller)
-   ```
-9. Emit event, return score
+- `max_frames`
+- `receipt_kind`
+- `segment_limit_po2`
+- `allow_dev_mode`
+- `verify_receipt`
 
-#### Read-only Functions
+Strict defaults:
 
-- `get_image_id(env) -> BytesN<32>`
-- `is_claimed(env, journal_digest: BytesN<32>) -> bool`
-- `set_image_id(env, new_image_id: BytesN<32>)` — admin-only
+- `ALLOW_DEV_MODE_REQUESTS=false`
+- `ALLOW_UNVERIFIED_RECEIPTS=false`
+- `RISC0_DEV_MODE=0` in production
 
-### Journal Decoding
+Operational defaults:
 
-The raw journal (24 bytes) from `env::commit(&VerificationJournal)`:
+- `MAX_TAPE_BYTES=2097152`
+- `MAX_JOBS=64`
+- `JOB_TTL_SECS=86400`
+- `JOB_SWEEP_SECS=60`
+- `MAX_FRAMES=18000`
+- `MIN_SEGMENT_LIMIT_PO2=16`
+- `MAX_SEGMENT_LIMIT_PO2=22`
 
-```
-Offset  Size  Field
-0       4     seed (u32 LE)
-4       4     frame_count (u32 LE)
-8       4     final_score (u32 LE)     ← mint this many tokens
-12      4     final_rng_state (u32 LE)
-16      4     tape_checksum (u32 LE)
-20      4     rules_digest (u32 LE)
-```
+### API success payload shape used by Worker
 
-**Caveat**: RISC Zero's `env::commit()` serialization format needs empirical verification. Run a test proof, hex-dump `receipt.journal.bytes`, and confirm offsets before hardcoding.
+For `GET /api/jobs/{job_id}` when succeeded, Worker relies on:
 
-### Token Setup
+- `status = "succeeded"`
+- `result.proof.journal`
+- `result.proof.requested_receipt_kind`
+- `result.proof.produced_receipt_kind`
+- `result.proof.stats`
+- `result.elapsed_ms`
 
-**Approach: Classic Stellar Asset wrapped as SAC**
-
-1. Create classic asset `ZKAST` with an issuer keypair
-2. `stellar contract asset deploy --asset ZKAST:GISSUER...` → SAC contract ID
-3. Deploy Asteroids Score Contract
-4. `set_admin` on the SAC to transfer admin to the Score Contract
-5. `initialize` the Score Contract with SAC address
-
-**Token Config:**
-- Decimals: **0** (scores are whole numbers)
-- Symbol: `ZKAST` (≤12 chars)
-- Amount type: `i128`. With 0 decimals, `mint(&player, &score_as_i128)` mints exactly `score` tokens
+Worker stores the full prover response JSON as artifact and a compact summary in DO state.
 
 ---
 
-## Part 5: End-to-End Flow
+## Compatibility Notes and Gaps
 
-### Player Onboarding (First Visit)
+### Reconciled from prior spec
 
-```
-1. Player opens game in browser
-2. Game calls SmartAccountKit.createWallet()
-   → Browser shows "Create passkey" prompt (biometric/PIN)
-   → WebAuthn credential created (secp256r1 keypair on device)
-   → OZ factory contract deploys smart wallet (deterministic address)
-3. Player's smart wallet address stored in browser + backend DB
-4. Player can immediately play — no XLM needed
-```
+- Workflows are not in use; pipeline is Queue + Durable Object.
+- Public proof endpoint is `/api/proofs/jobs`, not `/prove`.
+- Worker default receipt kind is currently `composite`, not `groth16`.
+- Result delivery is polling + R2 artifact retrieval; no WebSocket/push path exists.
 
-### Gameplay → Proof → Tokens
+### Gaps to on-chain Groth16 settlement
 
-```
-1. Player plays Asteroids, game records input tape
-2. Game over → client sends tape to CF Worker:
-   POST https://worker.example.com/prove
-   Body: raw tape bytes
+To reach contract-verifiable Groth16 submission flow, the codebase still needs:
 
-3. CF Worker creates a Workflow instance:
-   - Submits tape to VAST AI: POST /api/jobs/prove-tape/raw?receipt_kind=groth16
-   - Polls for completion (retries with backoff)
-   - Extracts: seal (260 bytes), image_id (32 bytes), journal_raw (24 bytes)
-   - Returns proof components to client
-
-4. Client receives proof components
-
-5. Client builds Soroban transaction:
-   - Invokes score_contract.submit_score(player, seal, image_id, journal_raw)
-   - Simulates in Recording Mode → gets auth entries
-   - Signs auth entries with passkey (WebAuthn assertion, biometric confirm)
-   - Re-simulates in Enforcing Mode to validate
-
-6. Client sends signed transaction XDR to backend:
-   POST https://worker.example.com/api/send
-   Body: { xdr: "base64..." }
-
-7. Backend relay (via SmartAccountServer.send() / OZ Relayer):
-   - Validates transaction
-   - Rebuilds with relay's G-account as source
-   - Submits to Stellar network
-   - Relay pays all XLM fees
-
-8. On-chain execution:
-   - Soroban host calls smart wallet's __check_auth
-   - WebAuthn verifier validates passkey signature
-   - Score Contract verifies RISC Zero proof via router
-   - Score Contract mints ZKAST tokens to player
-   - Score Contract emits event
-
-9. Client polls transaction status, shows "Score verified! +{score} ZKAST"
-```
+1. Proof component extraction path (`seal`, `image_id`, `journal_raw` or digest) suitable for Soroban verifier inputs.
+2. A concrete client/worker submission path to contract invocation (relay + signed auth entries).
+3. Score contract implementation and deployment artifacts integrated in this repo.
+4. Production decision on receipt-kind policy (`groth16` end-to-end) with matching worker defaults.
 
 ---
 
-## Part 6: Security Considerations
+## Repository Paths (Current)
 
-### Replay Protection
-
-Each proof is uniquely identified by `SHA-256(journal_raw)`. The journal contains `seed + frame_count + final_score + final_rng_state + tape_checksum + rules_digest`. Any distinct gameplay produces a distinct journal. The contract stores claimed digests in persistent storage.
-
-### Image ID Pinning
-
-Only proofs from our specific Asteroids guest program (`VERIFY_TAPE_ID`) are accepted. A valid proof from a different guest program is rejected.
-
-### Frontrunning
-
-The proof doesn't bind to a player address. If proof data leaks before submission, someone else could claim it. Mitigations:
-- `player.require_auth()` means the original player must sign
-- The passkey signature is embedded in the auth entry before reaching the relay
-- For stronger binding: future guest program version could commit player address into the journal
-
-### Smart Wallet Security
-
-- `__check_auth` validates secp256r1 signature against stored public key
-- Context rules can restrict which contracts/functions the passkey can invoke
-- Policies can enforce rate limits (e.g., max 1 proof submission per minute)
-- Passkey private key never leaves the user's device (TPM/Secure Enclave)
-
-### Relay Safety
-
-- Relay always validates: transaction source ≠ any authorized address
-- Relay simulates in Enforcing Mode before signing (catches failures before paying fees)
-- Auth entries have ledger-based expiration (anti-replay)
-- Rate limiting at relay level prevents fee exhaustion attacks
-
-### Score Overflow
-
-Score is `u32` (max ~4.29B). Minting as `i128` cannot overflow.
-
----
-
-## Part 7: Deployment Steps
-
-### 1. Deploy Smart Wallet Infrastructure
-
-If not already deployed:
-- Smart Account Factory contract
-- WebAuthn secp256r1 Verifier contract
-- (These may already be deployed by OZ Smart Accounts on testnet)
-
-### 2. Create and Deploy Score Token
-
-```bash
-stellar keys generate --global zkast-issuer --network testnet --fund
-
-stellar contract asset deploy \
-  --asset ZKAST:$(stellar keys address zkast-issuer) \
-  --source zkast-issuer \
-  --network testnet
-# → Note the SAC contract ID
-```
-
-### 3. Build and Deploy Score Contract
-
-```bash
-cd contracts/asteroids-score
-cargo build --target wasm32-unknown-unknown --release
-
-stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/asteroids_score.wasm \
-  --source zkast-issuer \
-  --network testnet
-# → Note the Score Contract ID
-```
-
-### 4. Initialize Score Contract
-
-```bash
-stellar contract invoke --id <SCORE_CONTRACT> --source zkast-issuer --network testnet \
-  -- initialize \
-  --admin <ADMIN_ADDRESS> \
-  --token <SAC_CONTRACT_ID> \
-  --router CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD \
-  --image_id <VERIFY_TAPE_ID_HEX>
-```
-
-### 5. Transfer SAC Admin to Score Contract
-
-```bash
-stellar contract invoke --id <SAC_CONTRACT_ID> --source zkast-issuer --network testnet \
-  -- set_admin \
-  --new_admin <SCORE_CONTRACT_ADDRESS>
-```
-
-### 6. Deploy Cloudflare Worker + Workflow
-
-```bash
-cd workers/prove-worker
-npx wrangler deploy
-```
-
-### 7. Configure Relay
-
-- Configure OpenZeppelin Relayer with API key
-- Set environment variables in the CF Worker
-
-### 8. End-to-End Test
-
-Play a game → submit tape → receive Groth16 proof → submit to contract → verify tokens minted.
-
----
-
-## Open Questions
-
-### 1. Journal Byte Offsets
-
-RISC Zero `env::commit()` serialization format needs empirical verification. Run a test proof, hex-dump `receipt.journal.bytes`, confirm the byte layout matches the assumed LE u32 packing.
-
-### 2. `risc0-interface` Crate Availability
-
-The Nethermind `risc0-interface` crate may not be on crates.io. Options:
-- Git dependency: `risc0-interface = { git = "https://github.com/NethermindEth/stellar-risc0-verifier" }`
-- Copy the interface types locally (only need the `verify` trait + types)
-
-### 3. Receipt → Seal Byte Extraction
-
-The API server returns a `risc0_zkvm::Receipt` serialized as JSON. Need to confirm how to extract the raw 260-byte Groth16 seal from the JSON structure. Options:
-- Add a `/soroban` endpoint to the API server that returns pre-extracted components
-- Parse the JSON receipt client-side to extract `receipt.inner.groth16().seal`
-
-### 4. Workflow vs Queue
-
-Cloudflare Workflows are recommended over raw Queues for this use case because:
-- Proving can take minutes to hours (Groth16)
-- Workflows support `step.sleep()` and retry with backoff natively
-- State persists across steps automatically
-- But: Workflows are still in beta. Alternative: Queue + Durable Object for polling state.
-
-### 5. Testnet Verifier Readiness
-
-Verify the testnet router and Groth16 verifier are operational by submitting a test proof before building the full contract.
-
----
-
-## File Structure
-
-```
-contracts/
-  asteroids-score/
-    Cargo.toml
-    src/
-      lib.rs          # Score contract (verify proof + mint)
-      test.rs         # Tests with mock verifier
-
-workers/
-  prove-worker/
-    src/
-      index.ts        # CF Worker API (POST /prove, GET /prove/{id}, POST /api/send)
-      workflow.ts      # ProveWorkflow class
-    wrangler.jsonc
-
-frontend/
-  src/
-    wallet.ts         # SmartAccountKit integration
-    prove.ts          # Tape submission + proof polling
-    submit.ts         # Build + sign + relay Soroban transaction
-```
+- Worker API and queue runtime: `worker/index.ts`, `worker/api/routes.ts`, `worker/queue/consumer.ts`
+- DO coordinator: `worker/durable/coordinator.ts`
+- Worker prover client: `worker/prover/client.ts`
+- Worker config: `wrangler.jsonc`
+- Verifier API server: `risc0-asteroids-verifier/api-server/src/main.rs`
+- Verifier host proving library: `risc0-asteroids-verifier/host/src/lib.rs`
+- Guest method entrypoint: `risc0-asteroids-verifier/methods/guest/src/main.rs`
+- Deterministic verification core: `risc0-asteroids-verifier/asteroids-core/src/verify.rs`
 
 ---
 
 ## References
 
-- [Nethermind stellar-risc0-verifier](https://github.com/NethermindEth/stellar-risc0-verifier)
-- [OpenZeppelin Stellar Contracts — Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account)
-- [Stellar Smart Wallets Guide](https://developers.stellar.org/docs/build/guides/contract-accounts/smart-wallets)
-- [smart-account-kit](https://github.com/kalepail/smart-account-kit)
-- [OZ Relayer Fee Abstraction](https://docs.openzeppelin.com/stellar-contracts/fee-abstraction)
-- [Signing Soroban Invocations](https://developers.stellar.org/docs/build/guides/transactions/signing-soroban-invocations)
-- [Cloudflare Workflows](https://developers.cloudflare.com/workflows/)
-- [Soroban Authorization](https://developers.stellar.org/docs/learn/fundamentals/contract-development/authorization)
-- [Fee-Bump Bug Context](https://stellar.org/blog/developers/fee-bump-bug-disclosure)
+- Nethermind RISC Zero verifier contracts: <https://github.com/NethermindEth/stellar-risc0-verifier>
+- Cloudflare Queues: <https://developers.cloudflare.com/queues/>
+- Cloudflare Durable Objects: <https://developers.cloudflare.com/durable-objects/>
+- RISC Zero docs: <https://dev.risczero.com/>
