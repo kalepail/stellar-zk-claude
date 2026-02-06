@@ -10,5 +10,5 @@ pub mod sim;
 pub mod tape;
 pub mod verify;
 
-pub use error::VerifyError;
+pub use error::{RuleCode, VerifyError};
 pub use verify::{verify_guest_input, verify_tape, GuestInput, VerificationJournal};

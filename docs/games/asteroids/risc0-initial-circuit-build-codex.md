@@ -64,11 +64,8 @@ It explicitly implements and checks:
 
 ## Remaining Gaps Before “100% Fairness Assurance”
 
-- This pass is a strong initial circuit implementation, but not yet final-hardening complete.
-- The Rust simulation should be further parity-tested frame-by-frame against TypeScript state snapshots (not just footer score/RNG).
-- Additional explicit rule-code diagnostics (first-failing-frame + stable error code taxonomy) should be committed to guest journal.
-- Add property/fuzz tests for malformed tapes and adversarial input streams.
-- Add deterministic snapshot hashing checkpoints for future chunked/recursive proof evolution.
+- Add broader fuzz/property testing for adversarial tape corpora (current coverage includes targeted malformed-tape unit tests and fixture replay checks).
+- Add deterministic snapshot hash commitments to the journal if/when chunked or recursive proving is introduced.
 - Add on-chain receipt settlement integration path once verifier contract flow is finalized.
 
 ## Why This Is Still Valuable

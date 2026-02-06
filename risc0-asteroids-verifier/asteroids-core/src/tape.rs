@@ -232,4 +232,24 @@ mod tests {
         assert_eq!(tape.footer.final_score, 777);
         assert_eq!(tape.footer.final_rng_state, 0x1111_2222);
     }
+
+    #[test]
+    fn rejects_nonzero_header_reserved_bytes() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[5] = 1;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::HeaderReservedNonZero)
+        ));
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_beyond_declared_frame_count() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes.push(0);
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::TapeLengthMismatch { .. })
+        ));
+    }
 }

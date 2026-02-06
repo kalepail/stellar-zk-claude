@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST_V1};
 use crate::error::VerifyError;
-use crate::sim::replay;
+use crate::sim::replay_strict;
 use crate::tape::parse_tape;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,7 +33,11 @@ pub fn verify_guest_input(input: &GuestInput) -> Result<VerificationJournal, Ver
 
 pub fn verify_tape(bytes: &[u8], max_frames: u32) -> Result<VerificationJournal, VerifyError> {
     let tape = parse_tape(bytes, max_frames)?;
-    let replay_result = replay(tape.header.seed, tape.inputs);
+    let replay_result =
+        replay_strict(tape.header.seed, tape.inputs).map_err(|err| VerifyError::RuleViolation {
+            frame: err.frame_count,
+            rule: err.rule,
+        })?;
 
     if replay_result.frame_count != tape.header.frame_count {
         return Err(VerifyError::FrameCountMismatch {
@@ -70,6 +74,7 @@ pub fn verify_tape(bytes: &[u8], max_frames: u32) -> Result<VerificationJournal,
 mod tests {
     use super::*;
     use crate::constants::TAPE_HEADER_SIZE;
+    use crate::sim::replay;
     use crate::tape::{serialize_tape, TapeFooter};
 
     fn footer_offset(frame_count: usize) -> usize {

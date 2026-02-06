@@ -12,6 +12,7 @@ use crate::constants::{
     SHIP_MAX_SPEED_SQ_Q16_16, SHIP_RADIUS, SHIP_RESPAWN_FRAMES, SHIP_SPAWN_INVULNERABLE_FRAMES,
     SHIP_THRUST_Q8_8, SHIP_TURN_SPEED_BAM, STARTING_LIVES, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
 };
+use crate::error::RuleCode;
 use crate::fixed_point::{
     apply_drag, atan2_bam, clamp_i32, clamp_speed_q8_8, collision_dist_sq_q12_4, cos_bam,
     displace_q12_4, shortest_delta_q12_4, sin_bam, velocity_q8_8, wrap_x_q12_4, wrap_y_q12_4,
@@ -112,6 +113,12 @@ pub struct ReplayCheckpoint {
     pub ship_invulnerable_timer: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayViolation {
+    pub frame_count: u32,
+    pub rule: RuleCode,
+}
+
 const SHIP_SPAWN_X_Q12_4: i32 = 7_680;
 const SHIP_SPAWN_Y_Q12_4: i32 = 5_760;
 const SHIP_RESPAWN_CLEAR_RADIUS_Q12_4: i32 = 1_920;
@@ -142,6 +149,28 @@ pub fn replay(seed: u32, inputs: &[u8]) -> ReplayResult {
         final_rng_state: game.rng.state(),
         frame_count: game.frame_count,
     }
+}
+
+pub fn replay_strict(seed: u32, inputs: &[u8]) -> Result<ReplayResult, ReplayViolation> {
+    let mut game = Game::new(seed);
+    game.validate_invariants().map_err(|rule| ReplayViolation {
+        frame_count: game.frame_count,
+        rule,
+    })?;
+
+    for input in inputs {
+        game.step(*input);
+        game.validate_invariants().map_err(|rule| ReplayViolation {
+            frame_count: game.frame_count,
+            rule,
+        })?;
+    }
+
+    Ok(ReplayResult {
+        final_score: game.score,
+        final_rng_state: game.rng.state(),
+        frame_count: game.frame_count,
+    })
 }
 
 pub fn replay_with_checkpoints(
@@ -184,6 +213,11 @@ fn saucer_spawn_range_for_wave(wave: i32) -> (i32, i32) {
         (SAUCER_SPAWN_MIN_FRAMES * wave_mult_pct) / 100,
         (SAUCER_SPAWN_MAX_FRAMES * wave_mult_pct) / 100,
     )
+}
+
+#[inline]
+fn in_world_bounds_q12_4(x: i32, y: i32) -> bool {
+    (0..WORLD_WIDTH_Q12_4).contains(&x) && (0..WORLD_HEIGHT_Q12_4).contains(&y)
 }
 
 struct Game {
@@ -306,6 +340,93 @@ impl Game {
         {
             self.spawn_wave();
         }
+    }
+
+    fn validate_invariants(&self) -> Result<(), RuleCode> {
+        if self.wave < 1 {
+            return Err(RuleCode::GlobalWaveNonZero);
+        }
+
+        let mode_lives_consistent = match self.mode {
+            GameMode::Playing => self.lives > 0,
+            GameMode::GameOver => self.lives <= 0,
+        };
+        if !mode_lives_consistent {
+            return Err(RuleCode::GlobalModeLivesConsistency);
+        }
+
+        let next_extra_life_valid = self.next_extra_life_score > self.score
+            && self.next_extra_life_score >= EXTRA_LIFE_SCORE_STEP
+            && self
+                .next_extra_life_score
+                .is_multiple_of(EXTRA_LIFE_SCORE_STEP);
+        if !next_extra_life_valid {
+            return Err(RuleCode::GlobalNextExtraLifeScore);
+        }
+
+        if !in_world_bounds_q12_4(self.ship.x, self.ship.y) {
+            return Err(RuleCode::ShipBounds);
+        }
+
+        if !(0..=255).contains(&self.ship.angle) {
+            return Err(RuleCode::ShipAngleRange);
+        }
+
+        if self.ship.fire_cooldown < 0 {
+            return Err(RuleCode::ShipCooldownRange);
+        }
+
+        if self.ship.respawn_timer < 0 {
+            return Err(RuleCode::ShipRespawnTimerRange);
+        }
+
+        if self.ship.invulnerable_timer < 0 {
+            return Err(RuleCode::ShipInvulnerabilityRange);
+        }
+
+        if self.bullets.len() > SHIP_BULLET_LIMIT {
+            return Err(RuleCode::PlayerBulletLimit);
+        }
+
+        for bullet in &self.bullets {
+            if !bullet.alive || bullet.life <= 0 || !in_world_bounds_q12_4(bullet.x, bullet.y) {
+                return Err(RuleCode::PlayerBulletState);
+            }
+        }
+
+        for bullet in &self.saucer_bullets {
+            if !bullet.alive || bullet.life <= 0 || !in_world_bounds_q12_4(bullet.x, bullet.y) {
+                return Err(RuleCode::SaucerBulletState);
+            }
+        }
+
+        for asteroid in &self.asteroids {
+            if !asteroid.alive
+                || !in_world_bounds_q12_4(asteroid.x, asteroid.y)
+                || !(0..=255).contains(&asteroid.angle)
+            {
+                return Err(RuleCode::AsteroidState);
+            }
+        }
+
+        let max_saucers = max_saucers_for_wave(self.wave);
+        if (self.saucers.len() as i32) > max_saucers {
+            return Err(RuleCode::SaucerCap);
+        }
+
+        for saucer in &self.saucers {
+            if !saucer.alive
+                || saucer.x < SAUCER_CULL_MIN_X_Q12_4
+                || saucer.x > SAUCER_CULL_MAX_X_Q12_4
+                || !(0..WORLD_HEIGHT_Q12_4).contains(&saucer.y)
+                || saucer.fire_cooldown < 0
+                || saucer.drift_timer < 0
+            {
+                return Err(RuleCode::SaucerState);
+            }
+        }
+
+        Ok(())
     }
 
     fn get_ship_spawn_point(&self) -> (i32, i32) {
@@ -519,24 +640,15 @@ impl Game {
     }
 
     fn update_bullets(&mut self) {
-        for bullet in &mut self.bullets {
-            if !bullet.alive {
-                continue;
-            }
-
-            bullet.life -= 1;
-            if bullet.life <= 0 {
-                bullet.alive = false;
-                continue;
-            }
-
-            bullet.x = wrap_x_q12_4(bullet.x + (bullet.vx >> 4));
-            bullet.y = wrap_y_q12_4(bullet.y + (bullet.vy >> 4));
-        }
+        Self::update_projectiles(&mut self.bullets);
     }
 
     fn update_saucer_bullets(&mut self) {
-        for bullet in &mut self.saucer_bullets {
+        Self::update_projectiles(&mut self.saucer_bullets);
+    }
+
+    fn update_projectiles(projectiles: &mut [Bullet]) {
+        for bullet in projectiles {
             if !bullet.alive {
                 continue;
             }
