@@ -37,7 +37,7 @@ RUN curl -L https://risczero.com/install | INSTALLER_NO_PROMPT=1 bash && \
 
 WORKDIR /workspace
 
-COPY Cargo.toml rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY asteroids-core ./asteroids-core
 COPY methods ./methods
 COPY host ./host
@@ -48,9 +48,9 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/workspace/target \
     if [ "${ENABLE_CUDA}" = "1" ]; then \
-        cargo build --release -p api-server --features cuda; \
+        cargo build --locked --release -p api-server --features cuda; \
     else \
-        cargo build --release -p api-server; \
+        cargo build --locked --release -p api-server; \
     fi
 
 FROM --platform=linux/amd64 ${CUDA_RUNTIME_IMAGE} AS runtime

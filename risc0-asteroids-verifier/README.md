@@ -80,6 +80,15 @@ API docs, security defaults, Docker deployment, and Vast.ai notes are in:
 - `risc0-asteroids-verifier/api-server/Dockerfile`
 - `risc0-asteroids-verifier/VASTAI`
 
+Vast.ai one-shot deploy script (recommended defaults):
+
+```bash
+cd risc0-asteroids-verifier
+API_KEY='<strong-random-secret>' \
+GIT_REF='feature/super-risc0-asteroids' \
+bash ./VASTAI
+```
+
 ## Coverage + Performance Harness
 
 From repo root:
