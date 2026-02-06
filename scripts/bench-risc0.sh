@@ -14,6 +14,8 @@ RUN_SECURE_MEDIUM=0
 CHECK_THRESHOLDS=0
 OUT_DIR=""
 THRESHOLDS_FILE="$DEFAULT_THRESHOLDS_FILE"
+SEGMENT_LIMIT_PO2="19"
+declare -a HOST_EXTRA_ARGS=()
 
 usage() {
   cat <<'USAGE_EOF'
@@ -26,6 +28,8 @@ Options:
                            Default: risc0-asteroids-verifier/benchmarks/runs/<utc-timestamp>
   --check                  Enforce regression thresholds from thresholds file.
   --thresholds <path>      Use custom thresholds file (env format).
+  --segment-limit-po2 <n>  Pass segment limit (po2 cycles) to host verifier.
+                           Default: 19
   --full                   Include secure medium-fixture proving (slow, expensive).
   --dev-only               Skip secure proving runs.
   --skip-coverage          Skip cargo-llvm-cov coverage run.
@@ -53,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       THRESHOLDS_FILE="${2:-}"
       shift 2
       ;;
+    --segment-limit-po2)
+      SEGMENT_LIMIT_PO2="${2:-}"
+      shift 2
+      ;;
     --full)
       RUN_SECURE_MEDIUM=1
       shift
@@ -77,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$SEGMENT_LIMIT_PO2" ]]; then
+  HOST_EXTRA_ARGS+=(--segment-limit-po2 "$SEGMENT_LIMIT_PO2")
+fi
 
 require_cmd() {
   local cmd="$1"
@@ -235,15 +247,29 @@ run_case() {
     mode_label="dev"
   fi
 
+  local -a dev_mode_args=()
+  if [[ "$mode" == "1" ]]; then
+    dev_mode_args+=(--allow-dev-mode)
+  fi
+
+  local -a host_cmd=(target/release/host --receipt-kind composite)
+  if [[ ${#HOST_EXTRA_ARGS[@]} -gt 0 ]]; then
+    host_cmd+=("${HOST_EXTRA_ARGS[@]}")
+  fi
+  if [[ ${#dev_mode_args[@]} -gt 0 ]]; then
+    host_cmd+=("${dev_mode_args[@]}")
+  fi
+  host_cmd+=(--tape "$tape_path")
+
   if [[ "$with_pprof" -eq 1 ]]; then
     (
       cd "$VERIFIER_DIR"
-      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" RISC0_PPROF_OUT="$pprof_file" target/release/host --tape "$tape_path"
+      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" RISC0_PPROF_OUT="$pprof_file" "${host_cmd[@]}"
     ) > "$log_file" 2>&1
   else
     (
       cd "$VERIFIER_DIR"
-      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" target/release/host --tape "$tape_path"
+      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" "${host_cmd[@]}"
     ) > "$log_file" 2>&1
   fi
 
@@ -405,6 +431,9 @@ write_summary() {
     echo
     echo "- Generated (UTC): $(now_utc)"
     echo "- Output directory: \`$OUT_DIR\`"
+    if [[ -n "$SEGMENT_LIMIT_PO2" ]]; then
+      echo "- Segment limit po2 override: \`$SEGMENT_LIMIT_PO2\`"
+    fi
     echo "- Coverage run: $([[ "$RUN_COVERAGE" -eq 1 ]] && echo "yes" || echo "no")"
     echo "- Dev runs: $([[ "$RUN_DEV" -eq 1 ]] && echo "yes" || echo "no")"
     echo "- Secure short run: $([[ "$RUN_SECURE_SHORT" -eq 1 ]] && echo "yes" || echo "no")"

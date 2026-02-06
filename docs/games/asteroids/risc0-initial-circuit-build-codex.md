@@ -19,10 +19,11 @@ First implementation pass for a RISC Zero proof pipeline that verifies Asteroids
 - Guest: `risc0-asteroids-verifier/methods/guest/src/main.rs`
   - Reads `GuestInput`, runs strict verifier, commits typed `VerificationJournal`.
 - Host: `risc0-asteroids-verifier/host/src/main.rs`
-  - CLI for `--tape`, `--max-frames`, optional `--journal-out`.
+  - CLI for `--tape`, `--max-frames`, optional `--journal-out`, `--receipt-kind`, `--segment-limit-po2`.
+  - Dev-mode safety gate (`--allow-dev-mode` required when `RISC0_DEV_MODE=1`).
   - Proves guest execution and verifies receipt against `VERIFY_TAPE_ID`.
 - JS bridge script: `scripts/verify-tape-risc0.ts`
-  - Runs the Rust host verifier from existing JS workflow (dev mode default, `--real` for real proof).
+  - Runs the Rust host verifier from existing JS workflow (real proof default, `--dev` for fake dev receipts).
 
 ## Test Coverage Added
 

@@ -30,7 +30,7 @@ cargo test -p asteroids-verifier-core
 
 ```bash
 cd risc0-asteroids-verifier
-RISC0_DEV_MODE=1 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape
+RISC0_DEV_MODE=1 cargo run -p host --release -- --allow-dev-mode --tape ../test-fixtures/test-medium.tape
 ```
 
 Then run without dev mode for a real proof:
@@ -39,10 +39,22 @@ Then run without dev mode for a real proof:
 RISC0_DEV_MODE=0 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape
 ```
 
+By default, the host refuses to run when `RISC0_DEV_MODE=1` unless you pass
+`--allow-dev-mode`. This prevents accidentally accepting fake dev receipts in
+security-critical flows.
+
+The host defaults to `--segment-limit-po2 19` (good memory/perf stability for this workload).
+
 Optional journal output:
 
 ```bash
 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --journal-out ./journal.json
+```
+
+Optional performance tuning knobs:
+
+```bash
+cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --receipt-kind composite --segment-limit-po2 20
 ```
 
 ## Coverage + Performance Harness
@@ -52,6 +64,8 @@ From repo root:
 ```bash
 bash scripts/bench-risc0.sh
 ```
+
+`bench-risc0.sh` also defaults to `--segment-limit-po2 19` and can be overridden via `--segment-limit-po2 <n>`.
 
 The script writes artifacts to:
 

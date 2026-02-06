@@ -244,7 +244,7 @@ fn validate_transition(
     let ship_died_this_frame = prev.ship_can_control
         && !next.ship_can_control
         && next.ship_respawn_timer >= SHIP_RESPAWN_FRAMES;
-    if cfg!(test) && !wave_advanced_this_frame {
+    if !wave_advanced_this_frame {
         let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4) as i64;
         let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4) as i64;
         let respawned_this_frame = !prev.ship_can_control && next.ship_can_control;
