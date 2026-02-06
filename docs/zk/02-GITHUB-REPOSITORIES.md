@@ -95,7 +95,7 @@ TimeLock Controller (governance over router changes)
 - **`contracts/timelock`** — Timelock controller with Proposer/Executor/Canceller roles, batch operations, self-administration. Designed to own the Router.
 - **`contracts/interface`** — Shared traits (`RiscZeroVerifierInterface`) and types (`Receipt`, `ReceiptClaim`, `Output`, `VerifierEntry`). RISC Zero tagged hashing.
 - **`tools/build-utils`** — VK digest and selector computation.
-- **`scripts/deploy_verifier.sh`** — Deployment for local/futurenet/testnet/mainnet with parameter display.
+- **Deployment automation script (upstream branch)** — Deployment for local/futurenet/testnet/mainnet with parameter display. Not present in this repository snapshot.
 
 #### Key Contributors
 - **Oghma (Matteo Lisotto)** — Primary engineer (9+ commits, 11 PRs). Built the entire verifier stack.

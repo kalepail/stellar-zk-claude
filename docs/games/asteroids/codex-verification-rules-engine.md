@@ -335,21 +335,16 @@ export interface VerificationResult {
 
 ### Strict verifier runner
 
-New script: `scripts/verify-tape-rules.ts`
+Current strict runner: `scripts/verify-tape-risc0.ts`
 
 Process:
-1. Deserialize and pre-validate tape.
-2. Initialize headless game at seed.
-3. For each frame:
-   - snapshot `prev`
-   - execute one simulation step
-   - snapshot `next`
-   - run all frame rules
-   - on first violation: fail immediately with structured output.
-4. After final frame, verify footer score + RNG.
-5. Emit machine-readable summary for CI/backend usage.
+1. Invoke the Rust host verifier from JS (`risc0-asteroids-verifier/host`).
+2. Parse and pre-validate tape structure and CRC in `asteroids-core`.
+3. Replay deterministically under strict transition checks.
+4. Enforce final footer score/RNG equality and emit journal fields.
+5. Optionally write machine-readable journal output with `--journal-out`.
 
-Keep existing `scripts/verify-tape.ts` for backward compatibility but treat this strict runner as canonical for fairness verification.
+Keep `scripts/verify-tape.ts` as the fast local replay check; treat `scripts/verify-tape-risc0.ts` as the canonical proof-facing verification path.
 
 ## 10. Worker API (Submission Verification)
 
