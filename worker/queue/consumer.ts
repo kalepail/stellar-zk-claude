@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_JOB_WALL_TIME_MS } from "../constants";
+import { DEFAULT_MAX_JOB_WALL_TIME_MS, MAX_QUEUE_RETRIES } from "../constants";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { submitToProver } from "../prover/client";
@@ -59,10 +59,17 @@ async function processQueueMessage(
   try {
     submitResult = await submitToProver(env, tapeBytes);
   } catch (error) {
+    const reason = `submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts > MAX_QUEUE_RETRIES) {
+      await coordinator.markFailed(jobId, `${reason} (exhausted ${message.attempts} delivery attempts)`);
+      message.ack();
+      return;
+    }
+
     const delaySeconds = retryDelaySeconds(message.attempts);
     await coordinator.markRetry(
       jobId,
-      `submit error: ${safeErrorMessage(error)}`,
+      reason,
       new Date(Date.now() + delaySeconds * 1000).toISOString(),
     );
     message.retry({ delaySeconds });
@@ -70,6 +77,15 @@ async function processQueueMessage(
   }
 
   if (submitResult.type === "retry") {
+    if (message.attempts > MAX_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${submitResult.message} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
     const delaySeconds = retryDelaySeconds(message.attempts);
     const nextRetryAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
     await coordinator.markRetry(jobId, submitResult.message, nextRetryAt);
@@ -97,5 +113,40 @@ export async function handleQueueBatch(
   // eslint-disable-next-line no-await-in-loop
   for (const message of batch.messages) {
     await processQueueMessage(message, env);
+  }
+}
+
+/**
+ * Handles messages that land in the dead-letter queue after all retries are
+ * exhausted. This is a safety net — the primary consumer already detects last
+ * attempts and marks jobs failed. The DLQ catches edge cases like unhandled
+ * consumer crashes on the final delivery.
+ */
+export async function handleDlqBatch(
+  batch: MessageBatch<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  // Sequential processing is intentional — each message must finish before the next.
+  // eslint-disable-next-line no-await-in-loop
+  for (const message of batch.messages) {
+    const payload = message.body;
+    if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
+      message.ack();
+      continue;
+    }
+
+    const coordinator = coordinatorStub(env);
+    // eslint-disable-next-line no-await-in-loop
+    const job = await coordinator.getJob(payload.jobId);
+
+    if (job && !isTerminalProofStatus(job.status)) {
+      // eslint-disable-next-line no-await-in-loop
+      await coordinator.markFailed(
+        payload.jobId,
+        "proof job failed: all queue delivery attempts exhausted (dead-letter)",
+      );
+    }
+
+    message.ack();
   }
 }

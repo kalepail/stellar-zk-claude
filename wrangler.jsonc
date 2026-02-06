@@ -38,6 +38,14 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 10,
+        "max_concurrency": 1,
+        "dead_letter_queue": "stellar-zk-proof-jobs-dlq"
+      },
+      {
+        "queue": "stellar-zk-proof-jobs-dlq",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
         "max_concurrency": 1
       }
     ]

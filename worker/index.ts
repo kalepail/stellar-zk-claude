@@ -4,7 +4,7 @@ import { applyApiCacheControl } from "./cache-control";
 export { ProofCoordinatorDO } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { createApiRouter } from "./api/routes";
-import { handleQueueBatch } from "./queue/consumer";
+import { handleDlqBatch, handleQueueBatch } from "./queue/consumer";
 import type { ProofQueueMessage } from "./types";
 import { safeErrorMessage } from "./utils";
 
@@ -65,6 +65,10 @@ export default {
   },
 
   async queue(batch: MessageBatch<unknown>, env: WorkerEnv): Promise<void> {
-    await handleQueueBatch(batch as MessageBatch<ProofQueueMessage>, env);
+    if (batch.queue === "stellar-zk-proof-jobs-dlq") {
+      await handleDlqBatch(batch as MessageBatch<ProofQueueMessage>, env);
+    } else {
+      await handleQueueBatch(batch as MessageBatch<ProofQueueMessage>, env);
+    }
   },
 } satisfies ExportedHandler<WorkerEnv>;

@@ -14,5 +14,10 @@ export const DEFAULT_MAX_JOB_WALL_TIME_MS = 60 * 60_000; // 1 hour
 
 export const MAX_RETRY_DELAY_SECONDS = 300;
 
+// Must match the max_retries value in wrangler.jsonc queue consumer config.
+// After this many retries (attempts > MAX_QUEUE_RETRIES), the job is marked
+// as permanently failed rather than retried again.
+export const MAX_QUEUE_RETRIES = 10;
+
 export const ACTIVE_JOB_KEY = "active_job_id";
 export const JOB_KEY_PREFIX = "job:";
