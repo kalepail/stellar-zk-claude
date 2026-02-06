@@ -1,0 +1,52 @@
+pub const TAPE_MAGIC: u32 = 0x5A4B5450;
+pub const TAPE_VERSION: u8 = 1;
+pub const TAPE_HEADER_SIZE: usize = 16;
+pub const TAPE_FOOTER_SIZE: usize = 12;
+
+pub const MAX_FRAMES_DEFAULT: u32 = 18_000;
+
+pub const WORLD_WIDTH_Q12_4: i32 = 15_360;
+pub const WORLD_HEIGHT_Q12_4: i32 = 11_520;
+
+pub const STARTING_LIVES: i32 = 3;
+pub const EXTRA_LIFE_SCORE_STEP: u32 = 10_000;
+
+pub const SHIP_RADIUS: i32 = 14;
+pub const SHIP_TURN_SPEED_BAM: i32 = 3;
+pub const SHIP_THRUST_Q8_8: i32 = 20;
+pub const SHIP_MAX_SPEED_SQ_Q16_16: i32 = 1_451 * 1_451;
+pub const SHIP_RESPAWN_FRAMES: i32 = 75;
+pub const SHIP_SPAWN_INVULNERABLE_FRAMES: i32 = 120;
+
+pub const SHIP_BULLET_LIMIT: usize = 4;
+pub const SHIP_BULLET_SPEED_Q8_8: i32 = 2_219;
+pub const SHIP_BULLET_LIFETIME_FRAMES: i32 = 51;
+pub const SHIP_BULLET_COOLDOWN_FRAMES: i32 = 10;
+
+pub const SAUCER_RADIUS_LARGE: i32 = 22;
+pub const SAUCER_RADIUS_SMALL: i32 = 16;
+pub const SAUCER_SPEED_LARGE_Q8_8: i32 = 299;
+pub const SAUCER_SPEED_SMALL_Q8_8: i32 = 405;
+pub const SAUCER_BULLET_SPEED_Q8_8: i32 = 1_195;
+pub const SAUCER_BULLET_LIFETIME_FRAMES: i32 = 84;
+pub const SAUCER_SPAWN_MIN_FRAMES: i32 = 420;
+pub const SAUCER_SPAWN_MAX_FRAMES: i32 = 840;
+
+pub const ASTEROID_CAP: usize = 27;
+pub const ASTEROID_RADIUS_LARGE: i32 = 48;
+pub const ASTEROID_RADIUS_MEDIUM: i32 = 28;
+pub const ASTEROID_RADIUS_SMALL: i32 = 16;
+pub const ASTEROID_SPEED_LARGE_Q8_8: (i32, i32) = (145, 248);
+pub const ASTEROID_SPEED_MEDIUM_Q8_8: (i32, i32) = (265, 401);
+pub const ASTEROID_SPEED_SMALL_Q8_8: (i32, i32) = (418, 606);
+
+pub const SCORE_LARGE_ASTEROID: u32 = 20;
+pub const SCORE_MEDIUM_ASTEROID: u32 = 50;
+pub const SCORE_SMALL_ASTEROID: u32 = 100;
+pub const SCORE_LARGE_SAUCER: u32 = 200;
+pub const SCORE_SMALL_SAUCER: u32 = 1_000;
+
+pub const LURK_TIME_THRESHOLD_FRAMES: i32 = 360;
+pub const LURK_SAUCER_SPAWN_FAST_FRAMES: i32 = 180;
+
+pub const RULES_DIGEST_V1: u32 = 0x4153_5431; // "AST1"
