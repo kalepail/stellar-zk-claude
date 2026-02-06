@@ -1,64 +1,46 @@
-#!/usr/bin/env bash
-# vast.ai on-start script for Asteroids ZK API Server
-# Usage: paste this into the vast.ai "on-start script" field,
-# or run manually after SSH-ing into the instance.
-#
-# Prerequisites: vast.ai instance with CUDA GPU (e.g., RTX 4090, A100)
-#
-# After the server starts, set up a Cloudflare tunnel:
-#   cloudflared tunnel --url http://localhost:8080 --no-autoupdate
-# Or with a named tunnel token:
-#   cloudflared service install <YOUR_TUNNEL_TOKEN>
-
 env >> /etc/environment
 mkdir -p ${DATA_DIRECTORY:-/workspace}
 
-echo "=== Installing system dependencies ==="
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    curl build-essential pkg-config libssl-dev clang libclang-dev git lsof
-
-echo "=== Installing Rust ==="
 export RUSTUP_INIT_SKIP_PATH_CHECK=yes
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile default
-source "$HOME/.cargo/env"
 
-echo "=== Installing RISC Zero toolchain ==="
+. "$HOME/.cargo/env"
+
 curl -L https://risczero.com/install | INSTALLER_NO_PROMPT=1 bash
+
 export PATH="$HOME/.risc0/bin:$PATH"
 source "/root/.bashrc" 2>/dev/null || true
+
 rzup install || true
 rzup install risc0-groth16 || true
 
-echo "=== Cloning/updating repo ==="
 cd /workspace/
 if [ -d "stellar-zk-claude" ]; then
     cd stellar-zk-claude/
-    git pull
+    git fetch && git pull
 else
     git clone https://github.com/kalepail/stellar-zk-claude.git
     cd stellar-zk-claude/
 fi
+git checkout feature/claude-initial-risc0
 
-echo "=== Building api-server with CUDA ==="
 cd risc0/
-source "$HOME/.cargo/env"
-RUSTFLAGS="-C target-cpu=native" cargo build --release --package api-server --features cuda
 
-echo "=== Installing cloudflared ==="
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y lsof clang libclang-dev
+
+. "$HOME/.cargo/env"
+
+RUSTFLAGS="-C target-cpu=native" cargo build -F cuda -r --package api-server
+
+kill -9 $(lsof -t -i:8080) 2>/dev/null || true
+
+pip uninstall torch torchvision torchaudio --no-input 2>/dev/null || true
+pip cache purge 2>/dev/null || true
+
 mkdir -p --mode=0755 /usr/share/keyrings
 curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
 echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
 apt-get update && apt-get install -y cloudflared
 
-# Kill anything already on port 8080
-kill -9 $(lsof -t -i:8080) 2>/dev/null || true
-
-echo "=== Starting api-server ==="
 ./target/release/api-server &
-echo "API server started on port 8080 (PID: $!)"
-
-echo ""
-echo "=== Next steps ==="
-echo "Set up a Cloudflare tunnel:"
-echo "  cloudflared service install <YOUR_TUNNEL_TOKEN>"
