@@ -42,6 +42,7 @@ pub enum TapeError {
     InvalidMagic(u32),
     UnsupportedVersion(u8),
     Truncated { expected: usize, got: usize },
+    TrailingData { expected: usize, got: usize },
     CrcMismatch { stored: u32, computed: u32 },
     ReservedBitsSet { frame: u32, byte: u8 },
 }
@@ -54,6 +55,9 @@ impl core::fmt::Display for TapeError {
             TapeError::UnsupportedVersion(v) => write!(f, "Unsupported tape version: {v}"),
             TapeError::Truncated { expected, got } => {
                 write!(f, "Tape truncated: expected {expected} bytes, got {got}")
+            }
+            TapeError::TrailingData { expected, got } => {
+                write!(f, "Tape has trailing data: expected {expected} bytes, got {got}")
             }
             TapeError::CrcMismatch { stored, computed } => {
                 write!(f, "CRC mismatch: stored=0x{stored:08x}, computed=0x{computed:08x}")
@@ -97,6 +101,12 @@ pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
     let expected_len = HEADER_SIZE + frame_count as usize + FOOTER_SIZE;
     if data.len() < expected_len {
         return Err(TapeError::Truncated {
+            expected: expected_len,
+            got: data.len(),
+        });
+    }
+    if data.len() > expected_len {
+        return Err(TapeError::TrailingData {
             expected: expected_len,
             got: data.len(),
         });
