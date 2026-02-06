@@ -5,7 +5,6 @@
 //!   BODY (frameCount bytes): one input byte per frame
 //!   FOOTER (12 bytes): finalScore(u32) finalRngState(u32) checksum(u32)
 
-use serde::{Deserialize, Serialize};
 extern crate alloc;
 use alloc::vec::Vec;
 
@@ -14,7 +13,7 @@ pub const TAPE_VERSION: u8 = 1;
 const HEADER_SIZE: usize = 16;
 const FOOTER_SIZE: usize = 12;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TapeHeader {
     pub magic: u32,
     pub version: u8,
@@ -22,14 +21,14 @@ pub struct TapeHeader {
     pub frame_count: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TapeFooter {
     pub final_score: u32,
     pub final_rng_state: u32,
     pub checksum: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Tape {
     pub header: TapeHeader,
     pub inputs: Vec<u8>,

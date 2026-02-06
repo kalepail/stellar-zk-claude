@@ -2,6 +2,8 @@
 //!
 //! All values are verified against the TypeScript source.
 
+use crate::types::AsteroidSize;
+
 // World dimensions
 pub const WORLD_WIDTH: i32 = 960;
 pub const WORLD_HEIGHT: i32 = 720;
@@ -89,5 +91,3 @@ pub fn asteroid_radius(size: AsteroidSize) -> i32 {
         AsteroidSize::Small => ASTEROID_RADIUS_SMALL,
     }
 }
-
-use crate::types::AsteroidSize;

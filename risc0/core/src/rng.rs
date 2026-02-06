@@ -4,9 +4,7 @@
 //! The TypeScript version uses `>>> 0` to force unsigned 32-bit;
 //! Rust u32 naturally wraps via `Wrapping` semantics.
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SeededRng {
     state: u32,
 }
@@ -22,10 +20,6 @@ impl SeededRng {
         self.state
     }
 
-    pub fn set_state(&mut self, state: u32) {
-        self.state = state;
-    }
-
     /// Generate next random u32.
     pub fn next(&mut self) -> u32 {
         let mut x = self.state;
@@ -34,11 +28,6 @@ impl SeededRng {
         x ^= x << 5;
         self.state = x;
         self.state
-    }
-
-    /// Random u32 in [0, max).
-    pub fn next_int(&mut self, max: u32) -> u32 {
-        self.next() % max
     }
 
     /// Random i32 in [min, max_exclusive).

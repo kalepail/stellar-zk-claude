@@ -301,7 +301,6 @@ impl AsteroidsGame {
             alive: true,
             radius: 2,
             life: SHIP_BULLET_LIFETIME_FRAMES,
-            from_saucer: false,
         };
 
         self.bullets.push(bullet);
@@ -664,7 +663,6 @@ impl AsteroidsGame {
             alive: true,
             radius: 2,
             life: SAUCER_BULLET_LIFETIME_FRAMES,
-            from_saucer: true,
         }
     }
 

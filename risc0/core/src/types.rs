@@ -3,9 +3,7 @@
 //! Only gameplay-relevant fields are included (no visual-only fields like
 //! prevX/prevY, vertices, particles, etc.)
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsteroidSize {
     Large,
     Medium,
@@ -24,7 +22,7 @@ impl AsteroidSize {
 }
 
 /// Frame input: 4 boolean buttons packed as the low 4 bits of a byte.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct FrameInput {
     pub left: bool,
     pub right: bool,
@@ -41,14 +39,6 @@ impl FrameInput {
             thrust: byte & 0x04 != 0,
             fire: byte & 0x08 != 0,
         }
-    }
-
-    /// Encode to a tape byte.
-    pub fn to_byte(self) -> u8 {
-        (if self.left { 0x01 } else { 0 })
-            | (if self.right { 0x02 } else { 0 })
-            | (if self.thrust { 0x04 } else { 0 })
-            | (if self.fire { 0x08 } else { 0 })
     }
 }
 
@@ -92,7 +82,6 @@ pub struct Bullet {
     pub alive: bool,
     pub radius: i32,       // pixels
     pub life: i32,         // frames remaining
-    pub from_saucer: bool,
 }
 
 /// Saucer entity.
