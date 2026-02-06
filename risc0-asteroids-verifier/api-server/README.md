@@ -86,36 +86,7 @@ These defaults keep proving in production-safe mode.
 
 See the parent [README.md](../README.md) for full Vast.ai setup, build, run, and Cloudflare Tunnel instructions.
 
-## Docker (alternative)
-
-### Build
-
-```bash
-cd risc0-asteroids-verifier
-
-docker build -f api-server/Dockerfile \
-  --build-arg ENABLE_CUDA=1 \
-  -t asteroids-zk-api:latest .
-```
-
-For CPU-only instances, use `--build-arg ENABLE_CUDA=0`.
-
-### Run
-
-```bash
-docker run -d \
-  --name asteroids-zk-api \
-  --restart unless-stopped \
-  --gpus all \
-  -p 8080:8080 \
-  --env-file api-server/.env.example \
-  -e API_KEY='replace-with-strong-random-secret' \
-  -e RUST_LOG=info \
-  -e RISC0_DEV_MODE=0 \
-  asteroids-zk-api:latest
-```
-
-### Cloudflare Tunnel
+## Cloudflare Tunnel
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8080
