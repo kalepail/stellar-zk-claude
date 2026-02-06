@@ -1,6 +1,8 @@
+mod store;
+
 use std::{
-    collections::HashMap,
     env,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -19,7 +21,8 @@ use host::{
     accelerator, prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, Semaphore};
+use store::JobStore;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 const DEFAULT_MAX_TAPE_BYTES: usize = 2 * 1024 * 1024;
@@ -105,7 +108,7 @@ impl ServerPolicy {
 
 #[derive(Clone)]
 struct AppState {
-    jobs: Arc<RwLock<HashMap<Uuid, ProofJob>>>,
+    jobs: Arc<JobStore>,
     prover_semaphore: Arc<Semaphore>,
     max_tape_bytes: usize,
     max_jobs: usize,
@@ -132,7 +135,7 @@ struct ProveTapeQuery {
     verify_receipt: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProofEnvelope {
     proof: TapeProof,
     elapsed_ms: u64,
@@ -336,12 +339,12 @@ async fn run_proof(
 }
 
 async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: ProveOptions) {
+    if let Err(e) = state
+        .jobs
+        .update_status(job_id, JobStatus::Running, Some(now_unix_s()))
     {
-        let mut jobs = state.jobs.write().await;
-        if let Some(job) = jobs.get_mut(&job_id) {
-            job.status = JobStatus::Running;
-            job.started_at_unix_s = Some(now_unix_s());
-        }
+        tracing::error!(job_id = %job_id, "failed to mark job running: {e}");
+        return;
     }
 
     let timeout = Duration::from_secs(state.running_job_timeout_secs);
@@ -355,21 +358,15 @@ async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: Pr
         }
     };
 
-    {
-        let mut jobs = state.jobs.write().await;
-        if let Some(job) = jobs.get_mut(&job_id) {
-            job.finished_at_unix_s = Some(now_unix_s());
-            match prove_result {
-                Ok(result) => {
-                    job.status = JobStatus::Succeeded;
-                    job.result = Some(result);
-                    job.error = None;
-                }
-                Err(err) => {
-                    job.status = JobStatus::Failed;
-                    job.result = None;
-                    job.error = Some(err);
-                }
+    match prove_result {
+        Ok(result) => {
+            if let Err(e) = state.jobs.complete(job_id, result) {
+                tracing::error!(job_id = %job_id, "failed to store proof result: {e}");
+            }
+        }
+        Err(err) => {
+            if let Err(e) = state.jobs.fail(job_id, err) {
+                tracing::error!(job_id = %job_id, "failed to mark job failed: {e}");
             }
         }
     }
@@ -380,44 +377,26 @@ fn spawn_job_cleanup_task(state: AppState, sweep_secs: u64) {
         let sweep = Duration::from_secs(sweep_secs);
         loop {
             tokio::time::sleep(sweep).await;
-            let now = now_unix_s();
-            let ttl_cutoff = now.saturating_sub(state.job_ttl_secs);
-            let running_cutoff = now.saturating_sub(state.running_job_timeout_secs);
-
-            let mut jobs = state.jobs.write().await;
-            jobs.retain(|_, job| {
-                // Reap stuck running/queued jobs past the timeout.
-                if matches!(job.status, JobStatus::Running | JobStatus::Queued) {
-                    let started = job.started_at_unix_s.unwrap_or(job.created_at_unix_s);
-                    if started < running_cutoff {
-                        tracing::warn!(
-                            job_id = %job.job_id,
-                            "reaping stuck {} job (started {}s ago)",
-                            if job.status == JobStatus::Running { "running" } else { "queued" },
-                            now.saturating_sub(started)
-                        );
-                        return false;
-                    }
-                    return true;
-                }
-                // Reap finished jobs past TTL.
-                let finished = job.finished_at_unix_s.unwrap_or(job.created_at_unix_s);
-                finished >= ttl_cutoff
-            });
+            match state
+                .jobs
+                .sweep(state.job_ttl_secs, state.running_job_timeout_secs)
+            {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(reaped = n, "sweep completed"),
+                Err(e) => tracing::error!("sweep failed: {e}"),
+            }
         }
     });
 }
 
 async fn health(state: web::Data<AppState>) -> impl Responder {
-    let jobs = state.jobs.read().await;
-    let queued_jobs = jobs
-        .values()
-        .filter(|job| matches!(job.status, JobStatus::Queued))
-        .count();
-    let running_jobs = jobs
-        .values()
-        .filter(|job| matches!(job.status, JobStatus::Running))
-        .count();
+    let (queued_jobs, running_jobs, stored_jobs) = match state.jobs.count_by_status() {
+        Ok(counts) => counts,
+        Err(e) => {
+            tracing::error!("health check failed: {e}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+        }
+    };
 
     HttpResponse::Ok().json(HealthResponse {
         status: "healthy",
@@ -426,7 +405,7 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         dev_mode: host::risc0_dev_mode_enabled(),
         queued_jobs,
         running_jobs,
-        stored_jobs: jobs.len(),
+        stored_jobs,
         max_jobs: state.max_jobs,
         prover_concurrency: state.prover_semaphore.available_permits() + running_jobs,
         max_tape_bytes: state.max_tape_bytes,
@@ -474,40 +453,51 @@ async fn enqueue_proof_job(
         error: None,
     };
 
-    {
-        let mut jobs = state.jobs.write().await;
-
-        let has_active_job = jobs
-            .values()
-            .any(|job| matches!(job.status, JobStatus::Queued | JobStatus::Running));
-        if has_active_job {
+    match state.jobs.has_active_job() {
+        Ok(true) => {
             return json_error(
                 StatusCode::TOO_MANY_REQUESTS,
                 "prover is busy (single-flight mode): retry after the active job finishes",
             );
         }
+        Err(e) => {
+            tracing::error!("has_active_job failed: {e}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+        }
+        _ => {}
+    }
 
-        if jobs.len() >= state.max_jobs {
-            let oldest = jobs
-                .values()
-                .filter(|j| matches!(j.status, JobStatus::Succeeded | JobStatus::Failed))
-                .min_by_key(|j| j.finished_at_unix_s.unwrap_or(j.created_at_unix_s))
-                .map(|j| j.job_id);
-            if let Some(evict_id) = oldest {
-                tracing::info!(job_id = %evict_id, "evicting oldest finished job to make room");
-                jobs.remove(&evict_id);
-            } else {
-                return json_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    format!(
-                        "job store is at capacity ({}) with no finished jobs to evict",
-                        state.max_jobs
-                    ),
-                );
+    match state.jobs.count() {
+        Ok(n) if n >= state.max_jobs => {
+            match state.jobs.evict_oldest_finished() {
+                Ok(Some(evict_id)) => {
+                    tracing::info!(job_id = %evict_id, "evicted oldest finished job to make room");
+                }
+                Ok(None) => {
+                    return json_error(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        format!(
+                            "job store is at capacity ({}) with no finished jobs to evict",
+                            state.max_jobs
+                        ),
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("evict_oldest_finished failed: {e}");
+                    return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+                }
             }
         }
+        Err(e) => {
+            tracing::error!("count failed: {e}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+        }
+        _ => {}
+    }
 
-        jobs.insert(job_id, job);
+    if let Err(e) = state.jobs.insert(&job) {
+        tracing::error!("insert job failed: {e}");
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
     }
 
     let state_for_task = state.get_ref().clone();
@@ -525,23 +515,28 @@ async fn enqueue_proof_job(
 
 async fn get_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl Responder {
     let job_id = path.into_inner();
-    let jobs = state.jobs.read().await;
-    match jobs.get(&job_id) {
-        Some(job) => HttpResponse::Ok().json(job),
-        None => json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+    match state.jobs.get(job_id) {
+        Ok(Some(job)) => HttpResponse::Ok().json(job),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Err(e) => {
+            tracing::error!(job_id = %job_id, "get_job failed: {e}");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error")
+        }
     }
 }
 
 async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl Responder {
     let job_id = path.into_inner();
-    let removed = state.jobs.write().await.remove(&job_id);
-    if removed.is_some() {
-        HttpResponse::Ok().json(serde_json::json!({
+    match state.jobs.delete(job_id) {
+        Ok(true) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
             "job_id": job_id,
-        }))
-    } else {
-        json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}"))
+        })),
+        Ok(false) => json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Err(e) => {
+            tracing::error!(job_id = %job_id, "delete_job failed: {e}");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error")
+        }
     }
 }
 
@@ -575,8 +570,11 @@ async fn main() -> std::io::Result<()> {
     let auth_required = api_key.is_some();
     let policy = ServerPolicy::from_env();
 
+    let data_dir = PathBuf::from(env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
+    let job_store = JobStore::open(&data_dir).expect("failed to open job store");
+
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={}",
+        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={} data_dir={}",
         bind_addr,
         accelerator(),
         FIXED_PROVER_CONCURRENCY,
@@ -588,11 +586,12 @@ async fn main() -> std::io::Result<()> {
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
-        auth_required
+        auth_required,
+        data_dir.display()
     );
 
     let state = AppState {
-        jobs: Arc::new(RwLock::new(HashMap::new())),
+        jobs: Arc::new(job_store),
         prover_semaphore: Arc::new(Semaphore::new(FIXED_PROVER_CONCURRENCY)),
         max_tape_bytes,
         max_jobs,
@@ -656,6 +655,7 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use actix_web::http::header::{HeaderName, HeaderValue};
+    use tempfile::TempDir;
 
     fn strict_policy() -> ServerPolicy {
         ServerPolicy {
@@ -666,9 +666,11 @@ mod tests {
         }
     }
 
-    fn test_state() -> AppState {
-        AppState {
-            jobs: Arc::new(RwLock::new(HashMap::new())),
+    fn test_state() -> (AppState, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let store = JobStore::open(dir.path()).unwrap();
+        let state = AppState {
+            jobs: Arc::new(store),
             prover_semaphore: Arc::new(Semaphore::new(FIXED_PROVER_CONCURRENCY)),
             max_tape_bytes: DEFAULT_MAX_TAPE_BYTES,
             max_jobs: DEFAULT_MAX_JOBS,
@@ -679,7 +681,8 @@ mod tests {
             http_max_connections: DEFAULT_HTTP_MAX_CONNECTIONS,
             http_keep_alive_secs: DEFAULT_HTTP_KEEP_ALIVE_SECS,
             auth_required: false,
-        }
+        };
+        (state, dir)
     }
 
     fn sample_options() -> ProveOptions {
@@ -769,26 +772,26 @@ mod tests {
 
     #[actix_web::test]
     async fn enqueue_rejects_when_active_job_exists() {
-        let state = web::Data::new(test_state());
+        let (app_state, _dir) = test_state();
+        let state = web::Data::new(app_state);
         let existing_job_id = Uuid::new_v4();
 
-        {
-            let mut jobs = state.jobs.write().await;
-            jobs.insert(
-                existing_job_id,
-                ProofJob {
-                    job_id: existing_job_id,
-                    status: JobStatus::Running,
-                    created_at_unix_s: now_unix_s(),
-                    started_at_unix_s: Some(now_unix_s()),
-                    finished_at_unix_s: None,
-                    tape_size_bytes: 1,
-                    options: options_summary(sample_options()),
-                    result: None,
-                    error: None,
-                },
-            );
-        }
+        let existing_job = ProofJob {
+            job_id: existing_job_id,
+            status: JobStatus::Queued,
+            created_at_unix_s: now_unix_s(),
+            started_at_unix_s: None,
+            finished_at_unix_s: None,
+            tape_size_bytes: 1,
+            options: options_summary(sample_options()),
+            result: None,
+            error: None,
+        };
+        state.jobs.insert(&existing_job).unwrap();
+        state
+            .jobs
+            .update_status(existing_job_id, JobStatus::Running, Some(now_unix_s()))
+            .unwrap();
 
         let response = enqueue_proof_job(state, vec![1_u8], sample_options()).await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
