@@ -77,11 +77,11 @@ SSH into your instance and build:
 ```bash
 cd /workspace/stellar-zk/risc0-asteroids-verifier
 
-# With CUDA acceleration (recommended for Vast.ai GPU instances):
-cargo build --locked --release -p api-server --features cuda
+# Default build (includes CUDA acceleration):
+cargo build --locked --release -p api-server
 
 # CPU-only (for testing without GPU):
-cargo build --locked --release -p api-server
+cargo build --locked --release -p api-server --no-default-features
 ```
 
 The first build will take a while (~15-30 min depending on hardware) because it compiles the RISC Zero zkVM guest ELF. Subsequent builds use incremental compilation and are much faster.
@@ -107,10 +107,11 @@ MAX_FRAMES=18000 \
 cargo run --release -p api-server
 ```
 
-Verify it's running:
+Verify it's running and confirm the accelerator:
 
 ```bash
-curl -s http://127.0.0.1:8080/health | jq
+curl -s http://127.0.0.1:8080/health | jq '.accelerator'
+# Should print "cuda" on GPU instances, "cpu" if built with --no-default-features
 ```
 
 ### 5. Expose via Cloudflare Tunnel
@@ -267,40 +268,6 @@ echo 'https://xyz.trycloudflare.com' | npx wrangler secret put PROVER_BASE_URL
 ```
 
 The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
-
-## Docker (alternative)
-
-If you prefer Docker instead of native compilation:
-
-### Build
-
-```bash
-cd risc0-asteroids-verifier
-
-# GPU (CUDA):
-docker build -f api-server/Dockerfile \
-  --build-arg ENABLE_CUDA=1 \
-  -t asteroids-zk-api:latest .
-
-# CPU only:
-docker build -f api-server/Dockerfile \
-  --build-arg ENABLE_CUDA=0 \
-  -t asteroids-zk-api:latest .
-```
-
-### Run
-
-```bash
-docker run -d \
-  --name asteroids-zk-api \
-  --restart unless-stopped \
-  --gpus all \
-  -p 8080:8080 \
-  --env-file api-server/.env.example \
-  -e API_KEY='your-strong-random-secret' \
-  -e RISC0_DEV_MODE=0 \
-  asteroids-zk-api:latest
-```
 
 ## CLI Prover
 

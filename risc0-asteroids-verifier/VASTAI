@@ -105,14 +105,17 @@ cat <<'DONE'
 
     cd /workspace/stellar-zk/risc0-asteroids-verifier
 
-    # Build (with CUDA):
-    cargo build --locked --release -p api-server --features cuda
-
-    # Build (CPU only):
+    # Build (CUDA enabled by default):
     cargo build --locked --release -p api-server
+
+    # Build (CPU only, for testing without GPU):
+    cargo build --locked --release -p api-server --no-default-features
 
     # Run:
     API_KEY='your-secret' cargo run --release -p api-server
+
+    # Verify GPU is active:
+    curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 
     # Expose via Cloudflare Tunnel:
     cloudflared tunnel --url http://127.0.0.1:8080

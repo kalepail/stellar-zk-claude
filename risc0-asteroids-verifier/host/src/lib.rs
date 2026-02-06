@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 
 pub const SEGMENT_LIMIT_PO2_DEFAULT: u32 = 19;
 
+pub fn accelerator() -> &'static str {
+    if cfg!(feature = "cuda") {
+        "cuda"
+    } else {
+        "cpu"
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ReceiptKind {

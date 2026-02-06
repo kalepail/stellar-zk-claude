@@ -15,7 +15,9 @@ use actix_web::{
     middleware, web, App, HttpResponse, HttpServer, Responder,
 };
 use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
-use host::{prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT};
+use host::{
+    accelerator, prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
@@ -25,6 +27,7 @@ const FIXED_PROVER_CONCURRENCY: usize = 1;
 const DEFAULT_JOB_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_JOB_SWEEP_SECS: u64 = 60;
 const DEFAULT_MAX_JOBS: usize = 64;
+const DEFAULT_RUNNING_JOB_TIMEOUT_SECS: u64 = 30 * 60;
 const DEFAULT_MIN_SEGMENT_LIMIT_PO2: u32 = 16;
 const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 22;
 const DEFAULT_HTTP_MAX_CONNECTIONS: usize = 25_000;
@@ -111,6 +114,7 @@ struct AppState {
     max_tape_bytes: usize,
     max_jobs: usize,
     job_ttl_secs: u64,
+    running_job_timeout_secs: u64,
     policy: ServerPolicy,
     http_workers: Option<usize>,
     http_max_connections: usize,
@@ -162,6 +166,7 @@ struct ProveOptionsSummary {
     segment_limit_po2: u32,
     allow_dev_mode: bool,
     verify_receipt: bool,
+    accelerator: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +188,8 @@ struct ProofJob {
 struct HealthResponse {
     status: &'static str,
     service: &'static str,
+    accelerator: &'static str,
+    dev_mode: bool,
     queued_jobs: usize,
     running_jobs: usize,
     stored_jobs: usize,
@@ -268,6 +275,7 @@ fn options_summary(options: ProveOptions) -> ProveOptionsSummary {
         segment_limit_po2: options.segment_limit_po2,
         allow_dev_mode: options.allow_dev_mode,
         verify_receipt: options.verify_receipt,
+        accelerator: accelerator(),
     }
 }
 
@@ -324,7 +332,7 @@ async fn run_proof(
     let proof = tokio::task::spawn_blocking(move || prove_tape(tape, options))
         .await
         .map_err(|err| format!("prover worker join failure: {err}"))?
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("{err:#}"))?;
 
     let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
@@ -340,7 +348,16 @@ async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: Pr
         }
     }
 
-    let prove_result = run_proof(state.clone(), tape, options).await;
+    let timeout = Duration::from_secs(state.running_job_timeout_secs);
+    let prove_result = match tokio::time::timeout(timeout, run_proof(state.clone(), tape, options))
+        .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::error!(job_id = %job_id, timeout_secs = state.running_job_timeout_secs, "proof generation timed out");
+            Err("proof generation timed out".to_string())
+        }
+    };
 
     {
         let mut jobs = state.jobs.write().await;
@@ -367,15 +384,29 @@ fn spawn_job_cleanup_task(state: AppState, sweep_secs: u64) {
         let sweep = Duration::from_secs(sweep_secs);
         loop {
             tokio::time::sleep(sweep).await;
-            let cutoff = now_unix_s().saturating_sub(state.job_ttl_secs);
+            let now = now_unix_s();
+            let ttl_cutoff = now.saturating_sub(state.job_ttl_secs);
+            let running_cutoff = now.saturating_sub(state.running_job_timeout_secs);
 
             let mut jobs = state.jobs.write().await;
             jobs.retain(|_, job| {
-                if !matches!(job.status, JobStatus::Succeeded | JobStatus::Failed) {
+                // Reap stuck running/queued jobs past the timeout.
+                if matches!(job.status, JobStatus::Running | JobStatus::Queued) {
+                    let started = job.started_at_unix_s.unwrap_or(job.created_at_unix_s);
+                    if started < running_cutoff {
+                        tracing::warn!(
+                            job_id = %job.job_id,
+                            "reaping stuck {} job (started {}s ago)",
+                            if job.status == JobStatus::Running { "running" } else { "queued" },
+                            now.saturating_sub(started)
+                        );
+                        return false;
+                    }
                     return true;
                 }
+                // Reap finished jobs past TTL.
                 let finished = job.finished_at_unix_s.unwrap_or(job.created_at_unix_s);
-                finished >= cutoff
+                finished >= ttl_cutoff
             });
         }
     });
@@ -395,6 +426,8 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
         status: "healthy",
         service: "risc0-asteroids-api",
+        accelerator: accelerator(),
+        dev_mode: host::risc0_dev_mode_enabled(),
         queued_jobs,
         running_jobs,
         stored_jobs: jobs.len(),
@@ -524,6 +557,8 @@ async fn main() -> std::io::Result<()> {
     let max_jobs = read_env_usize("MAX_JOBS", DEFAULT_MAX_JOBS);
     let job_ttl_secs = read_env_u64("JOB_TTL_SECS", DEFAULT_JOB_TTL_SECS);
     let job_sweep_secs = read_env_u64("JOB_SWEEP_SECS", DEFAULT_JOB_SWEEP_SECS);
+    let running_job_timeout_secs =
+        read_env_u64("RUNNING_JOB_TIMEOUT_SECS", DEFAULT_RUNNING_JOB_TIMEOUT_SECS);
     let http_workers = read_env_optional_usize("HTTP_WORKERS");
     let http_max_connections = read_env_usize("HTTP_MAX_CONNECTIONS", DEFAULT_HTTP_MAX_CONNECTIONS);
     let http_keep_alive_secs = read_env_u64("HTTP_KEEP_ALIVE_SECS", DEFAULT_HTTP_KEEP_ALIVE_SECS);
@@ -535,8 +570,9 @@ async fn main() -> std::io::Result<()> {
     let policy = ServerPolicy::from_env();
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={}",
+        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={}",
         bind_addr,
+        accelerator(),
         FIXED_PROVER_CONCURRENCY,
         max_tape_bytes,
         max_jobs,
@@ -555,6 +591,7 @@ async fn main() -> std::io::Result<()> {
         max_tape_bytes,
         max_jobs,
         job_ttl_secs,
+        running_job_timeout_secs,
         policy,
         http_workers,
         http_max_connections,
@@ -631,6 +668,7 @@ mod tests {
             max_tape_bytes: DEFAULT_MAX_TAPE_BYTES,
             max_jobs: DEFAULT_MAX_JOBS,
             job_ttl_secs: DEFAULT_JOB_TTL_SECS,
+            running_job_timeout_secs: DEFAULT_RUNNING_JOB_TIMEOUT_SECS,
             policy: strict_policy(),
             http_workers: None,
             http_max_connections: DEFAULT_HTTP_MAX_CONNECTIONS,
