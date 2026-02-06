@@ -1,0 +1,52 @@
+//! ZK Guest program: replays an Asteroids game tape inside the RISC Zero zkVM.
+//!
+//! INPUT (private, from host via env::read):
+//!   - tape_bytes: Vec<u8>  — raw .tape file bytes
+//!
+//! VERIFICATION (inside guest, NOT visible to verifier):
+//!   - Parses tape (validates magic, version, CRC-32)
+//!   - Replays the game deterministically using integer-only math
+//!   - Asserts final score and RNG state match the tape footer
+//!   - Any divergence => panic => no valid proof generated
+//!
+//! OUTPUT (public, committed to journal):
+//!   - seed: u32         — the game seed (identifies the game instance)
+//!   - score: u32        — the proven final score
+//!   - frame_count: u32  — how many frames were played
+
+use asteroids_core::{deserialize_tape, replay_tape};
+use risc0_zkvm::guest::env;
+
+fn main() {
+    // Read the raw tape bytes from the host (private input)
+    let tape_bytes: Vec<u8> = env::read();
+
+    // Parse and validate the tape (magic, version, CRC-32 integrity)
+    let tape = deserialize_tape(&tape_bytes)
+        .expect("Invalid tape: failed to parse or CRC mismatch");
+
+    // Replay the game deterministically
+    let (actual_score, actual_rng_state) = replay_tape(tape.header.seed, &tape.inputs);
+
+    // Verify the replay matches the tape's claimed results.
+    // If these assertions fail, the guest panics and no proof is generated.
+    // This is the core anti-cheat mechanism: a cheater cannot forge a tape
+    // that claims a score they didn't legitimately earn.
+    assert_eq!(
+        actual_score, tape.footer.final_score,
+        "Score mismatch: computed {}, tape claims {}",
+        actual_score, tape.footer.final_score
+    );
+    assert_eq!(
+        actual_rng_state, tape.footer.final_rng_state,
+        "RNG state mismatch: computed 0x{:08x}, tape claims 0x{:08x}",
+        actual_rng_state, tape.footer.final_rng_state
+    );
+
+    // Commit public outputs to the journal.
+    // These are the only values visible to the verifier.
+    // The tape contents (player inputs) remain private.
+    env::commit(&tape.header.seed);
+    env::commit(&actual_score);
+    env::commit(&tape.header.frame_count);
+}
