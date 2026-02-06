@@ -17,5 +17,7 @@ pub mod types;
 // Re-export key items
 pub use game::{replay_tape, AsteroidsGame};
 pub use rng::SeededRng;
-pub use tape::{deserialize_tape, Tape, TapeError};
+#[cfg(feature = "std")]
+pub use tape::{crc32, deserialize_tape};
+pub use tape::{parse_tape, Tape, TapeError};
 pub use types::FrameInput;

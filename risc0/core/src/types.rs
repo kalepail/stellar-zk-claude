@@ -64,11 +64,9 @@ pub struct Asteroid {
     pub y: i32,            // Q12.4
     pub vx: i32,           // Q8.8
     pub vy: i32,           // Q8.8
-    pub angle: i32,        // BAM (stored as i32 for spin arithmetic)
     pub alive: bool,
     pub radius: i32,       // pixels
     pub size: AsteroidSize,
-    pub spin: i32,         // BAM per frame
 }
 
 /// Bullet entity.
@@ -78,7 +76,6 @@ pub struct Bullet {
     pub y: i32,            // Q12.4
     pub vx: i32,           // Q8.8
     pub vy: i32,           // Q8.8
-    pub angle: u8,         // BAM
     pub alive: bool,
     pub radius: i32,       // pixels
     pub life: i32,         // frames remaining

@@ -5,7 +5,7 @@
 //!   - tape_bytes: [u8]            — raw .tape file bytes (word-padded)
 //!
 //! VERIFICATION (inside guest, NOT visible to verifier):
-//!   - Parses tape (validates magic, version, CRC-32)
+//!   - Parses tape (validates magic, version, length, reserved bits; CRC skipped)
 //!   - Replays the game deterministically using integer-only math
 //!   - Asserts final score and RNG state match the tape footer
 //!   - Any divergence => panic => no valid proof generated
@@ -15,7 +15,7 @@
 //!   - score: u32        — the proven final score
 //!   - frame_count: u32  — how many frames were played
 
-use asteroids_core::{deserialize_tape, replay_tape};
+use asteroids_core::{parse_tape, replay_tape};
 use risc0_zkvm::guest::env;
 
 /// When the `cycle-prof` feature is enabled, prints the cycle count delta
@@ -52,10 +52,12 @@ fn main() {
     tape_bytes.truncate(tape_len);
     cycle_mark!("env::read_slice", _t);
 
-    // Parse and validate the tape (magic, version, CRC-32 integrity)
-    let tape = deserialize_tape(&tape_bytes)
-        .expect("Invalid tape: failed to parse or CRC mismatch");
-    cycle_mark!("deserialize_tape", _t);
+    // Parse and validate the tape (magic, version, length, reserved bits).
+    // CRC-32 is skipped inside the guest: the deterministic replay itself is
+    // the integrity check — wrong tape data → wrong score/RNG → no valid proof.
+    let tape = parse_tape(&tape_bytes)
+        .expect("Invalid tape: failed to parse");
+    cycle_mark!("parse_tape", _t);
 
     // Replay the game deterministically
     let (actual_score, actual_rng_state) = replay_tape(tape.header.seed, &tape.inputs);

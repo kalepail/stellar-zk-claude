@@ -79,8 +79,10 @@ fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-/// Deserialize a tape from raw bytes. Validates magic, version, length, and CRC-32.
-pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
+/// Parse a tape from raw bytes. Validates magic, version, length, and reserved bits,
+/// but does NOT verify the CRC-32 checksum. Suitable for the ZK guest where CRC
+/// verification is unnecessary (the deterministic replay itself is the integrity check).
+pub fn parse_tape(data: &[u8]) -> Result<Tape, TapeError> {
     if data.len() < HEADER_SIZE + FOOTER_SIZE {
         return Err(TapeError::TooShort);
     }
@@ -128,15 +130,6 @@ pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
     let final_rng_state = read_u32_le(data, footer_offset + 4);
     let stored_checksum = read_u32_le(data, footer_offset + 8);
 
-    // CRC-32 over header + body (everything before the footer)
-    let computed = crc32(&data[..footer_offset]);
-    if computed != stored_checksum {
-        return Err(TapeError::CrcMismatch {
-            stored: stored_checksum,
-            computed,
-        });
-    }
-
     Ok(Tape {
         header: TapeHeader {
             magic,
@@ -154,12 +147,36 @@ pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
 }
 
 // ============================================================================
-// CRC-32 (ISO 3309 / ITU-T V.42 polynomial 0xEDB88320, reflected)
-// Exact match to the TypeScript implementation.
+// CRC-32 and full deserialization (host-side only, not needed in ZK guest)
 // ============================================================================
 
+/// Deserialize a tape from raw bytes. Validates magic, version, length, reserved bits,
+/// and CRC-32 checksum. Use this for host-side validation where CRC integrity matters.
+#[cfg(feature = "std")]
+pub fn deserialize_tape(data: &[u8]) -> Result<Tape, TapeError> {
+    let tape = parse_tape(data)?;
+
+    // CRC-32 over header + body (everything before the footer)
+    let footer_offset = HEADER_SIZE + tape.header.frame_count as usize;
+    let computed = crc32(&data[..footer_offset]);
+    if computed != tape.footer.checksum {
+        return Err(TapeError::CrcMismatch {
+            stored: tape.footer.checksum,
+            computed,
+        });
+    }
+
+    Ok(tape)
+}
+
+// CRC-32 (ISO 3309 / ITU-T V.42 polynomial 0xEDB88320, reflected)
+// Exact match to the TypeScript implementation.
+// Only compiled when `std` feature is enabled (host-side).
+
+#[cfg(feature = "std")]
 const CRC_TABLE: [u32; 256] = build_crc_table();
 
+#[cfg(feature = "std")]
 const fn build_crc_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut i = 0u32;
@@ -182,6 +199,7 @@ const fn build_crc_table() -> [u32; 256] {
 
 /// Compute CRC-32 checksum over a byte slice.
 /// Matches the TypeScript crc32() function exactly.
+#[cfg(feature = "std")]
 pub fn crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFFFFFF;
     for &byte in data {
