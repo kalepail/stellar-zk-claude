@@ -1,28 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Vast.ai environment setup script
+#
+# This script prepares a fresh Vast.ai instance for building and running the
+# RISC0 Asteroids prover.  It installs system dependencies, clones the repo,
+# and installs the Rust + RISC Zero toolchains.  It does NOT compile anything
+# or start any services — see the README for build and run instructions.
+# ---------------------------------------------------------------------------
+
 REPO_URL="${REPO_URL:-https://github.com/kalepail/stellar-zk-claude.git}"
 WORKDIR="${WORKDIR:-/workspace/stellar-zk}"
-GIT_REF="${GIT_REF:-feature/super-risc0-asteroids}"
-IMAGE="${IMAGE:-asteroids-zk-api:latest}"
-CONTAINER_NAME="${CONTAINER_NAME:-asteroids-zk-api}"
-ENABLE_CUDA="${ENABLE_CUDA:-1}"
-CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE:-vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff}"
-CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE:-vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff}"
+GIT_REF="${GIT_REF:-main}"
 RUST_TOOLCHAIN_VERSION="${RUST_TOOLCHAIN_VERSION:-1.93.0}"
 INSTALL_CLOUDFLARED="${INSTALL_CLOUDFLARED:-0}"
-ALLOW_NO_API_KEY="${ALLOW_NO_API_KEY:-0}"
-API_KEY="${API_KEY:-}"
 
+# ── 1. System dependencies ────────────────────────────────────────────────
+
+echo "==> Installing system dependencies..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  build-essential \
   ca-certificates \
+  clang \
   curl \
-  docker.io \
-  git
+  git \
+  libclang-dev \
+  libssl-dev \
+  protobuf-compiler \
+  pkg-config
 rm -rf /var/lib/apt/lists/*
 
+# ── 2. Clone / update repository ─────────────────────────────────────────
+
 if [ ! -d "${WORKDIR}/.git" ]; then
+  echo "==> Cloning ${REPO_URL} → ${WORKDIR}..."
   git clone "${REPO_URL}" "${WORKDIR}"
 fi
 
@@ -39,44 +52,38 @@ else
   exit 1
 fi
 
-cd "${WORKDIR}/risc0-asteroids-verifier"
+echo "==> Repository ready at ${WORKDIR} ($(git rev-parse --short HEAD))"
 
-export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
-docker build -f api-server/Dockerfile \
-  --build-arg ENABLE_CUDA="${ENABLE_CUDA}" \
-  --build-arg CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE}" \
-  --build-arg CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE}" \
-  --build-arg RUST_TOOLCHAIN_VERSION="${RUST_TOOLCHAIN_VERSION}" \
-  -t "${IMAGE}" .
+# ── 3. Rust toolchain ────────────────────────────────────────────────────
 
-docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-
-if [ -z "${API_KEY}" ] && [ "${ALLOW_NO_API_KEY}" != "1" ]; then
-  echo "ERROR: API_KEY is required by default."
-  echo "Set API_KEY=... before running this script, or set ALLOW_NO_API_KEY=1 for local-only testing."
-  exit 1
+if ! command -v rustup &>/dev/null; then
+  echo "==> Installing Rust ${RUST_TOOLCHAIN_VERSION}..."
+  export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --profile default --default-toolchain "${RUST_TOOLCHAIN_VERSION}"
 fi
 
-run_args=(
-  -d
-  --name "${CONTAINER_NAME}"
-  --restart unless-stopped
-  -p 8080:8080
-  --env-file api-server/.env.example
-  -e RISC0_DEV_MODE=0
-)
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+export PATH="${CARGO_HOME}/bin:${HOME}/.risc0/bin:${PATH}"
 
-if [ "${ENABLE_CUDA}" = "1" ]; then
-  run_args+=(--gpus all)
+echo "==> Rust $(rustc --version)"
+
+# ── 4. RISC Zero toolchain ───────────────────────────────────────────────
+
+if ! command -v r0vm &>/dev/null; then
+  echo "==> Installing RISC Zero toolchain..."
+  curl -L https://risczero.com/install | INSTALLER_NO_PROMPT=1 bash
+  rzup install
+  rzup install risc0-groth16 || true
 fi
 
-if [ -n "${API_KEY}" ]; then
-  run_args+=(-e "API_KEY=${API_KEY}")
-fi
+echo "==> RISC Zero toolchain ready"
 
-docker run "${run_args[@]}" "${IMAGE}"
+# ── 5. Cloudflare Tunnel (optional) ──────────────────────────────────────
 
 if [ "${INSTALL_CLOUDFLARED}" = "1" ]; then
+  echo "==> Installing cloudflared..."
   mkdir -p --mode=0755 /usr/share/keyrings
   curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | \
     tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
@@ -87,21 +94,29 @@ if [ "${INSTALL_CLOUDFLARED}" = "1" ]; then
   rm -rf /var/lib/apt/lists/*
 fi
 
-echo "Waiting for API health check..."
-for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
-    echo "API healthy on :8080"
-    break
-  fi
-  sleep 2
-  if [ "${attempt}" -eq 30 ]; then
-    echo "ERROR: API failed health checks after 60s."
-    docker logs --tail 100 "${CONTAINER_NAME}" || true
-    exit 1
-  fi
-done
+# ── Done ──────────────────────────────────────────────────────────────────
 
-echo "Next steps:"
-echo "1) Keep Cloudflare Access service tokens enabled at the edge."
-echo "2) If needed on this host: cloudflared tunnel --url http://127.0.0.1:8080"
-echo "3) Send requests with x-api-key or Authorization: Bearer."
+cat <<'DONE'
+
+========================================================================
+  Environment setup complete.
+
+  Next steps (from an SSH session):
+
+    cd /workspace/stellar-zk/risc0-asteroids-verifier
+
+    # Build (with CUDA):
+    cargo build --locked --release -p api-server --features cuda
+
+    # Build (CPU only):
+    cargo build --locked --release -p api-server
+
+    # Run:
+    API_KEY='your-secret' cargo run --release -p api-server
+
+    # Expose via Cloudflare Tunnel:
+    cloudflared tunnel --url http://127.0.0.1:8080
+
+  See risc0-asteroids-verifier/README.md for full documentation.
+========================================================================
+DONE
