@@ -6,21 +6,22 @@ use std::{
 };
 
 use actix_cors::Cors;
-use actix_web::{http::StatusCode, middleware, web, App, HttpResponse, HttpServer, Responder};
-use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine;
-use host::{
-    prove_tape, verify_tape_receipt, ProveOptions, ReceiptKind, TapeProof,
-    SEGMENT_LIMIT_PO2_DEFAULT,
+use actix_web::{
+    guard,
+    http::{
+        header::{HeaderMap, AUTHORIZATION},
+        StatusCode,
+    },
+    middleware, web, App, HttpResponse, HttpServer, Responder,
 };
-use risc0_zkvm::Receipt;
+use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
+use host::{prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
 const DEFAULT_MAX_TAPE_BYTES: usize = 2 * 1024 * 1024;
-const DEFAULT_PROVER_CONCURRENCY: usize = 1;
+const FIXED_PROVER_CONCURRENCY: usize = 1;
 const DEFAULT_JOB_TTL_SECS: u64 = 24 * 60 * 60;
 const DEFAULT_JOB_SWEEP_SECS: u64 = 60;
 const DEFAULT_MAX_JOBS: usize = 64;
@@ -114,21 +115,7 @@ struct AppState {
     http_workers: Option<usize>,
     http_max_connections: usize,
     http_keep_alive_secs: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ProveTapeRequest {
-    tape_b64: String,
-    #[serde(default)]
-    max_frames: Option<u32>,
-    #[serde(default)]
-    receipt_kind: Option<ReceiptKind>,
-    #[serde(default)]
-    segment_limit_po2: Option<u32>,
-    #[serde(default)]
-    allow_dev_mode: Option<bool>,
-    #[serde(default)]
-    verify_receipt: Option<bool>,
+    auth_required: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -152,15 +139,6 @@ struct ProofEnvelope {
 }
 
 #[derive(Debug, Serialize)]
-struct ProveTapeResponse {
-    success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    proof: Option<ProofEnvelope>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
 struct JobCreatedResponse {
     success: bool,
     job_id: Uuid,
@@ -168,7 +146,7 @@ struct JobCreatedResponse {
     status_url: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum JobStatus {
     Queued,
@@ -201,18 +179,6 @@ struct ProofJob {
     error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct VerifyReceiptRequest {
-    receipt: Receipt,
-}
-
-#[derive(Debug, Serialize)]
-struct VerifyReceiptResponse {
-    success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -230,28 +196,7 @@ struct HealthResponse {
     http_workers: Option<usize>,
     http_max_connections: usize,
     http_keep_alive_secs: u64,
-}
-
-impl From<&ProveTapeRequest> for ProveTapeQuery {
-    fn from(value: &ProveTapeRequest) -> Self {
-        Self {
-            max_frames: value.max_frames,
-            receipt_kind: value.receipt_kind,
-            segment_limit_po2: value.segment_limit_po2,
-            allow_dev_mode: value.allow_dev_mode,
-            verify_receipt: value.verify_receipt,
-        }
-    }
-}
-
-impl ProveTapeRequest {
-    fn decode_tape(&self, max_tape_bytes: usize) -> Result<Vec<u8>, String> {
-        let tape = BASE64_STANDARD
-            .decode(self.tape_b64.trim())
-            .map_err(|err| format!("invalid tape_b64: {err}"))?;
-        validate_tape_size(tape.len(), max_tape_bytes)?;
-        Ok(tape)
-    }
+    auth_required: bool,
 }
 
 fn now_unix_s() -> u64 {
@@ -331,6 +276,36 @@ fn json_error(status: StatusCode, message: impl Into<String>) -> HttpResponse {
         "success": false,
         "error": message.into(),
     }))
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let authorization = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = authorization.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed)
+}
+
+fn is_request_authorized(headers: &HeaderMap, expected_api_key: Option<&str>) -> bool {
+    let Some(expected_api_key) = expected_api_key else {
+        return true;
+    };
+
+    let x_api_key = headers
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim);
+    if x_api_key == Some(expected_api_key) {
+        return true;
+    }
+
+    bearer_token(headers).is_some_and(|token| token == expected_api_key)
 }
 
 async fn run_proof(
@@ -432,100 +407,8 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         http_workers: state.http_workers,
         http_max_connections: state.http_max_connections,
         http_keep_alive_secs: state.http_keep_alive_secs,
+        auth_required: state.auth_required,
     })
-}
-
-async fn prove_tape_sync_json(
-    state: web::Data<AppState>,
-    req: web::Json<ProveTapeRequest>,
-) -> impl Responder {
-    let tape = match req.decode_tape(state.max_tape_bytes) {
-        Ok(tape) => tape,
-        Err(err) => {
-            return HttpResponse::BadRequest().json(ProveTapeResponse {
-                success: false,
-                proof: None,
-                error: Some(err),
-            })
-        }
-    };
-    let options = match state.policy.to_options(&ProveTapeQuery::from(&*req)) {
-        Ok(options) => options,
-        Err(err) => {
-            return HttpResponse::BadRequest().json(ProveTapeResponse {
-                success: false,
-                proof: None,
-                error: Some(err),
-            })
-        }
-    };
-
-    match run_proof(state.get_ref().clone(), tape, options).await {
-        Ok(proof) => HttpResponse::Ok().json(ProveTapeResponse {
-            success: true,
-            proof: Some(proof),
-            error: None,
-        }),
-        Err(err) => HttpResponse::UnprocessableEntity().json(ProveTapeResponse {
-            success: false,
-            proof: None,
-            error: Some(err),
-        }),
-    }
-}
-
-async fn prove_tape_sync_raw(
-    state: web::Data<AppState>,
-    query: web::Query<ProveTapeQuery>,
-    body: web::Bytes,
-) -> impl Responder {
-    if let Err(err) = validate_tape_size(body.len(), state.max_tape_bytes) {
-        return HttpResponse::BadRequest().json(ProveTapeResponse {
-            success: false,
-            proof: None,
-            error: Some(err),
-        });
-    }
-
-    let options = match state.policy.to_options(&query) {
-        Ok(options) => options,
-        Err(err) => {
-            return HttpResponse::BadRequest().json(ProveTapeResponse {
-                success: false,
-                proof: None,
-                error: Some(err),
-            })
-        }
-    };
-
-    match run_proof(state.get_ref().clone(), body.to_vec(), options).await {
-        Ok(proof) => HttpResponse::Ok().json(ProveTapeResponse {
-            success: true,
-            proof: Some(proof),
-            error: None,
-        }),
-        Err(err) => HttpResponse::UnprocessableEntity().json(ProveTapeResponse {
-            success: false,
-            proof: None,
-            error: Some(err),
-        }),
-    }
-}
-
-async fn create_prove_job_json(
-    state: web::Data<AppState>,
-    req: web::Json<ProveTapeRequest>,
-) -> impl Responder {
-    let tape = match req.decode_tape(state.max_tape_bytes) {
-        Ok(tape) => tape,
-        Err(err) => return json_error(StatusCode::BAD_REQUEST, err),
-    };
-    let options = match state.policy.to_options(&ProveTapeQuery::from(&*req)) {
-        Ok(options) => options,
-        Err(err) => return json_error(StatusCode::BAD_REQUEST, err),
-    };
-
-    enqueue_proof_job(state, tape, options).await
 }
 
 async fn create_prove_job_raw(
@@ -564,15 +447,27 @@ async fn enqueue_proof_job(
 
     {
         let mut jobs = state.jobs.write().await;
+
+        let has_active_job = jobs
+            .values()
+            .any(|job| matches!(job.status, JobStatus::Queued | JobStatus::Running));
+        if has_active_job {
+            return json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "prover is busy (single-flight mode): retry after the active job finishes",
+            );
+        }
+
         if jobs.len() >= state.max_jobs {
             return json_error(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!(
-                    "job queue is at capacity ({}). delete finished jobs or wait for TTL cleanup",
+                    "job store is at capacity ({}). delete finished jobs or wait for TTL cleanup",
                     state.max_jobs
                 ),
             );
         }
+
         jobs.insert(job_id, job);
     }
 
@@ -611,24 +506,8 @@ async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl R
     }
 }
 
-async fn verify_receipt_endpoint(req: web::Json<VerifyReceiptRequest>) -> impl Responder {
-    let receipt = req.into_inner().receipt;
-    let verify_result = tokio::task::spawn_blocking(move || verify_tape_receipt(&receipt)).await;
-
-    match verify_result {
-        Ok(Ok(())) => HttpResponse::Ok().json(VerifyReceiptResponse {
-            success: true,
-            error: None,
-        }),
-        Ok(Err(err)) => HttpResponse::UnprocessableEntity().json(VerifyReceiptResponse {
-            success: false,
-            error: Some(err.to_string()),
-        }),
-        Err(err) => HttpResponse::InternalServerError().json(VerifyReceiptResponse {
-            success: false,
-            error: Some(format!("receipt verify worker failure: {err}")),
-        }),
-    }
+async fn unauthorized() -> impl Responder {
+    json_error(StatusCode::UNAUTHORIZED, "unauthorized")
 }
 
 #[actix_web::main]
@@ -642,20 +521,23 @@ async fn main() -> std::io::Result<()> {
 
     let bind_addr = env::var("API_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let max_tape_bytes = read_env_usize("MAX_TAPE_BYTES", DEFAULT_MAX_TAPE_BYTES);
-    let prover_concurrency = read_env_usize("PROVER_CONCURRENCY", DEFAULT_PROVER_CONCURRENCY);
     let max_jobs = read_env_usize("MAX_JOBS", DEFAULT_MAX_JOBS);
     let job_ttl_secs = read_env_u64("JOB_TTL_SECS", DEFAULT_JOB_TTL_SECS);
     let job_sweep_secs = read_env_u64("JOB_SWEEP_SECS", DEFAULT_JOB_SWEEP_SECS);
     let http_workers = read_env_optional_usize("HTTP_WORKERS");
     let http_max_connections = read_env_usize("HTTP_MAX_CONNECTIONS", DEFAULT_HTTP_MAX_CONNECTIONS);
     let http_keep_alive_secs = read_env_u64("HTTP_KEEP_ALIVE_SECS", DEFAULT_HTTP_KEEP_ALIVE_SECS);
-    let json_limit = read_env_usize("JSON_LIMIT_BYTES", max_tape_bytes.saturating_mul(4));
+    let api_key = env::var("API_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let auth_required = api_key.is_some();
     let policy = ServerPolicy::from_env();
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={}",
+        "starting risc0 asteroids api: bind_addr={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={}",
         bind_addr,
-        prover_concurrency,
+        FIXED_PROVER_CONCURRENCY,
         max_tape_bytes,
         max_jobs,
         policy.max_frames,
@@ -663,12 +545,13 @@ async fn main() -> std::io::Result<()> {
         policy.max_segment_limit_po2,
         http_workers,
         http_max_connections,
-        http_keep_alive_secs
+        http_keep_alive_secs,
+        auth_required
     );
 
     let state = AppState {
         jobs: Arc::new(RwLock::new(HashMap::new())),
-        prover_semaphore: Arc::new(Semaphore::new(prover_concurrency)),
+        prover_semaphore: Arc::new(Semaphore::new(FIXED_PROVER_CONCURRENCY)),
         max_tape_bytes,
         max_jobs,
         job_ttl_secs,
@@ -676,9 +559,12 @@ async fn main() -> std::io::Result<()> {
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
+        auth_required,
     };
     spawn_job_cleanup_task(state.clone(), job_sweep_secs);
 
+    let state_for_server = state.clone();
+    let api_key_for_server = api_key.clone();
     let mut server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -686,29 +572,31 @@ async fn main() -> std::io::Result<()> {
             .allow_any_header()
             .expose_any_header()
             .max_age(3600);
+        let required_api_key = api_key_for_server.clone();
 
         App::new()
-            .app_data(web::Data::new(state.clone()))
-            .app_data(web::JsonConfig::default().limit(json_limit))
+            .app_data(web::Data::new(state_for_server.clone()))
             .app_data(web::PayloadConfig::new(max_tape_bytes))
             .wrap(cors)
             .wrap(middleware::Logger::default())
             .route("/health", web::get().to(health))
-            .route("/api/prove-tape", web::post().to(prove_tape_sync_json))
-            .route("/api/prove-tape/raw", web::post().to(prove_tape_sync_raw))
-            .route(
-                "/api/jobs/prove-tape",
-                web::post().to(create_prove_job_json),
-            )
-            .route(
-                "/api/jobs/prove-tape/raw",
-                web::post().to(create_prove_job_raw),
-            )
-            .route("/api/jobs/{job_id}", web::get().to(get_job))
-            .route("/api/jobs/{job_id}", web::delete().to(delete_job))
-            .route(
-                "/api/verify-receipt",
-                web::post().to(verify_receipt_endpoint),
+            .service(
+                web::scope("/api")
+                    .service(
+                        web::scope("")
+                            .guard(guard::fn_guard(move |ctx| {
+                                is_request_authorized(
+                                    ctx.head().headers(),
+                                    required_api_key.as_deref(),
+                                )
+                            }))
+                            .route("/jobs/prove-tape/raw", web::post().to(create_prove_job_raw))
+                            .route("/jobs/{job_id}", web::get().to(get_job))
+                            .route("/jobs/{job_id}", web::delete().to(delete_job)),
+                    )
+                    .route("/jobs/prove-tape/raw", web::post().to(unauthorized))
+                    .route("/jobs/{job_id}", web::get().to(unauthorized))
+                    .route("/jobs/{job_id}", web::delete().to(unauthorized)),
             )
     })
     .max_connections(http_max_connections)
@@ -724,8 +612,7 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test as awtest, App};
-    use serde_json::{json, Value};
+    use actix_web::http::header::{HeaderName, HeaderValue};
 
     fn strict_policy() -> ServerPolicy {
         ServerPolicy {
@@ -740,7 +627,7 @@ mod tests {
     fn test_state() -> AppState {
         AppState {
             jobs: Arc::new(RwLock::new(HashMap::new())),
-            prover_semaphore: Arc::new(Semaphore::new(1)),
+            prover_semaphore: Arc::new(Semaphore::new(FIXED_PROVER_CONCURRENCY)),
             max_tape_bytes: DEFAULT_MAX_TAPE_BYTES,
             max_jobs: DEFAULT_MAX_JOBS,
             job_ttl_secs: DEFAULT_JOB_TTL_SECS,
@@ -748,6 +635,17 @@ mod tests {
             http_workers: None,
             http_max_connections: DEFAULT_HTTP_MAX_CONNECTIONS,
             http_keep_alive_secs: DEFAULT_HTTP_KEEP_ALIVE_SECS,
+            auth_required: false,
+        }
+    }
+
+    fn sample_options() -> ProveOptions {
+        ProveOptions {
+            max_frames: MAX_FRAMES_DEFAULT,
+            segment_limit_po2: SEGMENT_LIMIT_PO2_DEFAULT,
+            receipt_kind: ReceiptKind::default(),
+            allow_dev_mode: false,
+            verify_receipt: true,
         }
     }
 
@@ -806,27 +704,62 @@ mod tests {
         assert!(err.contains("max_frames"));
     }
 
+    #[test]
+    fn auth_allows_requests_when_api_key_not_configured() {
+        let headers = HeaderMap::new();
+        assert!(is_request_authorized(&headers, None));
+    }
+
+    #[test]
+    fn auth_accepts_x_api_key_and_bearer_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static("secret"),
+        );
+        assert!(is_request_authorized(&headers, Some("secret")));
+
+        headers.remove("x-api-key");
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
+        assert!(is_request_authorized(&headers, Some("secret")));
+    }
+
+    #[test]
+    fn auth_rejects_wrong_or_missing_key() {
+        let mut headers = HeaderMap::new();
+        assert!(!is_request_authorized(&headers, Some("secret")));
+
+        headers.insert(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static("wrong"),
+        );
+        assert!(!is_request_authorized(&headers, Some("secret")));
+    }
+
     #[actix_web::test]
-    async fn prove_tape_rejects_invalid_base64_before_proving() {
-        let app = awtest::init_service(
-            App::new()
-                .app_data(web::Data::new(test_state()))
-                .route("/api/prove-tape", web::post().to(prove_tape_sync_json)),
-        )
-        .await;
+    async fn enqueue_rejects_when_active_job_exists() {
+        let state = web::Data::new(test_state());
+        let existing_job_id = Uuid::new_v4();
 
-        let req = awtest::TestRequest::post()
-            .uri("/api/prove-tape")
-            .set_json(json!({ "tape_b64": "!!!not_base64!!!" }))
-            .to_request();
-        let resp = awtest::call_service(&app, req).await;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        {
+            let mut jobs = state.jobs.write().await;
+            jobs.insert(
+                existing_job_id,
+                ProofJob {
+                    job_id: existing_job_id,
+                    status: JobStatus::Running,
+                    created_at_unix_s: now_unix_s(),
+                    started_at_unix_s: Some(now_unix_s()),
+                    finished_at_unix_s: None,
+                    tape_size_bytes: 1,
+                    options: options_summary(sample_options()),
+                    result: None,
+                    error: None,
+                },
+            );
+        }
 
-        let body: Value = awtest::read_body_json(resp).await;
-        assert_eq!(body["success"], Value::Bool(false));
-        assert!(body["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("invalid tape_b64"));
+        let response = enqueue_proof_job(state, vec![1_u8], sample_options()).await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }
