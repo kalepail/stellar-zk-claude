@@ -99,6 +99,9 @@ docker build -f api-server/Dockerfile \
 
 For CPU-only instances, use `--build-arg ENABLE_CUDA=0`.
 
+Default builder/runtime base image is `vastai/base-image:cuda-12.9.1-auto`. Override with
+`--build-arg CUDA_DEVEL_IMAGE=... --build-arg CUDA_RUNTIME_IMAGE=...` if needed.
+
 ### 2. Run container
 
 ```bash

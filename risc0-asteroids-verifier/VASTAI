@@ -7,6 +7,8 @@ GIT_REF="${GIT_REF:-feature/super-risc0-asteroids}"
 IMAGE="${IMAGE:-asteroids-zk-api:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-asteroids-zk-api}"
 ENABLE_CUDA="${ENABLE_CUDA:-1}"
+CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE:-vastai/base-image:cuda-12.9.1-auto}"
+CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE:-vastai/base-image:cuda-12.9.1-auto}"
 INSTALL_CLOUDFLARED="${INSTALL_CLOUDFLARED:-0}"
 ALLOW_NO_API_KEY="${ALLOW_NO_API_KEY:-0}"
 API_KEY="${API_KEY:-}"
@@ -41,6 +43,8 @@ cd "${WORKDIR}/risc0-asteroids-verifier"
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 docker build -f api-server/Dockerfile \
   --build-arg ENABLE_CUDA="${ENABLE_CUDA}" \
+  --build-arg CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE}" \
+  --build-arg CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE}" \
   -t "${IMAGE}" .
 
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true

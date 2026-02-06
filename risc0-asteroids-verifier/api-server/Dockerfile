@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7-labs
 
-ARG CUDA_DEVEL_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
-ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.4.1-runtime-ubuntu22.04
+ARG CUDA_DEVEL_IMAGE=vastai/base-image:cuda-12.9.1-auto
+ARG CUDA_RUNTIME_IMAGE=vastai/base-image:cuda-12.9.1-auto
 
 FROM --platform=linux/amd64 ${CUDA_DEVEL_IMAGE} AS builder
 
