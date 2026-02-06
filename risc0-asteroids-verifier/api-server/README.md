@@ -15,8 +15,6 @@ This server is intentionally single-flight:
 - `GET /api/jobs/{job_id}` (job status + proof on success)
 - `DELETE /api/jobs/{job_id}` (optional cleanup)
 
-`/api/verify-receipt` and synchronous prove endpoints were removed.
-
 ## Auth
 
 If `API_KEY` is set, all `/api/*` routes require either:
@@ -60,7 +58,7 @@ curl -sS \
 
 ## Environment Variables
 
-See `api-server/.env.example` for full config.
+See `.env.example` for full config.
 
 Most relevant:
 
@@ -84,13 +82,16 @@ Prover concurrency is fixed at `1` in code.
 
 These defaults keep proving in production-safe mode.
 
-## Vast.ai Deployment (Docker)
+## Vast.ai Deployment
 
-### 1. Build image
+See the parent [README.md](../README.md) for full Vast.ai setup, build, run, and Cloudflare Tunnel instructions.
+
+## Docker (alternative)
+
+### Build
 
 ```bash
-git clone https://github.com/kalepail/stellar-zk-codex
-cd stellar-zk-codex/risc0-asteroids-verifier
+cd risc0-asteroids-verifier
 
 docker build -f api-server/Dockerfile \
   --build-arg ENABLE_CUDA=1 \
@@ -99,15 +100,7 @@ docker build -f api-server/Dockerfile \
 
 For CPU-only instances, use `--build-arg ENABLE_CUDA=0`.
 
-Default pinned builder/runtime base images are NVIDIA CUDA 12.9.1 on Ubuntu 24.04:
-`nvidia/cuda:12.9.1-devel-ubuntu24.04@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c`
-and
-`nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1287141d283b8f06f45681b56a48a85791398c615888b1f96bfb9fc981392d98`.
-Default pinned Rust toolchain is `1.93.0`.
-For Vast.ai, override with:
-`--build-arg CUDA_DEVEL_IMAGE=vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff --build-arg CUDA_RUNTIME_IMAGE=vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff`.
-
-### 2. Run container
+### Run
 
 ```bash
 docker run -d \
@@ -122,7 +115,7 @@ docker run -d \
   asteroids-zk-api:latest
 ```
 
-### 3. Cloudflare Tunnel
+### Cloudflare Tunnel
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8080
