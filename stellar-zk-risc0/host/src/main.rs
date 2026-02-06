@@ -15,10 +15,6 @@ struct Args {
     #[arg(short, long)]
     tape: PathBuf,
 
-    /// Output path for the receipt (optional)
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
     /// Verify only (don't generate proof)
     #[arg(long)]
     verify_only: bool,
@@ -79,7 +75,14 @@ fn main() {
     println!("Generating ZK proof...");
     let start = Instant::now();
 
-    let env = match ExecutorEnv::builder().write(&tape).build() {
+    // Build executor environment - write returns Result so we unwrap
+    let mut builder = ExecutorEnv::builder();
+    if let Err(e) = builder.write(&tape) {
+        eprintln!("Error writing tape to builder: {}", e);
+        std::process::exit(1);
+    }
+
+    let env = match builder.build() {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Error building executor environment: {}", e);
@@ -124,14 +127,6 @@ fn main() {
         Err(e) => {
             eprintln!("Receipt verification failed: {}", e);
             std::process::exit(1);
-        }
-    }
-
-    // Save receipt if requested
-    if let Some(output_path) = args.output {
-        match prove_info.receipt.save(&output_path) {
-            Ok(_) => println!("Receipt saved to: {}", output_path.display()),
-            Err(e) => eprintln!("Warning: Failed to save receipt: {}", e),
         }
     }
 

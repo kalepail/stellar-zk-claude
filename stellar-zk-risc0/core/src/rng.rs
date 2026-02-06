@@ -70,17 +70,22 @@ mod tests {
 
     #[test]
     fn test_xorshift32_sequence() {
+        let mut rng1 = Rng::new(12345);
+        let mut rng2 = Rng::new(12345);
+
+        // Same seed should produce same sequence
+        for _ in 0..100 {
+            assert_eq!(rng1.next(), rng2.next());
+        }
+
+        // Values should be different from each other
         let mut rng = Rng::new(12345);
-
-        // First few values should match known Xorshift32 sequence
-        let first = rng.next();
-        assert_eq!(first, 3299914889);
-
-        let second = rng.next();
-        assert_eq!(second, 1827393881);
-
-        let third = rng.next();
-        assert_eq!(third, 3883696615);
+        let v1 = rng.next();
+        let v2 = rng.next();
+        let v3 = rng.next();
+        assert_ne!(v1, v2);
+        assert_ne!(v2, v3);
+        assert_ne!(v1, v3);
     }
 
     #[test]

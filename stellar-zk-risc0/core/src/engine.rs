@@ -185,9 +185,7 @@ impl GameEngine {
 
     /// Update ship state
     fn update_ship(&mut self, input: FrameInput) {
-        let ship = &mut self.state.ship;
-
-        if ship.can_control {
+        if self.state.ship.can_control {
             // Handle rotation
             let mut turn = 0i8;
             if input.left && !input.right {
@@ -195,61 +193,64 @@ impl GameEngine {
             } else if input.right && !input.left {
                 turn = SHIP_TURN_SPEED_BAM;
             }
-            ship.angle = add_bam(ship.angle, turn);
+            self.state.ship.angle = add_bam(self.state.ship.angle, turn);
 
             // Handle thrust
             if input.thrust {
-                let cos_val = cos_bam(ship.angle);
-                let sin_val = sin_bam(ship.angle);
+                let cos_val = cos_bam(self.state.ship.angle);
+                let sin_val = sin_bam(self.state.ship.angle);
 
                 // Add thrust acceleration (Q8.8)
                 let ax = mul_q8_8_by_q0_14(SHIP_THRUST_Q8_8, cos_val);
                 let ay = mul_q8_8_by_q0_14(SHIP_THRUST_Q8_8, sin_val);
 
-                ship.vx = ship.vx.saturating_add(ax);
-                ship.vy = ship.vy.saturating_add(ay);
+                self.state.ship.vx = self.state.ship.vx.saturating_add(ax);
+                self.state.ship.vy = self.state.ship.vy.saturating_add(ay);
             }
 
             // Apply drag
-            ship.vx = apply_drag_q8_8(ship.vx);
-            ship.vy = apply_drag_q8_8(ship.vy);
+            self.state.ship.vx = apply_drag_q8_8(self.state.ship.vx);
+            self.state.ship.vy = apply_drag_q8_8(self.state.ship.vy);
 
             // Clamp speed
-            let (vx, vy) = clamp_speed_q8_8(ship.vx, ship.vy);
-            ship.vx = vx;
-            ship.vy = vy;
+            let (vx, vy) = clamp_speed_q8_8(self.state.ship.vx, self.state.ship.vy);
+            self.state.ship.vx = vx;
+            self.state.ship.vy = vy;
 
             // Update position
-            let dx = vel_to_pos_delta(ship.vx);
-            let dy = vel_to_pos_delta(ship.vy);
+            let dx = vel_to_pos_delta(self.state.ship.vx);
+            let dy = vel_to_pos_delta(self.state.ship.vy);
 
-            ship.x = wrap_q12_4(add_q12_4(ship.x, dx as u16), WORLD_WIDTH_Q12_4);
-            ship.y = wrap_q12_4(add_q12_4(ship.y, dy as u16), WORLD_HEIGHT_Q12_4);
+            self.state.ship.x =
+                wrap_q12_4(add_q12_4(self.state.ship.x, dx as u16), WORLD_WIDTH_Q12_4);
+            self.state.ship.y =
+                wrap_q12_4(add_q12_4(self.state.ship.y, dy as u16), WORLD_HEIGHT_Q12_4);
 
             // Handle firing
-            let should_fire = if ship.fire_cooldown > 0 {
-                ship.fire_cooldown -= 1;
+            let should_fire = if self.state.ship.fire_cooldown > 0 {
+                self.state.ship.fire_cooldown -= 1;
                 false
             } else {
                 input.fire && self.state.bullets.len() < SHIP_BULLET_LIMIT as usize
             };
 
             if should_fire {
-                let ship_for_bullet = self.state.ship.clone();
-                self.spawn_bullet_from_ship(&ship_for_bullet);
+                // Copy ship data for bullet spawning
+                let ship_data = self.state.ship.clone();
+                self.spawn_bullet_from_ship(&ship_data);
                 self.state.ship.fire_cooldown = SHIP_BULLET_COOLDOWN_FRAMES;
             }
 
             // Update invulnerability timer
-            if ship.invulnerable_timer > 0 {
-                ship.invulnerable_timer -= 1;
+            if self.state.ship.invulnerable_timer > 0 {
+                self.state.ship.invulnerable_timer -= 1;
             }
         } else {
             // Ship is dead, handle respawn
-            if ship.respawn_timer > 0 {
-                ship.respawn_timer -= 1;
+            if self.state.ship.respawn_timer > 0 {
+                self.state.ship.respawn_timer -= 1;
 
-                if ship.respawn_timer == 0 {
+                if self.state.ship.respawn_timer == 0 {
                     self.try_respawn_ship();
                 }
             }
@@ -405,12 +406,37 @@ impl GameEngine {
             if saucer.fire_cooldown > 0 {
                 saucer.fire_cooldown -= 1;
             } else {
-                // Collect bullet info to spawn after loop
+                // Calculate bullet velocity inline to avoid borrow issues
                 let is_small = saucer.small;
                 let saucer_x = saucer.x;
                 let saucer_y = saucer.y;
-                let (vx, vy) = self.calc_saucer_bullet_velocity(saucer_x, saucer_y, is_small);
-                bullets_to_spawn.push((saucer_x, saucer_y, vx, vy, true));
+
+                let (bullet_vx, bullet_vy) = if is_small {
+                    // Small saucer: aim at ship with some error
+                    let dx = shortest_delta_q12_4(saucer_x, self.state.ship.x, WORLD_WIDTH_Q12_4);
+                    let dy = shortest_delta_q12_4(saucer_y, self.state.ship.y, WORLD_HEIGHT_Q12_4);
+
+                    let base_angle = atan2_bam(dy, dx);
+
+                    // Add error based on lurk state
+                    let error_range =
+                        if self.state.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES {
+                            8 // More accurate when lurking
+                        } else {
+                            24 // Less accurate normally
+                        };
+
+                    let error = self.rng.next_int(error_range * 2) as i16 - error_range as i16;
+                    let angle = add_bam(base_angle, error as i8);
+
+                    velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
+                } else {
+                    // Large saucer: random direction
+                    let angle = self.rng.next_angle();
+                    velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
+                };
+
+                bullets_to_spawn.push((saucer_x, saucer_y, bullet_vx, bullet_vy, true));
 
                 // Reset cooldown based on saucer size and lurk state
                 let base_cooldown = if is_small { 30 } else { 60 };
@@ -433,38 +459,6 @@ impl GameEngine {
                 life: SAUCER_BULLET_LIFETIME_FRAMES,
                 from_saucer,
             });
-        }
-    }
-
-    /// Calculate saucer bullet velocity
-    fn calc_saucer_bullet_velocity(
-        &mut self,
-        saucer_x: u16,
-        saucer_y: u16,
-        is_small: bool,
-    ) -> (i16, i16) {
-        if is_small {
-            // Small saucer: aim at ship with some error
-            let dx = shortest_delta_q12_4(saucer_x, self.state.ship.x, WORLD_WIDTH_Q12_4);
-            let dy = shortest_delta_q12_4(saucer_y, self.state.ship.y, WORLD_HEIGHT_Q12_4);
-
-            let base_angle = atan2_bam(dy, dx);
-
-            // Add error based on lurk state
-            let error_range = if self.state.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES {
-                8 // More accurate when lurking
-            } else {
-                24 // Less accurate normally
-            };
-
-            let error = self.rng.next_int(error_range * 2) as i16 - error_range as i16;
-            let angle = add_bam(base_angle, error as i8);
-
-            velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
-        } else {
-            // Large saucer: random direction
-            let angle = self.rng.next_angle();
-            velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
         }
     }
 
@@ -522,45 +516,6 @@ impl GameEngine {
                 .next_range(min_frames as u32, SAUCER_SPAWN_MAX_FRAMES as u32) as u16;
     }
 
-    /// Spawn saucer bullet
-    fn spawn_saucer_bullet(&mut self, saucer: &Saucer) {
-        let bullet_x = saucer.x;
-        let bullet_y = saucer.y;
-
-        let (bullet_vx, bullet_vy) = if saucer.small {
-            // Small saucer: aim at ship with some error
-            let dx = shortest_delta_q12_4(saucer.x, self.state.ship.x, WORLD_WIDTH_Q12_4);
-            let dy = shortest_delta_q12_4(saucer.y, self.state.ship.y, WORLD_HEIGHT_Q12_4);
-
-            let base_angle = atan2_bam(dy as i16, dx as i16);
-
-            // Add error based on lurk state
-            let error_range = if self.state.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES {
-                8 // More accurate when lurking
-            } else {
-                24 // Less accurate normally
-            };
-
-            let error = self.rng.next_int(error_range * 2) as i16 - error_range as i16;
-            let angle = add_bam(base_angle, error as i8);
-
-            velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
-        } else {
-            // Large saucer: random direction
-            let angle = self.rng.next_angle();
-            velocity_q8_8(angle, SAUCER_BULLET_SPEED_Q8_8)
-        };
-
-        self.state.saucer_bullets.push(Bullet {
-            x: bullet_x,
-            y: bullet_y,
-            vx: bullet_vx,
-            vy: bullet_vy,
-            life: SAUCER_BULLET_LIFETIME_FRAMES,
-            from_saucer: true,
-        });
-    }
-
     /// Update saucer bullets
     fn update_saucer_bullets(&mut self) {
         for bullet in &mut self.state.saucer_bullets {
@@ -598,6 +553,9 @@ impl GameEngine {
     }
 
     fn handle_bullet_asteroid_collisions(&mut self) {
+        // Collect collision pairs first to avoid borrow issues
+        let mut collisions: Vec<(usize, usize)> = Vec::new();
+
         for i in 0..self.state.bullets.len() {
             if !self.state.bullets[i].alive() {
                 continue;
@@ -616,16 +574,23 @@ impl GameEngine {
                 let threshold_sq = threshold * threshold;
 
                 if dist_sq < threshold_sq {
-                    // Collision!
-                    self.state.bullets[i].life = 0; // Kill bullet
-                    self.destroy_asteroid(j, true); // Score for player
-                    break;
+                    collisions.push((i, j));
+                    break; // Bullet can only hit one asteroid
                 }
             }
+        }
+
+        // Apply collisions
+        for (bullet_idx, asteroid_idx) in collisions {
+            self.state.bullets[bullet_idx].life = 0;
+            self.destroy_asteroid(asteroid_idx, true);
         }
     }
 
     fn handle_bullet_saucer_collisions(&mut self) {
+        // Collect collision data first
+        let mut collisions: Vec<(usize, usize, bool)> = Vec::new(); // (bullet_idx, saucer_idx, is_small)
+
         for i in 0..self.state.bullets.len() {
             if !self.state.bullets[i].alive() {
                 continue;
@@ -650,17 +615,23 @@ impl GameEngine {
                 let threshold_sq = threshold * threshold;
 
                 if dist_sq < threshold_sq {
-                    self.state.bullets[i].life = 0;
-                    self.state.saucers[j].alive = false;
-
-                    let score = if saucer.small {
-                        SCORE_SMALL_SAUCER
-                    } else {
-                        SCORE_LARGE_SAUCER
-                    };
-                    self.add_score(score);
+                    collisions.push((i, j, saucer.small));
+                    break; // Bullet can only hit one saucer
                 }
             }
+        }
+
+        // Apply collisions
+        for (bullet_idx, saucer_idx, is_small) in collisions {
+            self.state.bullets[bullet_idx].life = 0;
+            self.state.saucers[saucer_idx].alive = false;
+
+            let score = if is_small {
+                SCORE_SMALL_SAUCER
+            } else {
+                SCORE_LARGE_SAUCER
+            };
+            self.add_score(score);
         }
     }
 
@@ -744,6 +715,9 @@ impl GameEngine {
     }
 
     fn handle_saucer_bullet_asteroid_collisions(&mut self) {
+        // Collect collision pairs first
+        let mut collisions: Vec<(usize, usize)> = Vec::new();
+
         for i in 0..self.state.saucer_bullets.len() {
             if self.state.saucer_bullets[i].life == 0 {
                 continue;
@@ -762,11 +736,16 @@ impl GameEngine {
                 let threshold_sq = threshold * threshold;
 
                 if dist_sq < threshold_sq {
-                    self.state.saucer_bullets[i].life = 0;
-                    self.destroy_asteroid(j, false); // No score for saucer bullet hits
-                    break;
+                    collisions.push((i, j));
+                    break; // Bullet can only hit one asteroid
                 }
             }
+        }
+
+        // Apply collisions
+        for (bullet_idx, asteroid_idx) in collisions {
+            self.state.saucer_bullets[bullet_idx].life = 0;
+            self.destroy_asteroid(asteroid_idx, false); // No score for saucer bullet hits
         }
     }
 
