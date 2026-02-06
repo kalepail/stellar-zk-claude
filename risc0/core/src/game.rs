@@ -905,6 +905,29 @@ pub fn replay_tape(seed: u32, inputs: &[u8]) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ====================================================================
+    // Test helpers
+    // ====================================================================
+
+    fn no_input() -> FrameInput {
+        FrameInput::default()
+    }
+
+    fn input(left: bool, right: bool, thrust: bool, fire: bool) -> FrameInput {
+        FrameInput { left, right, thrust, fire }
+    }
+
+    fn step_n(game: &mut AsteroidsGame, inp: FrameInput, n: u32) {
+        for _ in 0..n {
+            game.step(inp);
+        }
+    }
+
+    // ====================================================================
+    // Existing tests
+    // ====================================================================
+
     #[test]
     fn test_game_creation() {
         let game = AsteroidsGame::new(0xDEADBEEF);
@@ -927,5 +950,693 @@ mod tests {
         // the RNG state at frame 0 should be 4160380745 (from TS dump).
         let game = AsteroidsGame::new(0xDEADBEEF);
         assert_eq!(game.rng_state(), 4160380745);
+    }
+
+    // ====================================================================
+    // Group A: Pure math helpers
+    // ====================================================================
+
+    #[test]
+    fn test_wrap_x_q12_4() {
+        // Identity — value in range stays the same
+        assert_eq!(wrap_x_q12_4(1000), 1000);
+        // Boundary — at exactly WORLD_WIDTH_Q12_4, wraps to 0
+        assert_eq!(wrap_x_q12_4(WORLD_WIDTH_Q12_4), 0);
+        // Wrap-over — one past boundary
+        assert_eq!(wrap_x_q12_4(WORLD_WIDTH_Q12_4 + 5), 5);
+        // Wrap-under — negative wraps up
+        assert_eq!(wrap_x_q12_4(-1), WORLD_WIDTH_Q12_4 - 1);
+    }
+
+    #[test]
+    fn test_wrap_y_q12_4() {
+        assert_eq!(wrap_y_q12_4(500), 500);
+        assert_eq!(wrap_y_q12_4(WORLD_HEIGHT_Q12_4), 0);
+        assert_eq!(wrap_y_q12_4(WORLD_HEIGHT_Q12_4 + 10), 10);
+        assert_eq!(wrap_y_q12_4(-3), WORLD_HEIGHT_Q12_4 - 3);
+    }
+
+    #[test]
+    fn test_shortest_delta_q12_4() {
+        // Direct positive delta
+        assert_eq!(shortest_delta_q12_4(100, 200, WORLD_WIDTH_Q12_4), 100);
+        // Direct negative delta
+        assert_eq!(shortest_delta_q12_4(200, 100, WORLD_WIDTH_Q12_4), -100);
+        // Wrapping: from near-right to near-left is shorter going right
+        assert_eq!(
+            shortest_delta_q12_4(WORLD_WIDTH_Q12_4 - 10, 10, WORLD_WIDTH_Q12_4),
+            20
+        );
+        // Wrapping other direction: from near-left to near-right
+        assert_eq!(
+            shortest_delta_q12_4(10, WORLD_WIDTH_Q12_4 - 10, WORLD_WIDTH_Q12_4),
+            -20
+        );
+    }
+
+    #[test]
+    fn test_collision_dist_sq_q12_4() {
+        // Same point → distance 0
+        assert_eq!(collision_dist_sq_q12_4(100, 200, 100, 200), 0);
+        // Known triangle: dx=3*16=48, dy=4*16=64 → dist_sq = 48^2 + 64^2 = 2304 + 4096 = 6400
+        assert_eq!(
+            collision_dist_sq_q12_4(0, 0, to_q12_4(3), to_q12_4(4)),
+            6400
+        );
+        // Cross-boundary: points at opposite edges are close
+        let dist = collision_dist_sq_q12_4(10, 10, WORLD_WIDTH_Q12_4 - 10, WORLD_HEIGHT_Q12_4 - 10);
+        // dx=20, dy=20 → dist_sq = 400+400 = 800
+        assert_eq!(dist, 800);
+    }
+
+    #[test]
+    fn test_to_q12_4() {
+        assert_eq!(to_q12_4(0), 0);
+        assert_eq!(to_q12_4(1), 16);
+        assert_eq!(to_q12_4(960), 15360);
+        assert_eq!(to_q12_4(-1), -16);
+    }
+
+    #[test]
+    fn test_clamp() {
+        // Within range
+        assert_eq!(clamp(5, 0, 10), 5);
+        // Below min
+        assert_eq!(clamp(-5, 0, 10), 0);
+        // Above max
+        assert_eq!(clamp(15, 0, 10), 10);
+    }
+
+    // ====================================================================
+    // Group B: Ship physics
+    // ====================================================================
+
+    #[test]
+    fn test_ship_thrust_increases_velocity() {
+        let mut game = AsteroidsGame::new(12345);
+        // Ship starts facing up (angle=192), thrust should make vy negative
+        let initial_vy = game.ship.vy;
+        game.step(input(false, false, true, false));
+        assert!(game.ship.vy < initial_vy, "thrust up should decrease vy (make it more negative)");
+    }
+
+    #[test]
+    fn test_ship_turning() {
+        let mut game = AsteroidsGame::new(12345);
+        let initial_angle = game.ship.angle;
+
+        // Turn left: angle decreases by SHIP_TURN_SPEED_BAM
+        game.step(input(true, false, false, false));
+        assert_eq!(
+            game.ship.angle,
+            initial_angle.wrapping_sub(SHIP_TURN_SPEED_BAM as u8)
+        );
+
+        // Turn right from new position
+        let angle_after_left = game.ship.angle;
+        game.step(input(false, true, false, false));
+        assert_eq!(
+            game.ship.angle,
+            angle_after_left.wrapping_add(SHIP_TURN_SPEED_BAM as u8)
+        );
+
+        // Wrapping: turn left many times past 0
+        let mut game2 = AsteroidsGame::new(99);
+        game2.ship.angle = 1;
+        game2.step(input(true, false, false, false));
+        // 1 - 3 = 254 (wrapping)
+        assert_eq!(game2.ship.angle, 254);
+    }
+
+    #[test]
+    fn test_ship_drag_decelerates() {
+        let mut game = AsteroidsGame::new(12345);
+        // Give the ship some velocity via thrust
+        step_n(&mut game, input(false, false, true, false), 10);
+        let speed_after_thrust = game.ship.vx.abs() + game.ship.vy.abs();
+        assert!(speed_after_thrust > 0, "ship should have velocity after thrust");
+
+        // Coast without thrust — drag should reduce speed
+        step_n(&mut game, no_input(), 30);
+        let speed_after_coast = game.ship.vx.abs() + game.ship.vy.abs();
+        assert!(
+            speed_after_coast < speed_after_thrust,
+            "drag should reduce speed: {} < {}",
+            speed_after_coast,
+            speed_after_thrust
+        );
+    }
+
+    #[test]
+    fn test_ship_fire_cooldown() {
+        let mut game = AsteroidsGame::new(12345);
+        // Fire a bullet
+        game.step(input(false, false, false, true));
+        assert_eq!(game.bullets.len(), 1, "first shot should create a bullet");
+        assert_eq!(game.ship.fire_cooldown, SHIP_BULLET_COOLDOWN_FRAMES);
+
+        // Fire again immediately — should be blocked by cooldown
+        game.step(input(false, false, false, true));
+        assert_eq!(game.bullets.len(), 1, "can't fire during cooldown");
+
+        // Wait out the cooldown
+        step_n(&mut game, no_input(), SHIP_BULLET_COOLDOWN_FRAMES as u32);
+        assert_eq!(game.ship.fire_cooldown, 0);
+
+        // Now fire again
+        game.step(input(false, false, false, true));
+        assert_eq!(game.bullets.len(), 2, "should fire after cooldown expires");
+    }
+
+    #[test]
+    fn test_ship_bullet_limit() {
+        let mut game = AsteroidsGame::new(12345);
+
+        // Fire 4 bullets (max) with cooldown waits between
+        for i in 0..SHIP_BULLET_LIMIT {
+            game.step(input(false, false, false, true));
+            assert_eq!(game.bullets.len(), i + 1);
+            if i < SHIP_BULLET_LIMIT - 1 {
+                step_n(&mut game, no_input(), SHIP_BULLET_COOLDOWN_FRAMES as u32);
+            }
+        }
+
+        assert_eq!(game.bullets.len(), SHIP_BULLET_LIMIT);
+
+        // Wait for cooldown and try to fire a 5th — should be blocked
+        step_n(&mut game, no_input(), SHIP_BULLET_COOLDOWN_FRAMES as u32);
+        let count_before = game.bullets.len();
+        game.step(input(false, false, false, true));
+        assert_eq!(game.bullets.len(), count_before, "5th bullet should be blocked");
+    }
+
+    // ====================================================================
+    // Group C: Collision & scoring
+    // ====================================================================
+
+    #[test]
+    fn test_asteroid_scoring_by_size() {
+        for (size, expected_score) in [
+            (AsteroidSize::Large, SCORE_LARGE_ASTEROID),
+            (AsteroidSize::Medium, SCORE_MEDIUM_ASTEROID),
+            (AsteroidSize::Small, SCORE_SMALL_ASTEROID),
+        ] {
+            let mut game = AsteroidsGame::new(12345);
+            game.asteroids.clear();
+            game.saucers.clear();
+            game.saucer_bullets.clear();
+            game.score = 0;
+            game.next_extra_life_score = EXTRA_LIFE_SCORE_STEP;
+
+            // Place a test asteroid at a known position
+            let ax = to_q12_4(100);
+            let ay = to_q12_4(100);
+            game.asteroids.push(Asteroid {
+                x: ax,
+                y: ay,
+                vx: 0,
+                vy: 0,
+                angle: 0,
+                alive: true,
+                radius: asteroid_radius(size),
+                size,
+                spin: 0,
+            });
+
+            // Place a bullet overlapping the asteroid
+            game.bullets.push(Bullet {
+                x: ax,
+                y: ay,
+                vx: 0,
+                vy: 0,
+                angle: 0,
+                alive: true,
+                radius: 2,
+                life: 60,
+            });
+
+            game.handle_collisions();
+            game.prune_destroyed_entities();
+
+            assert_eq!(
+                game.score, expected_score,
+                "score for {:?}: expected {}, got {}",
+                size, expected_score, game.score
+            );
+        }
+    }
+
+    #[test]
+    fn test_saucer_scoring() {
+        for (small, expected_score) in [(false, SCORE_LARGE_SAUCER), (true, SCORE_SMALL_SAUCER)] {
+            let mut game = AsteroidsGame::new(12345);
+            game.asteroids.clear();
+            game.saucers.clear();
+            game.saucer_bullets.clear();
+            game.bullets.clear();
+            game.score = 0;
+            game.next_extra_life_score = EXTRA_LIFE_SCORE_STEP;
+
+            let sx = to_q12_4(200);
+            let sy = to_q12_4(200);
+            game.saucers.push(Saucer {
+                x: sx,
+                y: sy,
+                vx: 0,
+                vy: 0,
+                alive: true,
+                radius: if small { SAUCER_RADIUS_SMALL } else { SAUCER_RADIUS_LARGE },
+                small,
+                fire_cooldown: 999,
+                drift_timer: 999,
+            });
+
+            // Bullet overlapping saucer
+            game.bullets.push(Bullet {
+                x: sx,
+                y: sy,
+                vx: 0,
+                vy: 0,
+                angle: 0,
+                alive: true,
+                radius: 2,
+                life: 60,
+            });
+
+            game.handle_collisions();
+            game.prune_destroyed_entities();
+
+            assert_eq!(
+                game.score, expected_score,
+                "score for saucer (small={}): expected {}, got {}",
+                small, expected_score, game.score
+            );
+        }
+    }
+
+    #[test]
+    fn test_extra_life_at_10k() {
+        let mut game = AsteroidsGame::new(12345);
+        let initial_lives = game.lives;
+        // Push score just past 10000
+        game.add_score(10000);
+        assert_eq!(
+            game.lives,
+            initial_lives + 1,
+            "should gain an extra life at 10000"
+        );
+    }
+
+    #[test]
+    fn test_invulnerability_prevents_death() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+
+        // Ensure ship is invulnerable
+        game.ship.invulnerable_timer = 60;
+        game.ship.can_control = true;
+
+        let initial_lives = game.lives;
+
+        // Place asteroid overlapping ship
+        game.asteroids.push(Asteroid {
+            x: game.ship.x,
+            y: game.ship.y,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+
+        game.handle_collisions();
+
+        assert_eq!(game.lives, initial_lives, "invulnerable ship should not lose a life");
+        assert!(game.ship.can_control, "invulnerable ship should still be controllable");
+    }
+
+    #[test]
+    fn test_game_over_at_zero_lives() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+
+        game.lives = 1;
+        game.ship.invulnerable_timer = 0;
+        game.ship.can_control = true;
+
+        // Place asteroid overlapping ship to kill it
+        game.asteroids.push(Asteroid {
+            x: game.ship.x,
+            y: game.ship.y,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+
+        game.handle_collisions();
+
+        assert_eq!(game.lives, 0);
+        assert!(game.game_over, "game should be over when lives reach 0");
+    }
+
+    // ====================================================================
+    // Group D: Wave progression
+    // ====================================================================
+
+    #[test]
+    fn test_wave_asteroid_count() {
+        // Wave 1: 4 + (1-1)*2 = 4 asteroids
+        let game1 = AsteroidsGame::new(12345);
+        assert_eq!(game1.wave(), 1);
+        assert_eq!(game1.asteroids.len(), 4);
+
+        // Simulate clearing wave 1 to get to wave 2
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        // step triggers spawn_wave since field is empty
+        game.step(no_input());
+        assert_eq!(game.wave(), 2);
+        // Wave 2: min(16, 4 + (2-1)*2) = 6
+        assert_eq!(game.asteroids.len(), 6);
+    }
+
+    #[test]
+    fn test_wave_advances_when_clear() {
+        let mut game = AsteroidsGame::new(12345);
+        assert_eq!(game.wave(), 1);
+
+        // Clear all entities
+        game.asteroids.clear();
+        game.saucers.clear();
+
+        // Step should trigger a new wave
+        game.step(no_input());
+        assert_eq!(game.wave(), 2, "wave should advance when field is clear");
+        assert!(!game.asteroids.is_empty(), "new wave should spawn asteroids");
+    }
+
+    // ====================================================================
+    // Group E: Spawn safety
+    // ====================================================================
+
+    #[test]
+    fn test_spawn_area_clear_no_entities() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+
+        let (cx, cy) = game.get_ship_spawn_point();
+        assert!(
+            game.is_ship_spawn_area_clear(cx, cy),
+            "empty field should allow spawn"
+        );
+    }
+
+    #[test]
+    fn test_spawn_area_blocked_by_asteroid() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+
+        let (cx, cy) = game.get_ship_spawn_point();
+
+        // Place a large asteroid at center
+        game.asteroids.push(Asteroid {
+            x: cx,
+            y: cy,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+
+        assert!(
+            !game.is_ship_spawn_area_clear(cx, cy),
+            "asteroid at center should block spawn"
+        );
+    }
+
+    // ====================================================================
+    // Group F: Anti-cheat regression tests
+    // ====================================================================
+
+    #[test]
+    fn test_ship_max_speed_clamped() {
+        let mut game = AsteroidsGame::new(12345);
+        // Thrust for many frames to saturate speed
+        step_n(&mut game, input(false, false, true, false), 200);
+        let speed_sq = game.ship.vx * game.ship.vx + game.ship.vy * game.ship.vy;
+        assert!(
+            speed_sq <= SHIP_MAX_SPEED_SQ_Q16_16,
+            "speed_sq {} exceeds max {}",
+            speed_sq,
+            SHIP_MAX_SPEED_SQ_Q16_16
+        );
+        // Also verify the ship IS moving (didn't clamp to zero)
+        assert!(speed_sq > 0, "ship should have nonzero velocity after sustained thrust");
+    }
+
+    #[test]
+    fn test_different_seed_different_rng_state() {
+        let (_, rng1) = replay_tape(0xDEADBEEF, &[0x00; 100]);
+        let (_, rng2) = replay_tape(0xDEADBEF0, &[0x00; 100]);
+        assert_ne!(
+            rng1, rng2,
+            "different seeds must produce different final RNG states"
+        );
+    }
+
+    #[test]
+    fn test_active_vs_idle_play_differs() {
+        // Over enough frames for saucer spawns and potential kills,
+        // active play (fire+thrust) must produce a different proven
+        // outcome than idle play. This is the core anti-cheat property:
+        // you can't claim someone else's score with different inputs.
+        let active: Vec<u8> = vec![0x0C; 600]; // thrust+fire every frame
+        let idle: Vec<u8> = vec![0x00; 600];
+        let (score_a, rng_a) = replay_tape(0xDEADBEEF, &active);
+        let (score_i, rng_i) = replay_tape(0xDEADBEEF, &idle);
+        assert!(
+            (score_a, rng_a) != (score_i, rng_i),
+            "active vs idle must produce different (score, rng): ({}, 0x{:08x}) vs ({}, 0x{:08x})",
+            score_a, rng_a, score_i, rng_i
+        );
+    }
+
+    #[test]
+    fn test_saucer_bullet_kills_ship() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.bullets.clear();
+        game.saucer_bullets.clear();
+        game.ship.invulnerable_timer = 0;
+        game.ship.can_control = true;
+        let initial_lives = game.lives;
+
+        // Place saucer bullet overlapping ship
+        game.saucer_bullets.push(Bullet {
+            x: game.ship.x,
+            y: game.ship.y,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: 2,
+            life: 60,
+        });
+
+        game.handle_collisions();
+
+        assert_eq!(game.lives, initial_lives - 1, "saucer bullet should kill ship");
+        assert!(!game.ship.can_control, "ship should be in respawn state after death");
+    }
+
+    #[test]
+    fn test_ship_saucer_body_collision() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.bullets.clear();
+        game.saucer_bullets.clear();
+        game.ship.invulnerable_timer = 0;
+        game.ship.can_control = true;
+        let initial_lives = game.lives;
+
+        // Place saucer overlapping ship
+        game.saucers.push(Saucer {
+            x: game.ship.x,
+            y: game.ship.y,
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: SAUCER_RADIUS_LARGE,
+            small: false,
+            fire_cooldown: 999,
+            drift_timer: 999,
+        });
+
+        game.handle_collisions();
+
+        assert_eq!(game.lives, initial_lives - 1, "saucer body collision should kill ship");
+        assert!(!game.saucers[0].alive, "saucer should also be destroyed on collision");
+    }
+
+    #[test]
+    fn test_asteroid_splitting() {
+        // Large → 2 medium
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+
+        let ax = to_q12_4(500);
+        let ay = to_q12_4(500);
+        game.asteroids.push(Asteroid {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large, spin: 0,
+        });
+        game.bullets.push(Bullet {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: 2, life: 60,
+        });
+
+        game.handle_collisions();
+        game.prune_destroyed_entities();
+
+        let medium_count = game.asteroids.iter().filter(|a| a.size == AsteroidSize::Medium).count();
+        assert_eq!(medium_count, 2, "large asteroid should split into 2 medium");
+
+        // Medium → 2 small
+        let mut game2 = AsteroidsGame::new(12345);
+        game2.asteroids.clear();
+        game2.saucers.clear();
+        game2.saucer_bullets.clear();
+        game2.bullets.clear();
+
+        game2.asteroids.push(Asteroid {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: ASTEROID_RADIUS_MEDIUM,
+            size: AsteroidSize::Medium, spin: 0,
+        });
+        game2.bullets.push(Bullet {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: 2, life: 60,
+        });
+
+        game2.handle_collisions();
+        game2.prune_destroyed_entities();
+
+        let small_count = game2.asteroids.iter().filter(|a| a.size == AsteroidSize::Small).count();
+        assert_eq!(small_count, 2, "medium asteroid should split into 2 small");
+
+        // Small → nothing
+        let mut game3 = AsteroidsGame::new(12345);
+        game3.asteroids.clear();
+        game3.saucers.clear();
+        game3.saucer_bullets.clear();
+        game3.bullets.clear();
+
+        game3.asteroids.push(Asteroid {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: ASTEROID_RADIUS_SMALL,
+            size: AsteroidSize::Small, spin: 0,
+        });
+        game3.bullets.push(Bullet {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: 2, life: 60,
+        });
+
+        game3.handle_collisions();
+        game3.prune_destroyed_entities();
+
+        assert_eq!(game3.asteroids.len(), 0, "small asteroid should not split");
+    }
+
+    #[test]
+    fn test_saucer_bullet_destroys_asteroid_no_score() {
+        let mut game = AsteroidsGame::new(12345);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.bullets.clear();
+        game.saucer_bullets.clear();
+        game.score = 0;
+        game.next_extra_life_score = EXTRA_LIFE_SCORE_STEP;
+        // Move ship out of the way so it doesn't collide
+        game.ship.x = to_q12_4(800);
+        game.ship.y = to_q12_4(600);
+        game.ship.invulnerable_timer = 999;
+
+        let ax = to_q12_4(100);
+        let ay = to_q12_4(100);
+        game.asteroids.push(Asteroid {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large, spin: 0,
+        });
+
+        // Saucer bullet overlapping the asteroid
+        game.saucer_bullets.push(Bullet {
+            x: ax, y: ay, vx: 0, vy: 0, angle: 0,
+            alive: true, radius: 2, life: 60,
+        });
+
+        game.handle_collisions();
+        game.prune_destroyed_entities();
+
+        assert_eq!(game.score, 0, "saucer bullet destroying asteroid must NOT award score");
+        // Asteroid should still be destroyed (and split)
+        assert!(
+            game.asteroids.iter().all(|a| a.size == AsteroidSize::Medium),
+            "asteroid should still split even without score"
+        );
+    }
+
+    #[test]
+    fn test_wave_does_not_advance_with_saucers_alive() {
+        let mut game = AsteroidsGame::new(12345);
+        let initial_wave = game.wave();
+
+        // Clear asteroids but leave a saucer
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucers.push(Saucer {
+            x: to_q12_4(100),
+            y: to_q12_4(100),
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: SAUCER_RADIUS_LARGE,
+            small: false,
+            fire_cooldown: 999,
+            drift_timer: 999,
+        });
+
+        game.step(no_input());
+
+        assert_eq!(
+            game.wave(), initial_wave,
+            "wave must not advance while saucers are alive"
+        );
     }
 }

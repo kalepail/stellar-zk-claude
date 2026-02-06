@@ -17,16 +17,40 @@
 use asteroids_core::{deserialize_tape, replay_tape};
 use risc0_zkvm::guest::env;
 
+/// When the `cycle-prof` feature is enabled, prints the cycle count delta
+/// for each labeled section to stderr. Compiles to nothing when disabled.
+#[cfg(feature = "cycle-prof")]
+macro_rules! cycle_mark {
+    ($label:expr, $prev:ident) => {
+        let now = env::cycle_count();
+        eprintln!("  [cycles] {}: {}", $label, now - $prev);
+        $prev = now;
+    };
+}
+
+#[cfg(not(feature = "cycle-prof"))]
+macro_rules! cycle_mark {
+    ($label:expr, $prev:ident) => {};
+}
+
 fn main() {
+    #[cfg(feature = "cycle-prof")]
+    let mut _t = env::cycle_count();
+    #[cfg(not(feature = "cycle-prof"))]
+    let mut _t = 0u64;
+
     // Read the raw tape bytes from the host (private input)
     let tape_bytes: Vec<u8> = env::read();
+    cycle_mark!("env::read", _t);
 
     // Parse and validate the tape (magic, version, CRC-32 integrity)
     let tape = deserialize_tape(&tape_bytes)
         .expect("Invalid tape: failed to parse or CRC mismatch");
+    cycle_mark!("deserialize_tape", _t);
 
     // Replay the game deterministically
     let (actual_score, actual_rng_state) = replay_tape(tape.header.seed, &tape.inputs);
+    cycle_mark!("replay_tape", _t);
 
     // Verify the replay matches the tape's claimed results.
     // If these assertions fail, the guest panics and no proof is generated.
@@ -49,4 +73,5 @@ fn main() {
     env::commit(&tape.header.seed);
     env::commit(&actual_score);
     env::commit(&tape.header.frame_count);
+    cycle_mark!("assert+commit", _t);
 }

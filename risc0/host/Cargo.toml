@@ -9,3 +9,6 @@ methods = { path = "../methods" }
 risc0-zkvm = { version = "^3.0.3" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+
+[features]
+cycle-prof = ["methods/cycle-prof"]
