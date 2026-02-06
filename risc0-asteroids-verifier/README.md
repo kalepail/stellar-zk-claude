@@ -15,6 +15,7 @@ This workspace is the first RISC Zero circuit/host implementation for Asteroids 
 - `asteroids-core/` shared verifier logic (`no_std` compatible).
 - `methods/guest/` RISC0 guest entrypoint.
 - `host/` proving runner CLI.
+- `api-server/` Actix HTTP API for proving/verification jobs.
 
 ## Toolchain
 
@@ -56,6 +57,22 @@ Optional performance tuning knobs:
 ```bash
 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --receipt-kind composite --segment-limit-po2 20
 ```
+
+## HTTP API
+
+Run the API server locally:
+
+```bash
+cd risc0-asteroids-verifier
+cargo run --release -p api-server
+```
+
+API docs, security defaults, Docker deployment, and Vast.ai notes are in:
+
+- `risc0-asteroids-verifier/api-server/README.md`
+- `risc0-asteroids-verifier/api-server/.env.example`
+- `risc0-asteroids-verifier/api-server/Dockerfile`
+- `risc0-asteroids-verifier/VASTAI`
 
 ## Coverage + Performance Harness
 

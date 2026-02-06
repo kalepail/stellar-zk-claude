@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["asteroids-core","host", "methods"]
+members = ["api-server", "asteroids-core", "host", "methods"]
 
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]

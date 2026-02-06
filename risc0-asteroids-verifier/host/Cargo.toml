@@ -3,6 +3,10 @@ name = "host"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+cuda = ["risc0-zkvm/cuda"]
+
 [dependencies]
 anyhow = "1.0"
 asteroids-verifier-core = { path = "../asteroids-core" }

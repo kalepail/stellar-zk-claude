@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_URL="${REPO_URL:-https://github.com/kalepail/stellar-zk-codex.git}"
+WORKDIR="${WORKDIR:-/workspace/stellar-zk-codex}"
+IMAGE="${IMAGE:-asteroids-zk-api:latest}"
+ENABLE_CUDA="${ENABLE_CUDA:-1}"
+
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y git curl docker.io
+
+if [ ! -d "${WORKDIR}" ]; then
+  git clone "${REPO_URL}" "${WORKDIR}"
+else
+  cd "${WORKDIR}"
+  git pull
+fi
+
+cd "${WORKDIR}/risc0-asteroids-verifier"
+
+docker build -f api-server/Dockerfile \
+  --build-arg ENABLE_CUDA="${ENABLE_CUDA}" \
+  -t "${IMAGE}" .
+
+docker rm -f asteroids-zk-api >/dev/null 2>&1 || true
+
+DOCKER_GPU_FLAGS=""
+if [ "${ENABLE_CUDA}" = "1" ]; then
+  DOCKER_GPU_FLAGS="--gpus all"
+fi
+
+# shellcheck disable=SC2086
+docker run -d \
+  --name asteroids-zk-api \
+  --restart unless-stopped \
+  ${DOCKER_GPU_FLAGS} \
+  -p 8080:8080 \
+  --env-file api-server/.env.example \
+  -e RISC0_DEV_MODE=0 \
+  -e PROVER_CONCURRENCY=1 \
+  "${IMAGE}"
+
+echo "API is starting on :8080"
+echo "Next: run cloudflared tunnel --url http://127.0.0.1:8080"
