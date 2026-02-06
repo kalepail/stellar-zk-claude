@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_QUEUE_ATTEMPTS, DEFAULT_POLL_INTERVAL_MS } from "../constants";
+import { DEFAULT_MAX_JOB_WALL_TIME_MS, DEFAULT_POLL_INTERVAL_MS } from "../constants";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
@@ -23,7 +23,7 @@ async function processQueueMessage(
   }
 
   const jobId = payload.jobId;
-  const maxAttempts = parseInteger(env.MAX_QUEUE_ATTEMPTS, DEFAULT_MAX_QUEUE_ATTEMPTS, 1);
+  const maxWallTimeMs = parseInteger(env.MAX_JOB_WALL_TIME_MS, DEFAULT_MAX_JOB_WALL_TIME_MS, 60_000);
   const pollIntervalMs = parseInteger(env.PROVER_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 500);
 
   const coordinator = coordinatorStub(env);
@@ -33,8 +33,13 @@ async function processQueueMessage(
     return;
   }
 
-  if (message.attempts > maxAttempts) {
-    await coordinator.markFailed(jobId, `proof job exceeded retry attempts (${maxAttempts})`);
+  const jobAgeMs = Date.now() - new Date(startedJob.createdAt).getTime();
+  if (jobAgeMs > maxWallTimeMs) {
+    const ageMin = Math.round(jobAgeMs / 60_000);
+    await coordinator.markFailed(
+      jobId,
+      `proof job timed out after ${ageMin} minutes (attempt ${message.attempts})`,
+    );
     message.ack();
     return;
   }
@@ -75,7 +80,7 @@ async function processQueueMessage(
   if (pollResult.type === "retry") {
     const delaySeconds = retryDelaySeconds(message.attempts);
     const nextRetryAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
-    await coordinator.markRetry(jobId, pollResult.message, nextRetryAt);
+    await coordinator.markRetry(jobId, pollResult.message, nextRetryAt, pollResult.clearProverJob);
     message.retry({ delaySeconds });
     return;
   }

@@ -140,6 +140,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     reason: string,
     nextRetryAt: string,
+    clearProverJob?: boolean,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -150,6 +151,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.updatedAt = nowIso();
     job.queue.lastError = reason;
     job.queue.nextRetryAt = nextRetryAt;
+    if (clearProverJob) {
+      job.prover.jobId = null;
+      job.prover.status = null;
+      job.prover.statusUrl = null;
+      job.prover.lastPolledAt = null;
+    }
     await this.saveJob(job);
     return job;
   }

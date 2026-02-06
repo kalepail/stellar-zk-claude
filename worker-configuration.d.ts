@@ -18,7 +18,7 @@ declare namespace Cloudflare {
 		PROVER_POLL_BUDGET_MS: "45000";
 		PROVER_REQUEST_TIMEOUT_MS: "30000";
 		MAX_TAPE_BYTES: "2097152";
-		MAX_QUEUE_ATTEMPTS: "180";
+		MAX_JOB_WALL_TIME_MS: "3600000";
 		ALLOW_INSECURE_PROVER_URL: "0";
 		PROOF_COORDINATOR: DurableObjectNamespace<import("./worker/index").ProofCoordinatorDO>;
 	}

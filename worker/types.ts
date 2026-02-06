@@ -148,5 +148,5 @@ export type ProverSubmitResult =
 export type ProverPollResult =
   | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running"> }
   | { type: "success"; response: ProverGetJobResponse }
-  | { type: "retry"; message: string }
+  | { type: "retry"; message: string; clearProverJob?: boolean }
   | { type: "fatal"; message: string };

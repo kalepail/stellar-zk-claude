@@ -213,6 +213,17 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
       };
     }
 
+    // A 404 means the prover lost the job (crash/restart). The tape is
+    // still valid — clear the prover job ID so the next attempt
+    // re-submits rather than polling a dead job forever.
+    if (response.status === 404) {
+      return {
+        type: "retry",
+        message: "prover job not found (likely prover restart); will re-submit",
+        clearProverJob: true,
+      };
+    }
+
     if (!response.ok) {
       let detail = "";
       try {
