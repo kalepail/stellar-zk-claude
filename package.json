@@ -27,6 +27,7 @@
   "dependencies": {
     "@fontsource/monaspace-krypton": "^5.2.5",
     "@fontsource/monaspace-neon": "^5.2.5",
+    "hono": "^4.11.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -5,5 +5,58 @@
   "compatibility_date": "2025-04-01",
   "assets": {
     "not_found_handling": "single-page-application"
-  }
+  },
+  "vars": {
+    "PROVER_BASE_URL": "https://replace-with-your-prover.example.com",
+    "PROVER_RECEIPT_KIND": "composite",
+    "PROVER_SEGMENT_LIMIT_PO2": "19",
+    "PROVER_MAX_FRAMES": "18000",
+    "PROVER_POLL_INTERVAL_MS": "3000",
+    "PROVER_POLL_TIMEOUT_MS": "900000",
+    "PROVER_POLL_BUDGET_MS": "45000",
+    "PROVER_REQUEST_TIMEOUT_MS": "30000",
+    "MAX_TAPE_BYTES": "2097152",
+    "MAX_QUEUE_ATTEMPTS": "180",
+    "ALLOW_INSECURE_PROVER_URL": "0"
+  },
+  "r2_buckets": [
+    {
+      "binding": "PROOF_ARTIFACTS",
+      "bucket_name": "stellar-zk-proof-artifacts"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "PROOF_QUEUE",
+        "queue": "stellar-zk-proof-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "stellar-zk-proof-jobs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 100,
+        "max_concurrency": 1,
+        "retry_delay": 3
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PROOF_COORDINATOR",
+        "class_name": "ProofCoordinatorDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-proof-coordinator",
+      "new_sqlite_classes": [
+        "ProofCoordinatorDO"
+      ]
+    }
+  ]
 }
