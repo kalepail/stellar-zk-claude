@@ -103,6 +103,7 @@ impl JobStore {
         .map_err(|e| format!("recover_on_startup failed: {e}"))
     }
 
+    #[cfg(test)]
     pub fn insert(&self, job: &ProofJob) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         Self::insert_row(&conn, job)
@@ -333,6 +334,7 @@ impl JobStore {
         Ok(deleted > 0)
     }
 
+    #[cfg(test)]
     pub fn has_active_job(&self) -> Result<bool, String> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn
@@ -345,6 +347,7 @@ impl JobStore {
         Ok(count > 0)
     }
 
+    #[cfg(test)]
     pub fn count(&self) -> Result<usize, String> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn
@@ -375,6 +378,7 @@ impl JobStore {
     }
 
     /// Evict the oldest finished (succeeded/failed) job. Returns the evicted ID.
+    #[cfg(test)]
     pub fn evict_oldest_finished(&self) -> Result<Option<Uuid>, String> {
         let conn = self.conn.lock().unwrap();
         let row: Option<(String, Option<String>)> = conn
