@@ -21,6 +21,7 @@ RUN apt-get update && \
     git \
     libclang-dev \
     libssl-dev \
+    protobuf-compiler \
     pkg-config && \
     rm -rf /var/lib/apt/lists/*
 

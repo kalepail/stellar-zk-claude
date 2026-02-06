@@ -1,7 +1,7 @@
 use std::{env, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
-use asteroids_verifier_core::{GuestInput, VerificationJournal};
+use asteroids_verifier_core::VerificationJournal;
 use methods::{VERIFY_TAPE_ELF, VERIFY_TAPE_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Prover, ProverOpts, Receipt};
 use serde::{Deserialize, Serialize};
@@ -134,15 +134,16 @@ pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
         ));
     }
 
-    let guest_input = GuestInput {
-        tape,
-        max_frames: options.max_frames,
-    };
+    let tape_len = tape.len() as u32;
+    let mut padded_tape = tape;
+    while padded_tape.len() % 4 != 0 {
+        padded_tape.push(0);
+    }
 
     let mut env_builder = ExecutorEnv::builder();
-    env_builder
-        .write(&guest_input)
-        .context("failed to serialize guest input")?;
+    env_builder.write_slice(&options.max_frames.to_le_bytes());
+    env_builder.write_slice(&tape_len.to_le_bytes());
+    env_builder.write_slice(&padded_tape);
     env_builder.segment_limit_po2(options.segment_limit_po2);
     let env = env_builder
         .build()
