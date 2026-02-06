@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7-labs
 
-ARG CUDA_DEVEL_IMAGE=nvidia/cuda:12.4.1-devel-ubuntu22.04
-ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.4.1-runtime-ubuntu22.04
+ARG CUDA_DEVEL_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c
+ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1287141d283b8f06f45681b56a48a85791398c615888b1f96bfb9fc981392d98
+ARG RUST_TOOLCHAIN_VERSION=1.93.0
 
 FROM --platform=linux/amd64 ${CUDA_DEVEL_IMAGE} AS builder
 
@@ -26,7 +27,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --profile default --default-toolchain stable
+    sh -s -- -y --profile default --default-toolchain ${RUST_TOOLCHAIN_VERSION}
 
 ENV PATH=/root/.cargo/bin:/root/.risc0/bin:${PATH}
 

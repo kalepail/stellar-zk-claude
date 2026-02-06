@@ -99,10 +99,13 @@ docker build -f api-server/Dockerfile \
 
 For CPU-only instances, use `--build-arg ENABLE_CUDA=0`.
 
-Default builder/runtime base images are NVIDIA CUDA:
-`nvidia/cuda:12.4.1-devel-ubuntu22.04` and `nvidia/cuda:12.4.1-runtime-ubuntu22.04`.
+Default pinned builder/runtime base images are NVIDIA CUDA 12.9.1 on Ubuntu 24.04:
+`nvidia/cuda:12.9.1-devel-ubuntu24.04@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c`
+and
+`nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1287141d283b8f06f45681b56a48a85791398c615888b1f96bfb9fc981392d98`.
+Default pinned Rust toolchain is `1.93.0`.
 For Vast.ai, override with:
-`--build-arg CUDA_DEVEL_IMAGE=vastai/base-image:cuda-12.9.1-auto --build-arg CUDA_RUNTIME_IMAGE=vastai/base-image:cuda-12.9.1-auto`.
+`--build-arg CUDA_DEVEL_IMAGE=vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff --build-arg CUDA_RUNTIME_IMAGE=vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff`.
 
 ### 2. Run container
 

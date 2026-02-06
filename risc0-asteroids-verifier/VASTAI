@@ -7,8 +7,9 @@ GIT_REF="${GIT_REF:-feature/super-risc0-asteroids}"
 IMAGE="${IMAGE:-asteroids-zk-api:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-asteroids-zk-api}"
 ENABLE_CUDA="${ENABLE_CUDA:-1}"
-CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE:-vastai/base-image:cuda-12.9.1-auto}"
-CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE:-vastai/base-image:cuda-12.9.1-auto}"
+CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE:-vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff}"
+CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE:-vastai/base-image:cuda-12.9.1-auto@sha256:0d1210a72dcef044bf049b86a56b02dd6df6c8a7b0cdebdf41caf56e02a741ff}"
+RUST_TOOLCHAIN_VERSION="${RUST_TOOLCHAIN_VERSION:-1.93.0}"
 INSTALL_CLOUDFLARED="${INSTALL_CLOUDFLARED:-0}"
 ALLOW_NO_API_KEY="${ALLOW_NO_API_KEY:-0}"
 API_KEY="${API_KEY:-}"
@@ -45,6 +46,7 @@ docker build -f api-server/Dockerfile \
   --build-arg ENABLE_CUDA="${ENABLE_CUDA}" \
   --build-arg CUDA_DEVEL_IMAGE="${CUDA_DEVEL_IMAGE}" \
   --build-arg CUDA_RUNTIME_IMAGE="${CUDA_RUNTIME_IMAGE}" \
+  --build-arg RUST_TOOLCHAIN_VERSION="${RUST_TOOLCHAIN_VERSION}" \
   -t "${IMAGE}" .
 
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
