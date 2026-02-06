@@ -20,7 +20,9 @@
     "format:check": "oxfmt src worker --check",
     "check": "bun run typecheck && bun run lint && bun run format:check",
     "verify-tape": "bun run scripts/verify-tape.ts",
-    "generate-tape": "bun run scripts/generate-tape.ts"
+    "generate-tape": "bun run scripts/generate-tape.ts",
+    "verify-tape:risc0": "bun run scripts/verify-tape-risc0.ts",
+    "bench:risc0": "bash ./scripts/bench-risc0.sh"
   },
   "dependencies": {
     "@fontsource/monaspace-krypton": "^5.2.5",

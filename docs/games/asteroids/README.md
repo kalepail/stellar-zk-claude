@@ -11,6 +11,7 @@ Asteroids-specific game design, verification, ZK proving strategy, and implement
 
 ## ZK Proving Strategy
 - `noir-vs-risczero-analysis.md` — **Primary.** Comprehensive Noir vs RISC Zero comparison with circuit sizing, proving times, Stellar on-chain verification, pseudo code, broader ZK gaming ecosystem, and implementation roadmap.
+- `risc0-initial-circuit-build-codex.md` — Initial RISC0 host/guest implementation pass and gap analysis.
 - `codex-asteroids-noir-vs-risc0-research-2026-02-05.md` — Earlier Noir vs RISC Zero comparison (Codex-generated).
 - `Kimi-NOIR-vs-RISC-Zero-Research-Report.md` — Noir vs RISC Zero report (Kimi-generated).
 - `Kimi-ZK-Verification-Strategy-and-Implementation-Guide.md` — End-to-end ZK verification strategy (Kimi-generated).

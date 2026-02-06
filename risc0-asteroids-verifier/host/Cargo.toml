@@ -1,0 +1,18 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+default-run = "host"
+
+[features]
+default = []
+cuda = ["risc0-zkvm/cuda"]
+
+[dependencies]
+anyhow = "1.0"
+asteroids-verifier-core = { path = "../asteroids-core" }
+methods = { path = "../methods" }
+risc0-zkvm = { version = "^3.0.5" }
+serde = "1.0"
+serde_json = "1.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
