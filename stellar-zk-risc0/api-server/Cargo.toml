@@ -1,0 +1,25 @@
+[package]
+name = "api-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "api-server"
+path = "src/main.rs"
+
+[dependencies]
+host = { path = "../host" }
+asteroids-core = { path = "../core" }
+risc0-zkvm = { version = "^3.0.5" }
+actix-web = "4.9"
+actix-rt = "2.10"
+actix-cors = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+cuda = ["host/cuda"]

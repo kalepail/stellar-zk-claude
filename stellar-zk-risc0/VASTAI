@@ -1,0 +1,73 @@
+#!/bin/bash
+# VAST.ai setup script for Asteroids ZK Proof API Server
+# Run this on a fresh vast.ai instance with CUDA support
+
+set -e
+
+# Export environment variables to system-wide config
+env >> /etc/environment
+
+# Create workspace directory
+mkdir -p ${DATA_DIRECTORY:-/workspace}
+export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile default
+source "$HOME/.cargo/env"
+
+# Install RISC Zero toolchain
+curl -L https://risczero.com/install | INSTALLER_NO_PROMPT=1 bash
+export PATH="$HOME/.risc0/bin:$PATH"
+source "/root/.bashrc" 2>/dev/null || true
+
+# Install RISC Zero components
+rzup install || true
+rzup install risc0-groth16 || true
+
+# Clone or update the repository
+cd /workspace/
+if [ -d "stellar-zk-kimi" ]; then
+    cd stellar-zk-kimi/
+    git pull
+else
+    git clone https://github.com/kalepail/stellar-zk-kimi.git
+    cd stellar-zk-kimi/
+fi
+
+cd stellar-zk-risc0/
+
+# Install build dependencies
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y lsof clang libclang-dev
+
+# Ensure Cargo is in PATH
+source "$HOME/.cargo/env"
+
+# Build the API server with CUDA support
+RUSTFLAGS="-C target-cpu=native" cargo build -F cuda -r --package api-server
+
+# Kill any existing server on port 8080
+kill -9 $(lsof -t -i:8080) 2>/dev/null || true
+
+# Clean up Python packages to save space
+pip uninstall torch torchvision torchaudio --no-input 2>/dev/null || true
+pip cache purge 2>/dev/null || true
+
+# Install cloudflared for tunneling
+mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | tee /etc/apt/sources.list.d/cloudflared.list
+apt-get update && apt-get install -y cloudflared
+
+# Start the API server in the background
+./target/release/api-server &
+
+echo ""
+echo "========================================"
+echo "Asteroids ZK API Server started!"
+echo "Port: 8080"
+echo "========================================"
+echo ""
+echo "To set up Cloudflare tunnel, run:"
+echo "  cloudflared service install <your-token>"
+echo ""

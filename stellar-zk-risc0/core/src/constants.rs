@@ -39,6 +39,18 @@ pub const ASTEROID_RADIUS_LARGE_Q12_4: u16 = 768; // 48 * 16
 pub const ASTEROID_RADIUS_MEDIUM_Q12_4: u16 = 448; // 28 * 16
 pub const ASTEROID_RADIUS_SMALL_Q12_4: u16 = 256; // 16 * 16
 
+// Asteroid speed ranges by size [min, max] in Q8.8
+// Based on TypeScript: large [34/60*256, 58/60*256] ≈ [145, 248]
+pub const ASTEROID_SPEED_LARGE_Q8_8: (i16, i16) = (145, 248);
+pub const ASTEROID_SPEED_MEDIUM_Q8_8: (i16, i16) = (265, 401);
+pub const ASTEROID_SPEED_SMALL_Q8_8: (i16, i16) = (418, 606);
+
+// Saucer score thresholds for small saucer probability
+pub const SAUCER_SMALL_PCT_BASE: u8 = 22; // 22% normally
+pub const SAUCER_SMALL_PCT_LURKING: u8 = 90; // 90% when lurking
+pub const SAUCER_SMALL_SCORE_THRESHOLD: u32 = 4000; // Above this, 70% small when not lurking
+pub const SAUCER_SMALL_PCT_HIGH_SCORE: u8 = 70;
+
 // Saucer constants
 pub const SAUCER_RADIUS_LARGE_Q12_4: u16 = 352; // 22 * 16
 pub const SAUCER_RADIUS_SMALL_Q12_4: u16 = 256; // 16 * 16

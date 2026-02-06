@@ -3,6 +3,14 @@ name = "host"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "host"
+path = "src/main.rs"
+
 [dependencies]
 methods = { path = "../methods" }
 risc0-zkvm = { version = "^3.0.5" }
@@ -10,3 +18,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0", features = ["derive"] }
 asteroids-core = { path = "../core" }
 clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+tracing = "0.1"
+
+[features]
+cuda = ["risc0-zkvm/cuda"]

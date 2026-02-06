@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["host", "methods", "core"]
+members = ["host", "methods", "core", "api-server"]
 
 [workspace.dependencies]
 asteroids-core = { path = "core" }

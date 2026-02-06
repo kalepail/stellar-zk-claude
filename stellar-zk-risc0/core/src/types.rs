@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Asteroid size enum
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AsteroidSize {
+    #[default]
     Large = 0,
     Medium = 1,
     Small = 2,
@@ -52,7 +53,7 @@ pub struct Bullet {
 }
 
 /// Asteroid state
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Asteroid {
     pub x: u16,    // Q12.4 position
     pub y: u16,    // Q12.4 position
@@ -143,7 +144,7 @@ pub struct GameState {
     pub saucer_bullets: Vec<Bullet>,
 }
 
-/// Public outputs committed to journal
+/// Public outputs committed to journal (legacy format for compatibility)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicOutput {
     pub seed: u32,
@@ -155,16 +156,41 @@ pub struct PublicOutput {
     pub verified: bool,
 }
 
-/// Verification error
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl PublicOutput {
+    /// Convert to new VerificationResult format
+    pub fn to_result(&self) -> VerificationResult {
+        VerificationResult {
+            ok: self.verified,
+            fail_frame: if self.verified {
+                None
+            } else {
+                Some(self.frame_count)
+            },
+            error: if self.verified {
+                None
+            } else {
+                Some(VerificationError {
+                    frame: self.frame_count,
+                    code: "VERIFICATION_FAILED".to_string(),
+                    message: "Verification failed".to_string(),
+                })
+            },
+            final_score: self.final_score,
+            final_rng_state: self.final_rng_state,
+        }
+    }
+}
+
+/// Verification error with detailed information
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VerificationError {
     pub frame: u32,
     pub code: String,
     pub message: String,
 }
 
-/// Verification result
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Verification result with detailed error information
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VerificationResult {
     pub ok: bool,
     pub fail_frame: Option<u32>,

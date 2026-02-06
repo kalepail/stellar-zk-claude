@@ -20,7 +20,8 @@ impl Rng {
     }
 
     /// Generate next random u32 using Xorshift32 algorithm
-    pub fn next(&mut self) -> u32 {
+    /// Note: Named `next_u32` to avoid confusion with Iterator::next
+    pub fn next_u32(&mut self) -> u32 {
         let mut x = self.state;
         x ^= x.wrapping_shl(13);
         x ^= x.wrapping_shr(17);
@@ -43,6 +44,12 @@ impl Rng {
             return min;
         }
         min + self.next_int(max - min)
+    }
+
+    /// Generate next random u32 (alias for next_u32)
+    /// This is the Xorshift32 core algorithm
+    pub fn next(&mut self) -> u32 {
+        self.next_u32()
     }
 
     /// Random boolean with given probability (0-1)

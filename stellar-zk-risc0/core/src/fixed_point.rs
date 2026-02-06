@@ -56,26 +56,31 @@ pub const COS_TABLE: [i16; 256] = [
 ];
 
 /// Get sine of BAM angle (result in Q0.14)
+#[inline(always)]
 pub fn sin_bam(angle: u8) -> i16 {
     SIN_TABLE[angle as usize]
 }
 
 /// Get cosine of BAM angle (result in Q0.14)
+#[inline(always)]
 pub fn cos_bam(angle: u8) -> i16 {
     COS_TABLE[angle as usize]
 }
 
 /// Add two Q12.4 values
+#[inline(always)]
 pub fn add_q12_4(a: u16, b: u16) -> u16 {
     a.wrapping_add(b)
 }
 
 /// Subtract two Q12.4 values
+#[inline(always)]
 pub fn sub_q12_4(a: u16, b: u16) -> u16 {
     a.wrapping_sub(b)
 }
 
 /// Multiply Q8.8 by Q0.14, result in Q8.8
+#[inline(always)]
 pub fn mul_q8_8_by_q0_14(a: i16, b: i16) -> i16 {
     // a is Q8.8, b is Q0.14
     // result needs to be Q8.8, so shift right by 14
@@ -83,12 +88,14 @@ pub fn mul_q8_8_by_q0_14(a: i16, b: i16) -> i16 {
 }
 
 /// Multiply two Q8.8 values, result in Q8.8
+#[inline(always)]
 pub fn mul_q8_8(a: i16, b: i16) -> i16 {
     // Result is Q16.16, shift right by 8 to get Q8.8
     ((a as i32 * b as i32) >> 8) as i16
 }
 
 /// Apply drag: multiply by 127/128 ≈ 0.992
+#[inline(always)]
 pub fn apply_drag_q8_8(v: i16) -> i16 {
     // v * 127 / 128 = v - v/128 = v - (v >> 7)
     v - (v >> 7)
@@ -96,16 +103,19 @@ pub fn apply_drag_q8_8(v: i16) -> i16 {
 
 /// Convert Q8.8 velocity to Q12.4 position delta
 /// Shifts right by 4 bits (divide by 16)
+#[inline(always)]
 pub fn vel_to_pos_delta(v: i16) -> i16 {
     v >> 4
 }
 
 /// Wrap position around world boundary (Q12.4)
+#[inline(always)]
 pub fn wrap_q12_4(val: u16, max: u16) -> u16 {
     val % max
 }
 
 /// Wrap signed delta for shortest path (toroidal distance)
+#[inline(always)]
 pub fn shortest_delta_q12_4(from: u16, to: u16, size: u16) -> i16 {
     let delta = to.wrapping_sub(from) as i16;
     let half = (size >> 1) as i16;
@@ -120,6 +130,7 @@ pub fn shortest_delta_q12_4(from: u16, to: u16, size: u16) -> i16 {
 }
 
 /// Calculate squared distance between two points (Q12.4 -> Q24.8)
+#[inline(always)]
 pub fn distance_sq_q12_4(ax: u16, ay: u16, bx: u16, by: u16) -> u32 {
     let dx = shortest_delta_q12_4(ax, bx, WORLD_WIDTH_Q12_4) as i32;
     let dy = shortest_delta_q12_4(ay, by, WORLD_HEIGHT_Q12_4) as i32;
@@ -129,6 +140,7 @@ pub fn distance_sq_q12_4(ax: u16, ay: u16, bx: u16, by: u16) -> u32 {
 }
 
 /// Clamp velocity to maximum speed
+#[inline(always)]
 pub fn clamp_speed_q8_8(vx: i16, vy: i16) -> (i16, i16) {
     let speed_sq = (vx as i32 * vx as i32 + vy as i32 * vy as i32) as u32;
 
@@ -153,8 +165,21 @@ pub fn clamp_speed_q8_8(vx: i16, vy: i16) -> (i16, i16) {
 }
 
 /// Add BAM angles with wrapping
+#[inline(always)]
 pub fn add_bam(a: u8, b: i8) -> u8 {
     (a as i16 + b as i16) as u8
+}
+
+/// Clamp value to range [min, max]
+#[inline(always)]
+pub fn clamp<T: Ord>(value: T, min: T, max: T) -> T {
+    if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    }
 }
 
 /// Compute atan2 for BAM angle (approximate)
@@ -191,21 +216,19 @@ pub fn atan2_bam(dy: i16, dx: i16) -> u8 {
                 -(128 - ratio)
             }
         }
-    } else {
-        if dy >= 0 {
-            // Quadrant 2
-            if abs_dx >= abs_dy {
-                256 - ratio
-            } else {
-                128 + ratio
-            }
+    } else if dy >= 0 {
+        // Quadrant 2
+        if abs_dx >= abs_dy {
+            256 - ratio
         } else {
-            // Quadrant 3
-            if abs_dx >= abs_dy {
-                256 + ratio
-            } else {
-                128 + (256 - ratio)
-            }
+            128 + ratio
+        }
+    } else {
+        // Quadrant 3
+        if abs_dx >= abs_dy {
+            256 + ratio
+        } else {
+            128 + (256 - ratio)
         }
     };
 
