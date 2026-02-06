@@ -8,6 +8,17 @@ use serde::{Deserialize, Serialize};
 
 pub const SEGMENT_LIMIT_PO2_DEFAULT: u32 = 21;
 
+/// Return the current VERIFY_TAPE_ID as a hex string (32 bytes, 64 hex chars).
+/// Each u32 word is encoded as little-endian, matching RISC Zero's Digest byte order.
+pub fn image_id_hex() -> String {
+    VERIFY_TAPE_ID
+        .as_words()
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 pub fn accelerator() -> &'static str {
     if cfg!(feature = "cuda") {
         "cuda"
