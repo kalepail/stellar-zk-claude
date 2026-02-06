@@ -18,7 +18,14 @@ the long-tail source index for provenance and follow-up exploration.
 
 ## RISC Zero and zkVM Deep Dives
 - https://dev.risczero.com/api/blockchain-integration/shrink-wrapping
+- https://dev.risczero.com/api/generating-proofs/dev-mode
+- https://dev.risczero.com/api/recursion
+- https://dev.risczero.com/api/secure-sdlc
 - https://dev.risczero.com/api/zkvm/benchmarks
+- https://dev.risczero.com/api/zkvm/debugging-with-gdb
+- https://dev.risczero.com/api/zkvm/optimization
+- https://dev.risczero.com/api/zkvm/precompiles
+- https://dev.risczero.com/api/zkvm/profiling
 - https://dev.risczero.com/proof-system-in-detail.pdf
 - https://docs.boundless.xyz
 - https://risczero.com/blog/RISCZero-formally-verified-zkvm

@@ -176,7 +176,7 @@ echo "Job ID: ${JOB_ID}"
 | `segment_limit_po2` | `19` | Segment size (2^n), range [16..22] |
 | `max_frames` | `18000` | Max game frames to replay |
 | `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
-| `verify_receipt` | `true` | Verify the receipt after generation |
+| `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
 
 ### Poll for completion
 
@@ -243,7 +243,6 @@ See `api-server/.env.example` for all options. Key variables:
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
 | `ALLOW_DEV_MODE_REQUESTS` | `false` | Allow `allow_dev_mode=true` query param |
-| `ALLOW_UNVERIFIED_RECEIPTS` | `false` | Allow `verify_receipt=false` query param |
 
 ## Connecting the Cloudflare Worker
 

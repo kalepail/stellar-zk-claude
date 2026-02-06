@@ -77,8 +77,8 @@ Prover concurrency is fixed at `1` in code.
 ## Security Defaults
 
 - `ALLOW_DEV_MODE_REQUESTS=false`
-- `ALLOW_UNVERIFIED_RECEIPTS=false`
 - `RISC0_DEV_MODE=0`
+- `verify_receipt` defaults to `false` (verification happens on-chain)
 
 These defaults keep proving in production-safe mode.
 

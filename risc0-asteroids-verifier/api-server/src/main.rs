@@ -29,7 +29,7 @@ const DEFAULT_JOB_SWEEP_SECS: u64 = 60;
 const DEFAULT_MAX_JOBS: usize = 64;
 const DEFAULT_RUNNING_JOB_TIMEOUT_SECS: u64 = 30 * 60;
 const DEFAULT_MIN_SEGMENT_LIMIT_PO2: u32 = 16;
-const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 22;
+const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 21;
 const DEFAULT_HTTP_MAX_CONNECTIONS: usize = 25_000;
 const DEFAULT_HTTP_KEEP_ALIVE_SECS: u64 = 75;
 
@@ -39,7 +39,6 @@ struct ServerPolicy {
     min_segment_limit_po2: u32,
     max_segment_limit_po2: u32,
     allow_dev_mode_requests: bool,
-    allow_unverified_receipts: bool,
 }
 
 impl ServerPolicy {
@@ -64,7 +63,6 @@ impl ServerPolicy {
             min_segment_limit_po2,
             max_segment_limit_po2,
             allow_dev_mode_requests: read_env_bool("ALLOW_DEV_MODE_REQUESTS", false),
-            allow_unverified_receipts: read_env_bool("ALLOW_UNVERIFIED_RECEIPTS", false),
         }
     }
 
@@ -92,10 +90,8 @@ impl ServerPolicy {
             return Err("allow_dev_mode is disabled by server policy".to_string());
         }
 
-        let verify_receipt = query.verify_receipt.unwrap_or(true);
-        if !verify_receipt && !self.allow_unverified_receipts {
-            return Err("verify_receipt=false is disabled by server policy".to_string());
-        }
+        // Default to false: verification happens on-chain, not server-side.
+        let verify_receipt = query.verify_receipt.unwrap_or(false);
 
         Ok(ProveOptions {
             max_frames,
@@ -667,7 +663,6 @@ mod tests {
             min_segment_limit_po2: DEFAULT_MIN_SEGMENT_LIMIT_PO2,
             max_segment_limit_po2: DEFAULT_MAX_SEGMENT_LIMIT_PO2,
             allow_dev_mode_requests: false,
-            allow_unverified_receipts: false,
         }
     }
 
@@ -714,18 +709,6 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.contains("allow_dev_mode"));
-    }
-
-    #[test]
-    fn policy_rejects_skip_verify_when_disabled() {
-        let policy = strict_policy();
-        let err = policy
-            .to_options(&ProveTapeQuery {
-                verify_receipt: Some(false),
-                ..Default::default()
-            })
-            .unwrap_err();
-        assert!(err.contains("verify_receipt=false"));
     }
 
     #[test]

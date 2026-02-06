@@ -6,7 +6,7 @@ use methods::{VERIFY_TAPE_ELF, VERIFY_TAPE_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Prover, ProverOpts, Receipt};
 use serde::{Deserialize, Serialize};
 
-pub const SEGMENT_LIMIT_PO2_DEFAULT: u32 = 19;
+pub const SEGMENT_LIMIT_PO2_DEFAULT: u32 = 21;
 
 pub fn accelerator() -> &'static str {
     if cfg!(feature = "cuda") {
