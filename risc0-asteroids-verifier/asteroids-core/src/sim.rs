@@ -14,8 +14,7 @@ use crate::constants::{
 };
 use crate::fixed_point::{
     apply_drag, atan2_bam, clamp_i32, clamp_speed_q8_8, collision_dist_sq_q12_4, cos_bam,
-    displace_q12_4, shortest_delta_q12_4, sin_bam, to_q12_4, velocity_q8_8, wrap_x_q12_4,
-    wrap_y_q12_4,
+    displace_q12_4, shortest_delta_q12_4, sin_bam, velocity_q8_8, wrap_x_q12_4, wrap_y_q12_4,
 };
 use crate::rng::SeededRng;
 use crate::tape::decode_input_byte;
@@ -91,6 +90,46 @@ pub struct ReplayResult {
     pub frame_count: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayCheckpoint {
+    pub frame_count: u32,
+    pub rng_state: u32,
+    pub score: u32,
+    pub lives: i32,
+    pub wave: i32,
+    pub asteroids: usize,
+    pub bullets: usize,
+    pub saucers: usize,
+    pub saucer_bullets: usize,
+    pub ship_x: i32,
+    pub ship_y: i32,
+    pub ship_vx: i32,
+    pub ship_vy: i32,
+    pub ship_angle: i32,
+    pub ship_can_control: bool,
+    pub ship_fire_cooldown: i32,
+    pub ship_respawn_timer: i32,
+    pub ship_invulnerable_timer: i32,
+}
+
+const SHIP_SPAWN_X_Q12_4: i32 = 7_680;
+const SHIP_SPAWN_Y_Q12_4: i32 = 5_760;
+const SHIP_RESPAWN_CLEAR_RADIUS_Q12_4: i32 = 1_920;
+const WAVE_SAFE_DIST_Q12_4: i32 = 2_880;
+const WAVE_SAFE_DIST_SQ_Q24_8: i32 = WAVE_SAFE_DIST_Q12_4 * WAVE_SAFE_DIST_Q12_4;
+
+const SAUCER_START_X_LEFT_Q12_4: i32 = -480;
+const SAUCER_START_X_RIGHT_Q12_4: i32 = 15_840;
+const SAUCER_START_Y_MIN_Q12_4: i32 = 1_152;
+const SAUCER_START_Y_MAX_Q12_4: i32 = 10_368;
+const SAUCER_CULL_MIN_X_Q12_4: i32 = -1_280;
+const SAUCER_CULL_MAX_X_Q12_4: i32 = 16_640;
+
+const ASTEROID_VEC_CAPACITY: usize = ASTEROID_CAP + 16;
+const SHIP_BULLET_VEC_CAPACITY: usize = SHIP_BULLET_LIMIT;
+const SAUCER_VEC_CAPACITY: usize = 4;
+const SAUCER_BULLET_VEC_CAPACITY: usize = 16;
+
 pub fn replay(seed: u32, inputs: &[u8]) -> ReplayResult {
     let mut game = Game::new(seed);
 
@@ -103,6 +142,48 @@ pub fn replay(seed: u32, inputs: &[u8]) -> ReplayResult {
         final_rng_state: game.rng.state(),
         frame_count: game.frame_count,
     }
+}
+
+pub fn replay_with_checkpoints(
+    seed: u32,
+    inputs: &[u8],
+    sample_every: u32,
+) -> Vec<ReplayCheckpoint> {
+    let mut game = Game::new(seed);
+    let stride = if sample_every == 0 { 1 } else { sample_every };
+    let total_frames = inputs.len() as u32;
+    let mut checkpoints = Vec::new();
+    checkpoints.push(game.checkpoint());
+
+    for (index, input) in inputs.iter().enumerate() {
+        game.step(*input);
+        let frame = (index + 1) as u32;
+        if frame.is_multiple_of(stride) || frame == total_frames {
+            checkpoints.push(game.checkpoint());
+        }
+    }
+
+    checkpoints
+}
+
+#[inline]
+fn max_saucers_for_wave(wave: i32) -> i32 {
+    if wave < 4 {
+        1
+    } else if wave < 7 {
+        2
+    } else {
+        3
+    }
+}
+
+#[inline]
+fn saucer_spawn_range_for_wave(wave: i32) -> (i32, i32) {
+    let wave_mult_pct = core::cmp::max(40, 100 - (wave - 1) * 8);
+    (
+        (SAUCER_SPAWN_MIN_FRAMES * wave_mult_pct) / 100,
+        (SAUCER_SPAWN_MAX_FRAMES * wave_mult_pct) / 100,
+    )
 }
 
 struct Game {
@@ -142,10 +223,10 @@ impl Game {
                 respawn_timer: 0,
                 invulnerable_timer: 0,
             },
-            asteroids: Vec::new(),
-            bullets: Vec::new(),
-            saucers: Vec::new(),
-            saucer_bullets: Vec::new(),
+            asteroids: Vec::with_capacity(ASTEROID_VEC_CAPACITY),
+            bullets: Vec::with_capacity(SHIP_BULLET_VEC_CAPACITY),
+            saucers: Vec::with_capacity(SAUCER_VEC_CAPACITY),
+            saucer_bullets: Vec::with_capacity(SAUCER_BULLET_VEC_CAPACITY),
             saucer_spawn_timer: 0,
             time_since_last_kill: 0,
             frame_count: 0,
@@ -155,12 +236,33 @@ impl Game {
         game.ship = game.create_ship();
         game.spawn_wave();
 
-        let wave_mult_pct = core::cmp::max(40, 100 - (game.wave - 1) * 8);
-        let spawn_min = (SAUCER_SPAWN_MIN_FRAMES * wave_mult_pct) / 100;
-        let spawn_max = (SAUCER_SPAWN_MAX_FRAMES * wave_mult_pct) / 100;
+        let (spawn_min, spawn_max) = saucer_spawn_range_for_wave(game.wave);
         game.saucer_spawn_timer = game.random_int(spawn_min, spawn_max);
 
         game
+    }
+
+    fn checkpoint(&self) -> ReplayCheckpoint {
+        ReplayCheckpoint {
+            frame_count: self.frame_count,
+            rng_state: self.rng.state(),
+            score: self.score,
+            lives: self.lives,
+            wave: self.wave,
+            asteroids: self.asteroids.len(),
+            bullets: self.bullets.len(),
+            saucers: self.saucers.len(),
+            saucer_bullets: self.saucer_bullets.len(),
+            ship_x: self.ship.x,
+            ship_y: self.ship.y,
+            ship_vx: self.ship.vx,
+            ship_vy: self.ship.vy,
+            ship_angle: self.ship.angle,
+            ship_can_control: self.ship.can_control,
+            ship_fire_cooldown: self.ship.fire_cooldown,
+            ship_respawn_timer: self.ship.respawn_timer,
+            ship_invulnerable_timer: self.ship.invulnerable_timer,
+        }
     }
 
     fn random_int(&mut self, min: i32, max_exclusive: i32) -> i32 {
@@ -169,8 +271,8 @@ impl Game {
 
     fn create_ship(&self) -> Ship {
         Ship {
-            x: to_q12_4(480),
-            y: to_q12_4(360),
+            x: SHIP_SPAWN_X_Q12_4,
+            y: SHIP_SPAWN_Y_Q12_4,
             vx: 0,
             vy: 0,
             angle: 192,
@@ -207,7 +309,7 @@ impl Game {
     }
 
     fn get_ship_spawn_point(&self) -> (i32, i32) {
-        (to_q12_4(480), to_q12_4(360))
+        (SHIP_SPAWN_X_Q12_4, SHIP_SPAWN_Y_Q12_4)
     }
 
     fn queue_ship_respawn(&mut self, delay_frames: i32) {
@@ -258,7 +360,7 @@ impl Game {
     fn try_spawn_ship_at_center(&mut self) -> bool {
         let (spawn_x, spawn_y) = self.get_ship_spawn_point();
 
-        if !self.is_ship_spawn_area_clear(spawn_x, spawn_y, 1920) {
+        if !self.is_ship_spawn_area_clear(spawn_x, spawn_y, SHIP_RESPAWN_CLEAR_RADIUS_Q12_4) {
             return false;
         }
 
@@ -279,14 +381,15 @@ impl Game {
 
         let large_count = core::cmp::min(16, 4 + (self.wave - 1) * 2);
         let (avoid_x, avoid_y) = self.get_ship_spawn_point();
-        let safe_dist_sq = 2880 * 2880;
 
         for _ in 0..large_count {
             let mut x = self.random_int(0, WORLD_WIDTH_Q12_4);
             let mut y = self.random_int(0, WORLD_HEIGHT_Q12_4);
             let mut guard = 0;
 
-            while collision_dist_sq_q12_4(x, y, avoid_x, avoid_y) < safe_dist_sq && guard < 20 {
+            while collision_dist_sq_q12_4(x, y, avoid_x, avoid_y) < WAVE_SAFE_DIST_SQ_Q24_8
+                && guard < 20
+            {
                 x = self.random_int(0, WORLD_WIDTH_Q12_4);
                 y = self.random_int(0, WORLD_HEIGHT_Q12_4);
                 guard += 1;
@@ -460,20 +563,11 @@ impl Game {
         } else {
             0
         };
-
-        let max_saucers = if self.wave < 4 {
-            1
-        } else if self.wave < 7 {
-            2
-        } else {
-            3
-        };
+        let max_saucers = max_saucers_for_wave(self.wave);
 
         if (self.saucers.len() as i32) < max_saucers && self.saucer_spawn_timer <= spawn_threshold {
             self.spawn_saucer();
-            let wave_mult_pct = core::cmp::max(40, 100 - (self.wave - 1) * 8);
-            let spawn_min = (SAUCER_SPAWN_MIN_FRAMES * wave_mult_pct) / 100;
-            let spawn_max = (SAUCER_SPAWN_MAX_FRAMES * wave_mult_pct) / 100;
+            let (spawn_min, spawn_max) = saucer_spawn_range_for_wave(self.wave);
             self.saucer_spawn_timer = if is_lurking {
                 self.random_int(
                     LURK_SAUCER_SPAWN_FAST_FRAMES,
@@ -494,7 +588,7 @@ impl Game {
                 saucer.x += saucer.vx >> 4;
                 saucer.y = wrap_y_q12_4(saucer.y + (saucer.vy >> 4));
 
-                if saucer.x < to_q12_4(-80) || saucer.x > to_q12_4(1_040) {
+                if saucer.x < SAUCER_CULL_MIN_X_Q12_4 || saucer.x > SAUCER_CULL_MAX_X_Q12_4 {
                     saucer.alive = false;
                     continue;
                 }
@@ -536,7 +630,7 @@ impl Game {
     }
 
     fn spawn_saucer(&mut self) {
-        let enter_from_left = self.rng.next() % 2 == 0;
+        let enter_from_left = self.rng.next().is_multiple_of(2);
         let is_lurking = self.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES;
         let small_pct = if is_lurking {
             90
@@ -552,8 +646,12 @@ impl Game {
             SAUCER_SPEED_LARGE_Q8_8
         };
 
-        let start_x = to_q12_4(if enter_from_left { -30 } else { 990 });
-        let start_y = self.random_int(to_q12_4(72), to_q12_4(648));
+        let start_x = if enter_from_left {
+            SAUCER_START_X_LEFT_Q12_4
+        } else {
+            SAUCER_START_X_RIGHT_Q12_4
+        };
+        let start_y = self.random_int(SAUCER_START_Y_MIN_Q12_4, SAUCER_START_Y_MAX_Q12_4);
         let vy = self.random_int(-94, 95);
         let fire_cooldown = self.random_int(18, 48);
         let drift_timer = self.random_int(48, 120);

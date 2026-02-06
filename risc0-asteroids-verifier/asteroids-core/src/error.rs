@@ -10,6 +10,7 @@ pub enum VerifyError {
     TapeLengthMismatch { expected: usize, actual: usize },
     ReservedInputBitsNonZero { frame: u32, byte: u8 },
     CrcMismatch { stored: u32, computed: u32 },
+    FrameCountMismatch { claimed: u32, computed: u32 },
     ScoreMismatch { claimed: u32, computed: u32 },
     RngMismatch { claimed: u32, computed: u32 },
 }
@@ -42,6 +43,12 @@ impl fmt::Display for VerifyError {
                 f,
                 "crc mismatch: stored=0x{stored:08x}, computed=0x{computed:08x}"
             ),
+            Self::FrameCountMismatch { claimed, computed } => {
+                write!(
+                    f,
+                    "frame-count mismatch: claimed={claimed}, computed={computed}"
+                )
+            }
             Self::ScoreMismatch { claimed, computed } => {
                 write!(f, "score mismatch: claimed={claimed}, computed={computed}")
             }

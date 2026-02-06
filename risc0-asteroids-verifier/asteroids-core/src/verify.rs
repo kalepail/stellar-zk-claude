@@ -35,6 +35,13 @@ pub fn verify_tape(bytes: &[u8], max_frames: u32) -> Result<VerificationJournal,
     let tape = parse_tape(bytes, max_frames)?;
     let replay_result = replay(tape.header.seed, tape.inputs);
 
+    if replay_result.frame_count != tape.header.frame_count {
+        return Err(VerifyError::FrameCountMismatch {
+            claimed: tape.header.frame_count,
+            computed: replay_result.frame_count,
+        });
+    }
+
     if replay_result.final_score != tape.footer.final_score {
         return Err(VerifyError::ScoreMismatch {
             claimed: tape.footer.final_score,
