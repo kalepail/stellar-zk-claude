@@ -1,0 +1,8 @@
+target/
+.git/
+*.tape
+test-fixtures/
+*.md
+.vscode/
+.idea/
+.DS_Store

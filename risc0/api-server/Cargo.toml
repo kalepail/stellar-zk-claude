@@ -1,27 +1,24 @@
 [package]
-name = "host"
+name = "api-server"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "host"
-path = "src/lib.rs"
-
 [[bin]]
-name = "host"
+name = "api-server"
 path = "src/main.rs"
 
 [dependencies]
-asteroids-core = { path = "../core" }
-methods = { path = "../methods" }
+host = { path = "../host" }
 risc0-zkvm = { version = "^3.0.3" }
+actix-web = "4.9"
+actix-rt = "2.10"
+actix-cors = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+base64 = "0.22"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
 
 [features]
-cycle-prof = ["methods/cycle-prof"]
-cuda = ["risc0-zkvm/cuda"]
+cuda = ["host/cuda"]

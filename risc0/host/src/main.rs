@@ -1,14 +1,12 @@
-//! ZK Host program: reads a .tape file, proves it inside the RISC Zero zkVM,
+//! ZK Host CLI: reads a .tape file, proves it inside the RISC Zero zkVM,
 //! and verifies the resulting receipt.
 //!
 //! Usage:
-//!   cargo run --release -- <tape-file>
-//!   RISC0_DEV_MODE=1 cargo run --release -- <tape-file>   (fast, no real proof)
+//!   cargo run --release -p host -- <tape-file>
+//!   RISC0_DEV_MODE=1 cargo run --release -p host -- <tape-file>
 
-use asteroids_core::deserialize_tape;
 use clap::Parser;
-use methods::{ASTEROIDS_VERIFY_ELF, ASTEROIDS_VERIFY_ID};
-use risc0_zkvm::{default_prover, ExecutorEnv};
+use risc0_zkvm::ReceiptKind;
 use std::fs;
 use std::time::Instant;
 
@@ -21,96 +19,44 @@ struct Args {
 }
 
 fn main() {
-    // Initialize tracing for RISC0 logging
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
 
     let args = Args::parse();
 
-    // Read and validate the tape file
     println!("Loading tape: {}", args.tape_file);
     let tape_bytes = fs::read(&args.tape_file)
         .unwrap_or_else(|e| panic!("Failed to read {}: {e}", args.tape_file));
 
-    let tape = deserialize_tape(&tape_bytes)
-        .expect("Failed to parse tape");
-
-    println!("  Seed:       0x{:08x}", tape.header.seed);
-    println!("  Frames:     {}", tape.header.frame_count);
-    println!("  Exp. Score: {}", tape.footer.final_score);
-    println!("  Exp. RNG:   0x{:08x}", tape.footer.final_rng_state);
-    println!();
-
-    // Quick local verification before proving (optional sanity check)
-    println!("Running local verification...");
-    let verify_start = Instant::now();
-    let (local_score, local_rng) = asteroids_core::replay_tape(tape.header.seed, &tape.inputs);
-    let verify_elapsed = verify_start.elapsed();
-    println!(
-        "  Local replay: score={local_score}, rng=0x{local_rng:08x} ({:.1}ms)",
-        verify_elapsed.as_secs_f64() * 1000.0
-    );
-    assert_eq!(local_score, tape.footer.final_score, "Local score mismatch");
-    assert_eq!(local_rng, tape.footer.final_rng_state, "Local RNG mismatch");
-    println!("  Local verification PASSED");
-    println!();
-
-    // Build the executor environment with the tape bytes as raw input.
-    // Using write_slice bypasses serde serialization, which otherwise inflates
-    // each u8 to a u32 word (4x overhead) inside the zkVM guest.
-    println!("Building executor environment...");
-    let tape_len = tape_bytes.len() as u32;
-    // Pad to word boundary for zkVM word-aligned reads
-    let mut padded_tape = tape_bytes.clone();
-    while padded_tape.len() % 4 != 0 {
-        padded_tape.push(0);
-    }
-    let env = ExecutorEnv::builder()
-        .write_slice(&tape_len.to_le_bytes())
-        .write_slice(&padded_tape)
-        .build()
-        .unwrap();
-
-    // Prove execution of the guest program
+    // Prove
     println!("Proving execution in zkVM...");
     let prove_start = Instant::now();
-    let prover = default_prover();
-    let prove_info = prover
-        .prove(env, ASTEROIDS_VERIFY_ELF)
+    let proof = host::prove_tape(&tape_bytes, ReceiptKind::Succinct)
         .expect("Proving failed");
     let prove_elapsed = prove_start.elapsed();
 
-    let receipt = prove_info.receipt;
-    println!(
-        "  Proving complete ({:.1}s)",
-        prove_elapsed.as_secs_f64()
-    );
-
-    // Extract public outputs from the journal
-    println!("  Journal size: {} bytes", receipt.journal.bytes.len());
-
-    // Decode journal: three u32s committed by the guest via env::commit()
-    let (proven_seed, proven_score, proven_frames): (u32, u32, u32) = receipt
-        .journal
-        .decode()
-        .expect("Failed to decode journal");
-
     println!();
     println!("=== PROVEN RESULTS ===");
-    println!("  Seed:       0x{proven_seed:08x}");
-    println!("  Score:      {proven_score}");
-    println!("  Frames:     {proven_frames}");
+    println!("  Seed:       0x{:08x}", proof.seed);
+    println!("  Score:      {}", proof.score);
+    println!("  Frames:     {}", proof.frame_count);
+    println!("  Receipt:    {}", proof.receipt_kind);
 
-    // Verify the receipt cryptographically
+    // Verify
     println!();
     println!("Verifying receipt...");
-    receipt
-        .verify(ASTEROIDS_VERIFY_ID)
-        .expect("Receipt verification failed");
+    host::verify_proof(&proof).expect("Receipt verification failed");
     println!("  Receipt verification PASSED");
 
     println!();
-    println!("SUCCESS: Score of {proven_score} proven for game seed 0x{proven_seed:08x}");
-    println!("         ({proven_frames} frames, {:.1}s proving time)", prove_elapsed.as_secs_f64());
+    println!(
+        "SUCCESS: Score of {} proven for game seed 0x{:08x}",
+        proof.score, proof.seed
+    );
+    println!(
+        "         ({} frames, {:.1}s proving time)",
+        proof.frame_count,
+        prove_elapsed.as_secs_f64()
+    );
 }
