@@ -21,7 +21,7 @@ use host::{
     accelerator, prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT,
 };
 use serde::{Deserialize, Serialize};
-use store::JobStore;
+use store::{EnqueueResult, JobStore};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
@@ -453,51 +453,24 @@ async fn enqueue_proof_job(
         error: None,
     };
 
-    match state.jobs.has_active_job() {
-        Ok(true) => {
+    match state.jobs.try_enqueue(&job, state.max_jobs) {
+        Ok(EnqueueResult::Inserted) => {}
+        Ok(EnqueueResult::ProverBusy) => {
             return json_error(
                 StatusCode::TOO_MANY_REQUESTS,
                 "prover is busy (single-flight mode): retry after the active job finishes",
             );
         }
-        Err(e) => {
-            tracing::error!("has_active_job failed: {e}");
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
-        }
-        _ => {}
-    }
-
-    match state.jobs.count() {
-        Ok(n) if n >= state.max_jobs => {
-            match state.jobs.evict_oldest_finished() {
-                Ok(Some(evict_id)) => {
-                    tracing::info!(job_id = %evict_id, "evicted oldest finished job to make room");
-                }
-                Ok(None) => {
-                    return json_error(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        format!(
-                            "job store is at capacity ({}) with no finished jobs to evict",
-                            state.max_jobs
-                        ),
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("evict_oldest_finished failed: {e}");
-                    return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
-                }
-            }
+        Ok(EnqueueResult::AtCapacity(cap)) => {
+            return json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("job store is at capacity ({cap}) with no finished jobs to evict"),
+            );
         }
         Err(e) => {
-            tracing::error!("count failed: {e}");
+            tracing::error!("try_enqueue failed: {e}");
             return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
         }
-        _ => {}
-    }
-
-    if let Err(e) = state.jobs.insert(&job) {
-        tracing::error!("insert job failed: {e}");
-        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
     }
 
     let state_for_task = state.get_ref().clone();
@@ -793,6 +766,24 @@ mod tests {
             .update_status(existing_job_id, JobStatus::Running, Some(now_unix_s()))
             .unwrap();
 
+        // The atomic try_enqueue should reject since there's an active job.
+        let new_job = ProofJob {
+            job_id: Uuid::new_v4(),
+            status: JobStatus::Queued,
+            created_at_unix_s: now_unix_s(),
+            started_at_unix_s: None,
+            finished_at_unix_s: None,
+            tape_size_bytes: 1,
+            options: options_summary(sample_options()),
+            result: None,
+            error: None,
+        };
+        assert!(matches!(
+            state.jobs.try_enqueue(&new_job, DEFAULT_MAX_JOBS).unwrap(),
+            store::EnqueueResult::ProverBusy
+        ));
+
+        // Also verify the HTTP handler rejects.
         let response = enqueue_proof_job(state, vec![1_u8], sample_options()).await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }

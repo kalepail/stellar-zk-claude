@@ -11,6 +11,16 @@ use uuid::Uuid;
 use crate::{now_unix_s, JobStatus, ProofEnvelope, ProofJob, ProveOptionsSummary};
 use host::{accelerator, ReceiptKind};
 
+/// Result of attempting to enqueue a new proof job.
+pub enum EnqueueResult {
+    /// Job inserted successfully.
+    Inserted,
+    /// Rejected: a job is already queued or running (single-flight mode).
+    ProverBusy,
+    /// Rejected: at capacity with no finished jobs to evict.
+    AtCapacity(usize),
+}
+
 /// SQLite-backed persistent job store.
 ///
 /// Proof results (the `ProofEnvelope` with receipt bytes) are stored as JSON
@@ -95,6 +105,78 @@ impl JobStore {
 
     pub fn insert(&self, job: &ProofJob) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
+        Self::insert_row(&conn, job)
+    }
+
+    /// Atomically check single-flight + capacity constraints, evict if needed,
+    /// and insert the new job — all under a single mutex acquisition.
+    ///
+    /// This eliminates the TOCTOU race where two concurrent requests could both
+    /// pass `has_active_job()` and both insert before either enters `running`.
+    pub fn try_enqueue(&self, job: &ProofJob, max_jobs: usize) -> Result<EnqueueResult, String> {
+        let evicted_path = {
+            let conn = self.conn.lock().unwrap();
+
+            // 1. Reject if a job is already active (single-flight guard).
+            let active: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("try_enqueue active check: {e}"))?;
+            if active > 0 {
+                return Ok(EnqueueResult::ProverBusy);
+            }
+
+            // 2. Evict oldest finished job if at capacity.
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+                .map_err(|e| format!("try_enqueue count: {e}"))?;
+
+            let mut evicted_path: Option<String> = None;
+            if count as usize >= max_jobs {
+                let row: Option<(String, Option<String>)> = conn
+                    .query_row(
+                        "SELECT job_id, result_path FROM jobs
+                         WHERE status IN ('succeeded', 'failed')
+                         ORDER BY COALESCE(finished_at, created_at) ASC
+                         LIMIT 1",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| format!("try_enqueue evict lookup: {e}"))?;
+
+                match row {
+                    Some((evict_id, result_path)) => {
+                        conn.execute(
+                            "DELETE FROM jobs WHERE job_id = ?1",
+                            params![evict_id],
+                        )
+                        .map_err(|e| format!("try_enqueue evict delete: {e}"))?;
+                        evicted_path = result_path;
+                        tracing::info!(evicted_job_id = %evict_id, "evicted oldest finished job to make room");
+                    }
+                    None => return Ok(EnqueueResult::AtCapacity(max_jobs)),
+                }
+            }
+
+            // 3. Insert the new job.
+            Self::insert_row(&conn, job)?;
+
+            evicted_path
+        };
+
+        // File cleanup outside the lock.
+        if let Some(ref path) = evicted_path {
+            let _ = fs::remove_file(path);
+        }
+
+        Ok(EnqueueResult::Inserted)
+    }
+
+    fn insert_row(conn: &Connection, job: &ProofJob) -> Result<(), String> {
         conn.execute(
             "INSERT INTO jobs (
                 job_id, status, created_at, started_at, finished_at,
@@ -605,6 +687,74 @@ mod tests {
         let evicted = store.evict_oldest_finished().unwrap();
         assert_eq!(evicted, Some(j1.job_id));
         assert_eq!(store.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn try_enqueue_rejects_when_active() {
+        let (store, _dir) = test_store();
+
+        let j1 = sample_job();
+        assert!(matches!(
+            store.try_enqueue(&j1, 64).unwrap(),
+            EnqueueResult::Inserted
+        ));
+
+        // Second enqueue should be rejected — j1 is still queued.
+        let j2 = sample_job();
+        assert!(matches!(
+            store.try_enqueue(&j2, 64).unwrap(),
+            EnqueueResult::ProverBusy
+        ));
+        assert_eq!(store.count().unwrap(), 1);
+
+        // Finish j1, then j2 should be accepted.
+        store.fail(j1.job_id, "done".into()).unwrap();
+        assert!(matches!(
+            store.try_enqueue(&j2, 64).unwrap(),
+            EnqueueResult::Inserted
+        ));
+        assert_eq!(store.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn try_enqueue_evicts_at_capacity() {
+        let (store, _dir) = test_store();
+        let max_jobs = 3;
+
+        // Fill to capacity with finished jobs.
+        for i in 0..max_jobs {
+            let mut j = sample_job();
+            j.created_at_unix_s = 1000 + i as u64;
+            store.insert(&j).unwrap();
+            store.fail(j.job_id, format!("err-{i}")).unwrap();
+        }
+        assert_eq!(store.count().unwrap(), max_jobs);
+
+        // Enqueue should evict the oldest and insert.
+        let new_job = sample_job();
+        assert!(matches!(
+            store.try_enqueue(&new_job, max_jobs).unwrap(),
+            EnqueueResult::Inserted
+        ));
+        // Count stays at max_jobs (evicted one, inserted one).
+        assert_eq!(store.count().unwrap(), max_jobs);
+    }
+
+    #[test]
+    fn try_enqueue_at_capacity_all_active_returns_at_capacity() {
+        let (store, _dir) = test_store();
+
+        // Insert one active job — capacity of 1.
+        let j1 = sample_job();
+        store.insert(&j1).unwrap();
+
+        // At capacity=1 with the active job, no finished jobs to evict →
+        // single-flight guard fires first (ProverBusy, not AtCapacity).
+        let j2 = sample_job();
+        assert!(matches!(
+            store.try_enqueue(&j2, 1).unwrap(),
+            EnqueueResult::ProverBusy
+        ));
     }
 
     #[test]
