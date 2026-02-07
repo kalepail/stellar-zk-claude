@@ -60,6 +60,9 @@ fi
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# shellcheck source=_prover-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_prover-helpers.sh"
+
 PASS=0
 FAIL=0
 WARN=0
@@ -71,30 +74,7 @@ fail() { FAIL=$((FAIL + 1)); TESTS_RUN=$((TESTS_RUN + 1)); echo "  FAIL: $1"; }
 warn() { WARN=$((WARN + 1)); echo "  WARN: $1"; }
 info() { echo "  INFO: $1"; }
 
-json_field() {
-  python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
-}
-
-json_field_nested() {
-  python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-keys = '$1'.split('.')
-for k in keys:
-    if isinstance(d, dict):
-        d = d.get(k, '')
-    else:
-        d = ''
-        break
-print(d)
-" 2>/dev/null
-}
-
-http_status_and_body() {
-  # Returns "BODY\nHTTP_STATUS" — caller splits them.
-  curl -s -w '\n%{http_code}' "$@"
-}
-
+# Override shared wait_for_idle to use info() for consistent stress-test formatting.
 wait_for_idle() {
   while true; do
     local h

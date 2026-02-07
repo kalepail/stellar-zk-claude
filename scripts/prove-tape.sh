@@ -31,7 +31,7 @@ shift 2
 SEG=21
 RECEIPT="composite"
 VERIFY="true"
-POLL=5
+POLL_INTERVAL=5
 KEEP=0
 
 while [[ $# -gt 0 ]]; do
@@ -39,11 +39,14 @@ while [[ $# -gt 0 ]]; do
     --seg) SEG="$2"; shift 2 ;;
     --receipt) RECEIPT="$2"; shift 2 ;;
     --no-verify) VERIFY="false"; shift ;;
-    --poll) POLL="$2"; shift 2 ;;
+    --poll) POLL_INTERVAL="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+# shellcheck source=_prover-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_prover-helpers.sh"
 
 if [[ ! -f "$TAPE_FILE" ]]; then
   echo "ERROR: tape file not found: $TAPE_FILE" >&2
@@ -96,28 +99,32 @@ health=$(curl -sf --connect-timeout 10 "$PROVER_URL/health" 2>/dev/null) || {
   echo "ERROR: prover unreachable at $PROVER_URL" >&2
   exit 1
 }
-running=$(echo "$health" | python3 -c "import sys,json; print(json.load(sys.stdin)['running_jobs'])")
+running=$(echo "$health" | json_field running_jobs)
 if [[ "$running" != "0" ]]; then
   echo "Waiting for prover to finish current job..."
-  while true; do
-    sleep "$POLL"
-    health=$(curl -sf --connect-timeout 5 "$PROVER_URL/health" 2>/dev/null) || continue
-    running=$(echo "$health" | python3 -c "import sys,json; print(json.load(sys.stdin)['running_jobs'])")
-    queued=$(echo "$health" | python3 -c "import sys,json; print(json.load(sys.stdin)['queued_jobs'])")
-    [[ "$running" == "0" && "$queued" == "0" ]] && break
-    echo "  still busy (running=$running, queued=$queued)..."
-  done
+  wait_for_idle
 fi
 
 # Submit.
 query="segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_receipt=${VERIFY}"
-resp=$(curl -sf -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
+resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
   --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream") || {
-  echo "ERROR: failed to submit tape" >&2
+  echo "ERROR: failed to connect to prover at $PROVER_URL" >&2
   exit 1
 }
+http_code=$(echo "$resp_raw" | tail -1)
+resp=$(echo "$resp_raw" | sed '$d')
 
-job_id=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job_id',''))")
+if [[ "$http_code" != "202" ]]; then
+  err=$(echo "$resp" | json_field error)
+  err_code=$(echo "$resp" | json_field error_code)
+  echo "ERROR: submit failed (HTTP $http_code)" >&2
+  [[ -n "$err_code" ]] && echo "  error_code: $err_code" >&2
+  [[ -n "$err" ]]      && echo "  error: $err" >&2
+  exit 1
+fi
+
+job_id=$(echo "$resp" | json_field job_id)
 if [[ -z "$job_id" ]]; then
   echo "ERROR: submission rejected: $resp" >&2
   exit 1
@@ -127,9 +134,9 @@ echo "Proving..."
 
 # Poll.
 while true; do
-  sleep "$POLL"
+  sleep "$POLL_INTERVAL"
   jr=$(curl -sf "${PROVER_URL}/api/jobs/${job_id}" 2>/dev/null) || { echo "  (poll error, retrying)"; continue; }
-  status=$(echo "$jr" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  status=$(echo "$jr" | json_field status)
 
   if [[ "$status" == "succeeded" ]]; then
     echo ""
@@ -143,8 +150,13 @@ while true; do
     exit 0
   elif [[ "$status" == "failed" ]]; then
     echo ""
-    err=$(echo "$jr" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))")
-    echo "FAILED: $err" >&2
+    err=$(echo "$jr" | json_field error)
+    err_code=$(echo "$jr" | json_field error_code)
+    if [[ -n "$err_code" ]]; then
+      echo "FAILED [$err_code]: $err" >&2
+    else
+      echo "FAILED: $err" >&2
+    fi
     if [[ "$KEEP" -eq 0 ]]; then
       curl -sf -X DELETE "${PROVER_URL}/api/jobs/${job_id}" > /dev/null 2>&1 || true
     fi
