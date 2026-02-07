@@ -23,16 +23,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTRACT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT_DIR="$(cd "$CONTRACT_DIR/.." && pwd)"
-FIXTURES_DIR="$ROOT_DIR/test-fixtures"
-WASM="$CONTRACT_DIR/target/wasm32v1-none/release/asteroids_score.wasm"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_helpers.sh"
 
-# Testnet RISC Zero contracts
-RISC0_ROUTER="CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD"
-RISC0_MOCK="CCKXGODVBNCGZZIKTU2DIPTXPVSLIG5Z67VYPAL4X5HVSED7VI4OD6A3"
+require_cmds stellar python3 xxd
 
-NETWORK="testnet"
 SKIP_DEPLOY=false
 RUN_GROTH16=false
 # Use unique key names per run to avoid token admin conflicts
@@ -74,13 +69,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Test assertions
 # ---------------------------------------------------------------------------
-info()  { echo -e "\033[1;34m==>\033[0m $*"; }
-ok()    { echo -e "\033[1;32m OK\033[0m $*"; }
-err()   { echo -e "\033[1;31mERR\033[0m $*" >&2; }
-warn()  { echo -e "\033[1;33mWRN\033[0m $*"; }
-
 assert_eq() {
   local label="$1" expected="$2" actual="$3"
   TOTAL=$((TOTAL + 1))
@@ -105,17 +95,9 @@ assert_fail() {
   fi
 }
 
-# Compute SHA-256 of raw bytes from hex string
-sha256_of_hex() {
-  echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
-}
-
-load_state() {
-  if [[ -f "$STATE_FILE" ]]; then
-    source "$STATE_FILE"
-  fi
-}
-
+# ---------------------------------------------------------------------------
+# State persistence
+# ---------------------------------------------------------------------------
 save_state() {
   cat > "$STATE_FILE" << EOF
 SCORE_CONTRACT_ID=$SCORE_CONTRACT_ID
@@ -126,34 +108,6 @@ IMAGE_ID_HEX=$IMAGE_ID_HEX
 EOF
 }
 
-# Read image_id from first available fixture (all fixtures share the same id)
-read_image_id() {
-  local id_file="$FIXTURES_DIR/proof-short-groth16.image_id"
-  if [[ ! -f "$id_file" ]]; then
-    err "Image ID fixture not found: $id_file"
-    err "Run: bun run scripts/generate-proof.ts first"
-    exit 1
-  fi
-  IMAGE_ID_HEX=$(tr -d '[:space:]' < "$id_file")
-}
-
-# Generate a mock seal via the testnet mock verifier contract.
-# Takes image_id_hex and journal_digest_hex, returns seal hex.
-mock_seal() {
-  local img_id="$1" jd="$2"
-  local result
-  result=$(stellar contract invoke -q \
-    --id "$RISC0_MOCK" \
-    --source "$DEPLOYER_NAME" \
-    --network "$NETWORK" \
-    -- \
-    mock_prove \
-    --image_id "$img_id" \
-    --journal_digest "$jd" 2>&1)
-  # Result is JSON: {"claim_digest":"...","seal":"..."}
-  echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['seal'])"
-}
-
 # ---------------------------------------------------------------------------
 # Deploy
 # ---------------------------------------------------------------------------
@@ -162,23 +116,8 @@ deploy() {
   (cd "$CONTRACT_DIR" && stellar contract build)
   ok "WASM built: $(wc -c < "$WASM" | tr -d ' ') bytes"
 
-  # Ensure deployer key exists
-  if ! stellar keys address "$DEPLOYER_NAME" &>/dev/null; then
-    info "Generating deployer key: $DEPLOYER_NAME"
-    stellar keys generate "$DEPLOYER_NAME" --network "$NETWORK" --fund
-    ok "Funded deployer"
-  else
-    info "Using existing deployer: $DEPLOYER_NAME"
-  fi
-
-  # Ensure player key exists (separate from deployer so we can mint tokens to it)
-  if ! stellar keys address "$PLAYER_NAME" &>/dev/null; then
-    info "Generating player key: $PLAYER_NAME"
-    stellar keys generate "$PLAYER_NAME" --network "$NETWORK" --fund
-    ok "Funded player"
-  else
-    info "Using existing player: $PLAYER_NAME"
-  fi
+  ensure_funded_key "$DEPLOYER_NAME"
+  ensure_funded_key "$PLAYER_NAME"
 
   DEPLOYER_ADDR=$(stellar keys address "$DEPLOYER_NAME")
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
@@ -227,7 +166,7 @@ deploy() {
     --network "$NETWORK" \
     -- \
     set_admin \
-    --new_admin "$SCORE_CONTRACT_ID" 2>&1 > /dev/null
+    --new_admin "$SCORE_CONTRACT_ID" >/dev/null 2>&1
   ok "Token admin transferred"
 
   # Player needs a trustline to hold the SCORE token
@@ -235,7 +174,7 @@ deploy() {
   stellar tx new change-trust \
     --source "$PLAYER_NAME" \
     --line "SCORE:$DEPLOYER_ADDR" \
-    --network "$NETWORK" 2>&1 > /dev/null
+    --network "$NETWORK" >/dev/null 2>&1
   ok "Player trustline created"
 
   save_state
@@ -456,7 +395,7 @@ deploy_groth16() {
     --network "$NETWORK" \
     -- \
     set_admin \
-    --new_admin "$GRF1_SCORE_CONTRACT_ID" 2>&1 > /dev/null
+    --new_admin "$GRF1_SCORE_CONTRACT_ID" >/dev/null 2>&1
   ok "GRF1 token admin transferred"
 
   # Player trustline for GRF1
@@ -464,7 +403,7 @@ deploy_groth16() {
   stellar tx new change-trust \
     --source "$PLAYER_NAME" \
     --line "GRF1:$DEPLOYER_ADDR" \
-    --network "$NETWORK" 2>&1 > /dev/null
+    --network "$NETWORK" >/dev/null 2>&1
   ok "Player GRF1 trustline created"
 
   echo ""
@@ -564,7 +503,7 @@ echo ""
 if [[ "$SKIP_DEPLOY" == false ]]; then
   deploy
 else
-  load_state
+  load_state "$STATE_FILE"
   read_image_id
   if [[ -z "${SCORE_CONTRACT_ID:-}" || -z "${TOKEN_ID:-}" ]]; then
     err "No deployment state found. Run without --skip-deploy first."

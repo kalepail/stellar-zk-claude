@@ -11,43 +11,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTRACT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT_DIR="$(cd "$CONTRACT_DIR/.." && pwd)"
-FIXTURES_DIR="$ROOT_DIR/test-fixtures"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_helpers.sh"
 
-# Testnet RISC Zero router
-RISC0_ROUTER="CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD"
-NETWORK="testnet"
+require_cmds stellar xxd
 
 # Need a funded key to sign the simulate-only invocation
-# Reuse any existing key or create a temporary one
 CALLER_NAME="ast-verify-caller"
 
 PASSED=0
 FAILED=0
 TOTAL=0
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-info()  { echo -e "\033[1;34m==>\033[0m $*"; }
-ok()    { echo -e "\033[1;32m OK\033[0m $*"; }
-err()   { echo -e "\033[1;31mERR\033[0m $*" >&2; }
-
-sha256_of_hex() {
-  echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
-}
-
-# ---------------------------------------------------------------------------
-# Ensure a caller key exists (needed even for --send=no)
-# ---------------------------------------------------------------------------
-ensure_caller() {
-  if ! stellar keys address "$CALLER_NAME" &>/dev/null; then
-    info "Generating caller key: $CALLER_NAME"
-    stellar keys generate "$CALLER_NAME" --network "$NETWORK" --fund
-    ok "Funded caller"
-  fi
-}
 
 # ---------------------------------------------------------------------------
 # Verify a single fixture
@@ -93,7 +67,7 @@ verify_fixture() {
     -- \
     verify \
     --image_id "$image_id_hex" \
-    --journal_digest "$journal_digest_hex" \
+    --journal "$journal_digest_hex" \
     --seal "$seal_hex" \
     2>&1) && exit_code=0 || exit_code=$?
 
@@ -116,7 +90,7 @@ echo "$(date)"
 echo "================================================"
 echo ""
 
-ensure_caller
+ensure_funded_key "$CALLER_NAME"
 echo ""
 
 verify_fixture "short tape"     "proof-short-groth16"

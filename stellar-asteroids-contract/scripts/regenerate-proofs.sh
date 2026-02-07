@@ -18,15 +18,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTRACT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT_DIR="$(cd "$CONTRACT_DIR/.." && pwd)"
-FIXTURES_DIR="$ROOT_DIR/test-fixtures"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_helpers.sh"
+
+require_cmds stellar bun curl xxd
+
 GENERATE_SCRIPT="$SCRIPT_DIR/generate-proof.ts"
-
-# Testnet RISC Zero router
-RISC0_ROUTER="CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD"
-NETWORK="testnet"
-
 CALLER_NAME="ast-regen-caller"
 
 PASSED=0
@@ -43,25 +40,6 @@ if [[ $# -lt 1 ]]; then
 fi
 
 PROVER_URL="$1"
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-info()  { echo -e "\033[1;34m==>\033[0m $*"; }
-ok()    { echo -e "\033[1;32m OK\033[0m $*"; }
-err()   { echo -e "\033[1;31mERR\033[0m $*" >&2; }
-
-sha256_of_hex() {
-  echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
-}
-
-ensure_caller() {
-  if ! stellar keys address "$CALLER_NAME" &>/dev/null; then
-    info "Generating caller key: $CALLER_NAME"
-    stellar keys generate "$CALLER_NAME" --network "$NETWORK" --fund
-    ok "Funded caller"
-  fi
-}
 
 # ---------------------------------------------------------------------------
 # Regenerate + verify a single fixture
@@ -107,7 +85,7 @@ regenerate_fixture() {
     -- \
     verify \
     --image_id "$image_id_hex" \
-    --journal_digest "$journal_digest_hex" \
+    --journal "$journal_digest_hex" \
     --seal "$seal_hex" \
     2>&1) && exit_code=0 || exit_code=$?
 
@@ -140,7 +118,7 @@ health=$(curl -sf "$PROVER_URL/health" 2>&1) || {
 echo "  $health"
 echo ""
 
-ensure_caller
+ensure_funded_key "$CALLER_NAME"
 echo ""
 
 regenerate_fixture "short tape"     "test-short.tape"     "proof-short-groth16"
