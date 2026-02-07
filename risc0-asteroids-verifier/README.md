@@ -53,11 +53,11 @@ The `VASTAI` script installs all dependencies (system packages, Rust, RISC Zero 
 curl -sSf https://raw.githubusercontent.com/kalepail/stellar-zk-claude/main/risc0-asteroids-verifier/VASTAI | bash
 ```
 
-Or if you prefer to clone first:
+Or if you prefer to clone first (note: set `WORKDIR` to match your clone path):
 
 ```bash
-git clone https://github.com/kalepail/stellar-zk-claude.git /workspace/stellar-zk
-bash /workspace/stellar-zk/risc0-asteroids-verifier/VASTAI
+git clone https://github.com/kalepail/stellar-zk-claude.git /workspace/stellar-zk-claude
+WORKDIR=/workspace/stellar-zk-claude bash /workspace/stellar-zk-claude/risc0-asteroids-verifier/VASTAI
 ```
 
 **Environment variables for the setup script:**
@@ -72,10 +72,10 @@ bash /workspace/stellar-zk/risc0-asteroids-verifier/VASTAI
 
 ### 3. Build the api-server
 
-SSH into your instance and build:
+SSH into your instance and build (replace the path with your actual `WORKDIR`):
 
 ```bash
-cd /workspace/stellar-zk/risc0-asteroids-verifier
+cd <WORKDIR>/risc0-asteroids-verifier
 
 # Default build (includes CUDA acceleration):
 cargo build --locked --release -p api-server
@@ -91,7 +91,7 @@ The release binary is at `target/release/api-server`.
 ### 4. Run the api-server
 
 ```bash
-cd /workspace/stellar-zk/risc0-asteroids-verifier
+cd <WORKDIR>/risc0-asteroids-verifier
 
 # Minimal (with API key auth):
 API_KEY='your-strong-random-secret' cargo run --release -p api-server
@@ -119,22 +119,27 @@ curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 The API server now intentionally aborts the process if a timed-out proof remains stuck after the grace window (`TIMED_OUT_PROOF_KILL_SECS`). Running under `systemd` ensures automatic recovery.
 
 ```bash
-cd /workspace/stellar-zk/risc0-asteroids-verifier
+cd <WORKDIR>/risc0-asteroids-verifier
 
 # 1) Install config + unit templates
 mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
 cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
-cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/risc0-asteroids-api.service
+cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
 
-# 2) Edit secrets/settings
+# 2) Update the service file paths to match your actual clone directory.
+#    The defaults assume /workspace/stellar-zk — edit WorkingDirectory and
+#    ExecStart if your clone is elsewhere (e.g. /workspace/stellar-zk-claude).
+nano /etc/systemd/system/risc0-asteroids-api.service
+
+# 3) Edit secrets/settings
 nano /etc/stellar-zk/api-server.env
 # Set API_KEY and any other overrides (PROD: keep RISC0_DEV_MODE=0)
 
-# 3) Enable + start service
+# 4) Enable + start service
 systemctl daemon-reload
 systemctl enable --now risc0-asteroids-api
 
-# 4) Inspect
+# 5) Inspect
 systemctl status risc0-asteroids-api --no-pager
 journalctl -u risc0-asteroids-api -f
 curl -s http://127.0.0.1:8080/health | jq

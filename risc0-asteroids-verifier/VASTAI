@@ -96,14 +96,16 @@ fi
 
 # ── Done ──────────────────────────────────────────────────────────────────
 
-cat <<'DONE'
+PROVER_DIR="${WORKDIR}/risc0-asteroids-verifier"
+
+cat <<EOF
 
 ========================================================================
   Environment setup complete.
 
   Next steps (from an SSH session):
 
-    cd /workspace/stellar-zk/risc0-asteroids-verifier
+    cd ${PROVER_DIR}
 
     # Build (CUDA enabled by default):
     cargo build --locked --release -p api-server
@@ -117,8 +119,13 @@ cat <<'DONE'
     # Recommended production mode (systemd supervisor):
     mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
     cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
-    cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/risc0-asteroids-api.service
+    cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
+
+    # IMPORTANT: Update WorkingDirectory and ExecStart in the service file
+    # to match your actual clone path (${PROVER_DIR}):
+    nano /etc/systemd/system/risc0-asteroids-api.service
     nano /etc/stellar-zk/api-server.env
+
     systemctl daemon-reload
     systemctl enable --now risc0-asteroids-api
     journalctl -u risc0-asteroids-api -f
@@ -131,4 +138,4 @@ cat <<'DONE'
 
   See risc0-asteroids-verifier/README.md for full documentation.
 ========================================================================
-DONE
+EOF

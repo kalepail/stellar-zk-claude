@@ -1,3 +1,7 @@
+# NOTE: Update WorkingDirectory and ExecStart below to match your actual
+# clone path.  The VASTAI script defaults to /workspace/stellar-zk, but a
+# manual `git clone` of the repo will use /workspace/stellar-zk-claude.
+
 [Unit]
 Description=RISC0 Asteroids Verifier API
 After=network-online.target

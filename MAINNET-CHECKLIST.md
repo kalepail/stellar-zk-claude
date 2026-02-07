@@ -283,6 +283,38 @@ Production readiness for the Vast.ai prover server.
       fetches latest. Pin specific versions.
 - [ ] **Use `cargo build --locked`** to ensure the `Cargo.lock` is respected
       and dependencies don't drift.
+- [ ] **Run the api-server under systemd** for automatic restart on crash. The
+      api-server intentionally aborts the process when a timed-out proof remains
+      stuck (see `TIMED_OUT_PROOF_KILL_SECS`). Running under systemd ensures
+      automatic recovery. The compiled binary is self-contained (no `cargo` or
+      RISC Zero CLI tools needed at runtime; CUDA libs are in system `ld` paths
+      on Vast.ai). Deploy files already exist at
+      `deploy/systemd/risc0-asteroids-api.service` and
+      `deploy/systemd/api-server.env.example`:
+      ```bash
+      # On the Vast.ai box via SSH:
+      cd <your-clone>/risc0-asteroids-verifier
+
+      # 1. Build first (the service runs the compiled binary, not cargo run)
+      cargo build --locked --release -p api-server
+
+      # 2. Install the systemd unit
+      mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
+      cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
+      cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
+
+      # 3. IMPORTANT: Edit BOTH files to match your actual clone path.
+      #    The service file defaults to /workspace/stellar-zk/ but a manual
+      #    git clone uses /workspace/stellar-zk-claude/. Update
+      #    WorkingDirectory and ExecStart in the .service file accordingly.
+      nano /etc/systemd/system/risc0-asteroids-api.service
+      nano /etc/stellar-zk/api-server.env   # set API_KEY and other config
+
+      # 4. Enable and start
+      systemctl daemon-reload
+      systemctl enable --now risc0-asteroids-api
+      journalctl -u risc0-asteroids-api -f  # verify it started
+      ```
 
 ---
 
@@ -378,12 +410,57 @@ Final verification before flipping the switch.
 
 ---
 
-## 12. Documentation & Legal
+## 12. Project Rename & Repository Migration
+
+The project will be renamed and moved to a new GitHub URL before mainnet.
+Directory names inside the repo may also change. Do this **before** deploying
+anything to mainnet so all deployed config points to the final names.
+
+- [ ] **Choose the new repo name and GitHub URL.** Update or redirect the
+      current `kalepail/stellar-zk-claude` repo.
+- [ ] **Rename / reorganize internal directories** as desired (e.g.
+      `risc0-asteroids-verifier/` → shorter name). After renaming, grep the
+      entire repo for stale path references — at minimum these files hardcode
+      paths today:
+      - `risc0-asteroids-verifier/VASTAI` — `REPO_URL`, `WORKDIR`,
+        "Next steps" output (line 106)
+      - `risc0-asteroids-verifier/deploy/systemd/risc0-asteroids-api.service`
+        — `WorkingDirectory`, `ExecStart`
+      - `risc0-asteroids-verifier/README.md` — clone URLs, paths
+      - `MAINNET-CHECKLIST.md` — references throughout
+- [ ] **Update `REPO_URL`** in the VASTAI script to the new GitHub URL.
+- [ ] **Update `WORKDIR`** in the VASTAI script and systemd service paths to
+      match the new directory layout.
+- [ ] **Update Cloudflare Tunnel config** if the tunnel name or origin path
+      references the old repo name.
+- [ ] **Update any CI, GitHub Actions, or deployment scripts** that reference
+      the old repo URL or directory structure.
+- [ ] **Set up a GitHub redirect** from the old repo URL if others have linked
+      to it (GitHub does this automatically for renames within the same owner).
+
+---
+
+## 13. Documentation & Legal
 
 - [ ] **Update all testnet references** in docs/ to note mainnet equivalents.
 - [ ] **Remove or `.gitignore` testnet state files**
       (`.testnet-state.env`, test deployer keys).
 - [ ] **Document mainnet contract addresses** for users and integrators.
+- [ ] **Review and update license files**. Currently the only project-owned
+      LICENSE file is `risc0-asteroids-verifier/LICENSE` (Apache 2.0 with
+      unfilled `[yyyy] [name of copyright owner]` boilerplate). Items to
+      address:
+      - Fill in the copyright year and owner in the existing Apache 2.0
+        LICENSE in `risc0-asteroids-verifier/`
+      - Add a root-level LICENSE for the overall project (frontend, worker,
+        scripts, docs)
+      - Add a LICENSE to `stellar-asteroids-contract/` (the Soroban contract
+        has none)
+      - Add `license` fields to `package.json` and the Rust `Cargo.toml`
+        workspace files (both are currently missing)
+      - Decide if all components should use the same license or if different
+        parts warrant different licenses (e.g. MIT for frontend, Apache 2.0
+        for prover)
 - [ ] **Review terms of service / disclaimer** for the game and token. Minting
       tokens based on game scores may have regulatory considerations depending
       on jurisdiction.
