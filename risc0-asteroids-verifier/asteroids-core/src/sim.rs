@@ -18,7 +18,7 @@ use crate::fixed_point::{
     displace_q12_4, shortest_delta_q12_4, sin_bam, velocity_q8_8, wrap_x_q12_4, wrap_y_q12_4,
 };
 use crate::rng::SeededRng;
-use crate::tape::{decode_input_byte, FrameInput};
+use crate::tape::{decode_input_byte, encode_input_byte, FrameInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GameMode {
@@ -117,6 +117,86 @@ pub struct ReplayCheckpoint {
 pub struct ReplayViolation {
     pub frame_count: u32,
     pub rule: RuleCode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShipSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub vx: i32,
+    pub vy: i32,
+    pub angle: i32,
+    pub radius: i32,
+    pub can_control: bool,
+    pub fire_cooldown: i32,
+    pub respawn_timer: i32,
+    pub invulnerable_timer: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsteroidSizeSnapshot {
+    Large,
+    Medium,
+    Small,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AsteroidSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub vx: i32,
+    pub vy: i32,
+    pub angle: i32,
+    pub alive: bool,
+    pub radius: i32,
+    pub size: AsteroidSizeSnapshot,
+    pub spin: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BulletSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub vx: i32,
+    pub vy: i32,
+    pub alive: bool,
+    pub radius: i32,
+    pub life: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaucerSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub vx: i32,
+    pub vy: i32,
+    pub alive: bool,
+    pub radius: i32,
+    pub small: bool,
+    pub fire_cooldown: i32,
+    pub drift_timer: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorldSnapshot {
+    pub frame_count: u32,
+    pub score: u32,
+    pub lives: i32,
+    pub wave: i32,
+    pub is_game_over: bool,
+    pub rng_state: u32,
+    pub saucer_spawn_timer: i32,
+    pub time_since_last_kill: i32,
+    pub next_extra_life_score: u32,
+    pub ship: ShipSnapshot,
+    pub asteroids: Vec<AsteroidSnapshot>,
+    pub bullets: Vec<BulletSnapshot>,
+    pub saucers: Vec<SaucerSnapshot>,
+    pub saucer_bullets: Vec<BulletSnapshot>,
+}
+
+pub struct LiveGame {
+    game: Game,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,6 +476,60 @@ pub fn replay_with_checkpoints(
     checkpoints
 }
 
+impl LiveGame {
+    pub fn new(seed: u32) -> Self {
+        Self {
+            game: Game::new(seed),
+        }
+    }
+
+    #[inline]
+    pub fn step(&mut self, input_byte: u8) {
+        self.game.step(input_byte);
+    }
+
+    pub fn can_step_strict(&self, input_byte: u8) -> Result<(), RuleCode> {
+        let before_step = self.game.transition_state();
+        let mut next = self.game.clone();
+        next.step(input_byte);
+        let after_step = next.transition_state();
+
+        validate_transition(&before_step, &after_step, input_byte)?;
+        next.validate_invariants()?;
+        Ok(())
+    }
+
+    pub fn step_checked(&mut self, input_byte: u8) -> Result<(), RuleCode> {
+        self.can_step_strict(input_byte)?;
+        self.game.step(input_byte);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn step_input(&mut self, input: FrameInput) {
+        self.step(encode_input_byte(input));
+    }
+
+    #[inline]
+    pub fn snapshot(&self) -> WorldSnapshot {
+        self.game.world_snapshot()
+    }
+
+    #[inline]
+    pub fn result(&self) -> ReplayResult {
+        ReplayResult {
+            final_score: self.game.score,
+            final_rng_state: self.game.rng.state(),
+            frame_count: self.game.frame_count,
+        }
+    }
+
+    #[inline]
+    pub fn validate(&self) -> Result<(), RuleCode> {
+        self.game.validate_invariants()
+    }
+}
+
 #[inline]
 fn max_saucers_for_wave(wave: i32) -> i32 {
     if wave < 4 {
@@ -421,6 +555,7 @@ fn in_world_bounds_q12_4(x: i32, y: i32) -> bool {
     (0..WORLD_WIDTH_Q12_4).contains(&x) && (0..WORLD_HEIGHT_Q12_4).contains(&y)
 }
 
+#[derive(Clone)]
 struct Game {
     mode: GameMode,
     score: u32,
@@ -497,6 +632,106 @@ impl Game {
             ship_fire_cooldown: self.ship.fire_cooldown,
             ship_respawn_timer: self.ship.respawn_timer,
             ship_invulnerable_timer: self.ship.invulnerable_timer,
+        }
+    }
+
+    fn world_snapshot(&self) -> WorldSnapshot {
+        WorldSnapshot {
+            frame_count: self.frame_count,
+            score: self.score,
+            lives: self.lives,
+            wave: self.wave,
+            is_game_over: matches!(self.mode, GameMode::GameOver),
+            rng_state: self.rng.state(),
+            saucer_spawn_timer: self.saucer_spawn_timer,
+            time_since_last_kill: self.time_since_last_kill,
+            next_extra_life_score: self.next_extra_life_score,
+            ship: Self::ship_snapshot(self.ship),
+            asteroids: self
+                .asteroids
+                .iter()
+                .map(|entry| Self::asteroid_snapshot(*entry))
+                .collect(),
+            bullets: self
+                .bullets
+                .iter()
+                .map(|entry| Self::bullet_snapshot(*entry))
+                .collect(),
+            saucers: self
+                .saucers
+                .iter()
+                .map(|entry| Self::saucer_snapshot(*entry))
+                .collect(),
+            saucer_bullets: self
+                .saucer_bullets
+                .iter()
+                .map(|entry| Self::bullet_snapshot(*entry))
+                .collect(),
+        }
+    }
+
+    #[inline]
+    fn ship_snapshot(ship: Ship) -> ShipSnapshot {
+        ShipSnapshot {
+            x: ship.x,
+            y: ship.y,
+            vx: ship.vx,
+            vy: ship.vy,
+            angle: ship.angle,
+            radius: ship.radius,
+            can_control: ship.can_control,
+            fire_cooldown: ship.fire_cooldown,
+            respawn_timer: ship.respawn_timer,
+            invulnerable_timer: ship.invulnerable_timer,
+        }
+    }
+
+    #[inline]
+    fn asteroid_snapshot(asteroid: Asteroid) -> AsteroidSnapshot {
+        let size = match asteroid.size {
+            AsteroidSize::Large => AsteroidSizeSnapshot::Large,
+            AsteroidSize::Medium => AsteroidSizeSnapshot::Medium,
+            AsteroidSize::Small => AsteroidSizeSnapshot::Small,
+        };
+
+        AsteroidSnapshot {
+            x: asteroid.x,
+            y: asteroid.y,
+            vx: asteroid.vx,
+            vy: asteroid.vy,
+            angle: asteroid.angle,
+            alive: asteroid.alive,
+            radius: asteroid.radius,
+            size,
+            spin: asteroid.spin,
+        }
+    }
+
+    #[inline]
+    fn bullet_snapshot(bullet: Bullet) -> BulletSnapshot {
+        BulletSnapshot {
+            x: bullet.x,
+            y: bullet.y,
+            vx: bullet.vx,
+            vy: bullet.vy,
+            alive: bullet.alive,
+            radius: bullet.radius,
+            life: bullet.life,
+        }
+    }
+
+    #[inline]
+    fn saucer_snapshot(saucer: Saucer) -> SaucerSnapshot {
+        SaucerSnapshot {
+            x: saucer.x,
+            y: saucer.y,
+            vx: saucer.vx,
+            vy: saucer.vy,
+            alive: saucer.alive,
+            radius: saucer.radius,
+            small: saucer.small,
+            fire_cooldown: saucer.fire_cooldown,
+            drift_timer: saucer.drift_timer,
         }
     }
 
@@ -1352,6 +1587,61 @@ mod tests {
             let strict = replay_strict(seed, &inputs).expect("strict replay should succeed");
             assert_eq!(regular, strict);
         }
+    }
+
+    #[test]
+    fn live_game_result_matches_replay_for_same_inputs() {
+        let seed = 0xA11C_E123;
+        let inputs = [0x00u8, 0x08, 0x08, 0x01, 0x04, 0x02, 0x00, 0x0C, 0x00, 0x03];
+        let expected = replay(seed, &inputs);
+
+        let mut live = LiveGame::new(seed);
+        for input in inputs {
+            live.step(input);
+        }
+
+        assert_eq!(live.result(), expected);
+        live.validate().expect("live game must remain valid");
+    }
+
+    #[test]
+    fn live_game_snapshot_counts_match_initial_checkpoint() {
+        let seed = 0xDEAD_BEEF;
+        let snapshot = LiveGame::new(seed).snapshot();
+        let checkpoints = replay_with_checkpoints(seed, &[], 1);
+        let initial = checkpoints.first().expect("initial checkpoint exists");
+
+        assert_eq!(snapshot.frame_count, initial.frame_count);
+        assert_eq!(snapshot.score, initial.score);
+        assert_eq!(snapshot.lives, initial.lives);
+        assert_eq!(snapshot.wave, initial.wave);
+        assert_eq!(snapshot.rng_state, initial.rng_state);
+        assert_eq!(snapshot.asteroids.len(), initial.asteroids);
+        assert_eq!(snapshot.bullets.len(), initial.bullets);
+        assert_eq!(snapshot.saucers.len(), initial.saucers);
+        assert_eq!(snapshot.saucer_bullets.len(), initial.saucer_bullets);
+        assert_eq!(snapshot.ship.x, initial.ship_x);
+        assert_eq!(snapshot.ship.y, initial.ship_y);
+        assert_eq!(snapshot.ship.vx, initial.ship_vx);
+        assert_eq!(snapshot.ship.vy, initial.ship_vy);
+        assert_eq!(snapshot.ship.angle, initial.ship_angle);
+    }
+
+    #[test]
+    fn checked_step_accepts_verified_fixture_inputs() {
+        let bytes = fs::read("../../test-fixtures/test-medium.tape")
+            .expect("fixture should load for checked-step test");
+        let tape = parse_tape(&bytes, 18_000).expect("fixture should parse for checked-step test");
+
+        let mut live = LiveGame::new(tape.header.seed);
+        for input in tape.inputs {
+            live.step_checked(*input)
+                .expect("fixture transitions should pass checked-step");
+        }
+
+        let strict = replay_strict(tape.header.seed, tape.inputs)
+            .expect("fixture should pass strict replay");
+        assert_eq!(live.result(), strict);
     }
 
     #[test]
