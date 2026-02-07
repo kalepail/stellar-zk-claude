@@ -113,10 +113,11 @@ export async function handleQueueBatch(
 ): Promise<void> {
   // Processing one message at a time is intentional. Each message corresponds
   // to the single active proof slot and must avoid concurrent dispatch/polling.
-  // eslint-disable-next-line no-await-in-loop
+  /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
     await processQueueMessage(message, env);
   }
+  /* eslint-enable no-await-in-loop */
 }
 
 /**
@@ -130,7 +131,7 @@ export async function handleDlqBatch(
   env: WorkerEnv,
 ): Promise<void> {
   // Sequential processing is intentional — each message must finish before the next.
-  // eslint-disable-next-line no-await-in-loop
+  /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
     const payload = message.body;
     if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
@@ -139,11 +140,9 @@ export async function handleDlqBatch(
     }
 
     const coordinator = coordinatorStub(env);
-    // eslint-disable-next-line no-await-in-loop
     const job = await coordinator.getJob(payload.jobId);
 
     if (job && !isTerminalProofStatus(job.status)) {
-      // eslint-disable-next-line no-await-in-loop
       await coordinator.markFailed(
         payload.jobId,
         "proof job failed: all queue delivery attempts exhausted (dead-letter)",
@@ -152,4 +151,5 @@ export async function handleDlqBatch(
 
     message.ack();
   }
+  /* eslint-enable no-await-in-loop */
 }

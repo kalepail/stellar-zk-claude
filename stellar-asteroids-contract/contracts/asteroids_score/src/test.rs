@@ -4,8 +4,8 @@ use crate::{
     AsteroidsScoreContract, AsteroidsScoreContractArgs, AsteroidsScoreContractClient, ScoreError,
 };
 use soroban_sdk::{
-    testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address, Bytes,
-    BytesN, Env,
+    testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address, Bytes, BytesN,
+    Env,
 };
 
 // ---------------------------------------------------------------------------
@@ -19,12 +19,7 @@ mod mock_router_ok {
 
     #[contractimpl]
     impl MockRouter {
-        pub fn verify(
-            _env: Env,
-            _seal: Bytes,
-            _image_id: BytesN<32>,
-            _journal: BytesN<32>,
-        ) {
+        pub fn verify(_env: Env, _seal: Bytes, _image_id: BytesN<32>, _journal: BytesN<32>) {
             // Always succeeds
         }
     }

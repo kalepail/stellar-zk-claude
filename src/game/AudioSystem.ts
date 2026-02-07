@@ -97,18 +97,19 @@ export class AudioSystem {
 
   playExtraLife(): void {
     if (!this.enabled || !this.ctx) return;
+    const ctx = this.ctx;
     const notes = [523.25, 659.25, 783.99, 1046.5];
     notes.forEach((freq, i) => {
-      const osc = this.ctx!.createOscillator();
-      const gain = this.ctx!.createGain();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
-      gain.connect(this.ctx!.destination);
+      gain.connect(ctx.destination);
       osc.type = "square";
-      osc.frequency.setValueAtTime(freq, this.ctx!.currentTime + i * 0.08);
-      gain.gain.setValueAtTime(this.volume * 0.25, this.ctx!.currentTime + i * 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx!.currentTime + i * 0.08 + 0.2);
-      osc.start(this.ctx!.currentTime + i * 0.08);
-      osc.stop(this.ctx!.currentTime + i * 0.08 + 0.2);
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.08);
+      gain.gain.setValueAtTime(this.volume * 0.25, ctx.currentTime + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.08 + 0.2);
+      osc.start(ctx.currentTime + i * 0.08);
+      osc.stop(ctx.currentTime + i * 0.08 + 0.2);
     });
   }
 

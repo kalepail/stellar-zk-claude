@@ -43,8 +43,8 @@ async function readRequestBodyWithLimit(
   let totalSize = 0;
 
   try {
+    /* eslint-disable no-await-in-loop */
     while (true) {
-      // eslint-disable-next-line no-await-in-loop
       const { done, value } = await reader.read();
       if (done) {
         break;
@@ -61,6 +61,7 @@ async function readRequestBodyWithLimit(
       }
       chunks.push(value);
     }
+    /* eslint-enable no-await-in-loop */
   } finally {
     reader.releaseLock();
   }

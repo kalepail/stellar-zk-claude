@@ -126,16 +126,17 @@ export async function submitToProver(
   }
 
   if (response.status === 429 || response.status >= 500) {
-    let errorCode: string | undefined;
+    let errorBody: ProverErrorResponse | undefined;
     try {
-      const body = (await response.json()) as ProverErrorResponse;
-      errorCode = body.error_code;
+      errorBody = (await response.json()) as ProverErrorResponse;
     } catch {
       // Ignore parse errors.
     }
+    const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
+    const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
     return {
       type: "retry",
-      message: `prover create endpoint returned ${response.status}${errorCode ? ` (${errorCode})` : ""}`,
+      message: `prover create endpoint returned ${response.status}${codePart}${detailPart}`,
     };
   }
 
@@ -196,7 +197,7 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
   const absoluteDeadline = Date.now() + pollTimeoutMs;
 
   // Polling is intentionally sequential to preserve strict single-job semantics.
-  // eslint-disable-next-line no-await-in-loop
+  /* eslint-disable no-await-in-loop */
   while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
     let response: Response;
     try {
@@ -216,9 +217,17 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
     }
 
     if (response.status === 429 || response.status >= 500) {
+      let errorBody: ProverErrorResponse | undefined;
+      try {
+        errorBody = (await response.json()) as ProverErrorResponse;
+      } catch {
+        // Ignore parse errors.
+      }
+      const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
+      const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
       return {
         type: "retry",
-        message: `prover status endpoint returned ${response.status}`,
+        message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
       };
     }
 
@@ -236,7 +245,6 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
     if (!response.ok) {
       let detail = "";
       try {
-        // eslint-disable-next-line no-await-in-loop
         detail = await response.text();
       } catch {
         // Ignore parse errors.
@@ -250,7 +258,6 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
 
     let payload: ProverGetJobResponse;
     try {
-      // eslint-disable-next-line no-await-in-loop
       payload = await parseJson<ProverGetJobResponse>(response);
     } catch (error) {
       return {
@@ -262,8 +269,9 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
     if (payload.status === "succeeded") {
       if (!payload.result?.proof || !payload.result.proof.journal || !payload.result.proof.stats) {
         return {
-          type: "fatal",
-          message: "prover reported success but result payload was incomplete",
+          type: "retry",
+          message: "prover reported success but result payload was incomplete; will re-submit",
+          clearProverJob: true,
         };
       }
       return {
@@ -280,9 +288,12 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
           clearProverJob: true,
         };
       }
+      const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
       return {
         type: "fatal",
-        message: payload.error ?? "prover marked job as failed",
+        message: payload.error
+          ? `prover marked job as failed${codePart}: ${payload.error}`
+          : `prover marked job as failed${codePart}`,
       };
     }
 
@@ -300,9 +311,9 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
       };
     }
 
-    // eslint-disable-next-line no-await-in-loop
     await sleep(pollIntervalMs);
   }
+  /* eslint-enable no-await-in-loop */
 
   return {
     type: "running",

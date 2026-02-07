@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -36,7 +37,8 @@ impl JobStore {
     /// Open (or create) the SQLite database and results directory.
     ///
     /// On startup, any jobs left as `queued` or `running` from a previous crash
-    /// are marked `failed` with error "server restarted".
+    /// are marked `failed` with error "server restarted". Result files in the
+    /// `results/` directory that are not referenced by any DB row are removed.
     pub fn open(data_dir: &Path) -> Result<Self, String> {
         fs::create_dir_all(data_dir)
             .map_err(|e| format!("failed to create data dir {}: {e}", data_dir.display()))?;
@@ -92,6 +94,11 @@ impl JobStore {
             tracing::warn!(recovered, "marked orphaned queued/running jobs as failed");
         }
 
+        let orphans = store.cleanup_orphan_results()?;
+        if orphans > 0 {
+            tracing::warn!(orphans, "removed orphaned result files");
+        }
+
         Ok(store)
     }
 
@@ -106,6 +113,106 @@ impl JobStore {
             params![now as i64],
         )
         .map_err(|e| format!("recover_on_startup failed: {e}"))
+    }
+
+    /// Extract a safe result filename from the DB value.
+    ///
+    /// Accepts both current values (`{job_id}.json`) and legacy absolute paths.
+    fn result_filename_from_db_value(value: &str) -> Result<String, String> {
+        let filename = Path::new(value)
+            .file_name()
+            .ok_or_else(|| format!("invalid result_path without filename: {value}"))?
+            .to_string_lossy()
+            .into_owned();
+
+        if filename.is_empty() {
+            return Err("invalid result_path with empty filename".to_string());
+        }
+        if !filename.ends_with(".json") {
+            return Err(format!(
+                "invalid result_path extension (expected .json): {value}"
+            ));
+        }
+
+        Ok(filename)
+    }
+
+    fn result_path_from_db_value(&self, value: &str) -> Result<PathBuf, String> {
+        let filename = Self::result_filename_from_db_value(value)?;
+        Ok(self.results_dir.join(filename))
+    }
+
+    /// Best-effort cleanup of a stored result file path.
+    fn remove_result_file_best_effort(&self, stored_path: &str) {
+        match self.result_path_from_db_value(stored_path) {
+            Ok(path) => {
+                let _ = fs::remove_file(path);
+            }
+            Err(e) => tracing::warn!("skipping result file cleanup for invalid path: {e}"),
+        }
+    }
+
+    /// Remove result files from disk that are not referenced by any DB row.
+    ///
+    /// Catches files orphaned by a crash between `fs::write` in `complete()`
+    /// and the subsequent SQLite UPDATE, as well as files left behind by any
+    /// cleanup path (`delete`, `sweep`, `try_enqueue` eviction) that silently
+    /// failed to remove the file on disk.
+    fn cleanup_orphan_results(&self) -> Result<usize, String> {
+        let referenced: HashSet<String> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT result_path FROM jobs WHERE result_path IS NOT NULL")
+                .map_err(|e| format!("orphan cleanup: query failed: {e}"))?;
+            let mut set = HashSet::new();
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("orphan cleanup: iteration failed: {e}"))?;
+
+            for row in rows {
+                let stored_path =
+                    row.map_err(|e| format!("orphan cleanup: row decode failed: {e}"))?;
+                let filename = match Self::result_filename_from_db_value(&stored_path) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::warn!(
+                            "orphan cleanup disabled due to invalid result_path value: {e}"
+                        );
+                        return Ok(0);
+                    }
+                };
+                set.insert(filename);
+            }
+
+            set
+        };
+
+        let entries = match fs::read_dir(&self.results_dir) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("orphan cleanup: failed to read results dir: {e}");
+                return Ok(0);
+            }
+        };
+
+        let mut removed = 0usize;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.ends_with(".json") && !referenced.contains(name_str.as_ref()) {
+                match fs::remove_file(entry.path()) {
+                    Ok(()) => {
+                        tracing::info!(file = %name_str, "removed orphaned result file");
+                        removed += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(file = %name_str, "failed to remove orphaned result file: {e}");
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
     }
 
     #[cfg(test)]
@@ -173,7 +280,7 @@ impl JobStore {
 
         // File cleanup outside the lock.
         if let Some(ref path) = evicted_path {
-            let _ = fs::remove_file(path);
+            self.remove_result_file_best_effort(path);
         }
 
         Ok(EnqueueResult::Inserted)
@@ -274,7 +381,8 @@ impl JobStore {
 
     /// Mark a job as succeeded and write the result envelope to disk as JSON.
     pub fn complete(&self, job_id: Uuid, result: ProofEnvelope) -> Result<(), String> {
-        let result_path = self.results_dir.join(format!("{job_id}.json"));
+        let filename = format!("{job_id}.json");
+        let result_path = self.results_dir.join(&filename);
         let json =
             serde_json::to_vec(&result).map_err(|e| format!("failed to serialize result: {e}"))?;
         fs::write(&result_path, json).map_err(|e| format!("failed to write result file: {e}"))?;
@@ -284,11 +392,7 @@ impl JobStore {
             "UPDATE jobs SET status = 'succeeded', finished_at = ?1, result_path = ?2,
                     error = NULL, error_code = NULL
              WHERE job_id = ?3",
-            params![
-                now_unix_s() as i64,
-                result_path.to_string_lossy().as_ref(),
-                job_id.to_string()
-            ],
+            params![now_unix_s() as i64, filename, job_id.to_string()],
         )
         .map_err(|e| format!("complete job failed: {e}"))?;
         Ok(())
@@ -332,7 +436,7 @@ impl JobStore {
         // Clean up result file outside the lock.
         if deleted > 0 {
             if let Some(ref path) = result_path {
-                let _ = fs::remove_file(path);
+                self.remove_result_file_best_effort(path);
             }
         }
 
@@ -403,7 +507,7 @@ impl JobStore {
         };
 
         if let Some(ref path) = result_path {
-            let _ = fs::remove_file(path);
+            self.remove_result_file_best_effort(path);
         }
 
         conn.execute("DELETE FROM jobs WHERE job_id = ?1", params![id_str])
@@ -450,7 +554,7 @@ impl JobStore {
 
         for (ref id, ref result_path) in &to_reap {
             if let Some(ref path) = result_path {
-                let _ = fs::remove_file(path);
+                self.remove_result_file_best_effort(path);
             }
             tracing::info!(job_id = %id, "sweeping expired job");
         }
@@ -477,14 +581,33 @@ impl JobStore {
 
         let result = if status == JobStatus::Succeeded {
             if let Some(ref path) = r.result_path {
-                match fs::read(path) {
-                    Ok(bytes) => {
-                        let envelope: ProofEnvelope = serde_json::from_slice(&bytes)
-                            .map_err(|e| format!("failed to deserialize result {path}: {e}"))?;
-                        Some(envelope)
-                    }
+                match self.result_path_from_db_value(path) {
+                    Ok(resolved) => match fs::read(&resolved) {
+                        Ok(bytes) => {
+                            let envelope: ProofEnvelope =
+                                serde_json::from_slice(&bytes).map_err(|e| {
+                                    format!(
+                                        "failed to deserialize result {}: {e}",
+                                        resolved.display()
+                                    )
+                                })?;
+                            Some(envelope)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                job_id = %job_id,
+                                path = %resolved.display(),
+                                "result file missing: {e}"
+                            );
+                            None
+                        }
+                    },
                     Err(e) => {
-                        tracing::warn!(job_id = %job_id, path = %path, "result file missing: {e}");
+                        tracing::warn!(
+                            job_id = %job_id,
+                            stored_path = %path,
+                            "invalid result file path: {e}"
+                        );
                         None
                     }
                 }
@@ -725,9 +848,7 @@ mod tests {
         assert_eq!(store.count().unwrap(), 1);
 
         // Finish j1, then j2 should be accepted.
-        store
-            .fail(j1.job_id, "done".into(), "proof_error")
-            .unwrap();
+        store.fail(j1.job_id, "done".into(), "proof_error").unwrap();
         assert!(matches!(
             store.try_enqueue(&j2, 64).unwrap(),
             EnqueueResult::Inserted
@@ -825,5 +946,262 @@ mod tests {
         assert_eq!(loaded.status, JobStatus::Failed);
         assert_eq!(loaded.error.as_deref(), Some("proof generation timed out"));
         assert_eq!(loaded.error_code.as_deref(), Some("proof_timeout"));
+    }
+
+    #[test]
+    fn open_succeeds_on_invalid_result_path_value() {
+        let dir = TempDir::new().unwrap();
+        let results_dir = dir.path().join("results");
+        let orphan = results_dir.join(format!("{}.json", Uuid::new_v4()));
+
+        {
+            let store = JobStore::open(dir.path()).unwrap();
+            let job = sample_job();
+            store.insert(&job).unwrap();
+
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE jobs SET status = 'succeeded', result_path = ?1 WHERE job_id = ?2",
+                params!["not-a-json-result", job.job_id.to_string()],
+            )
+            .unwrap();
+
+            fs::write(&orphan, b"{}").unwrap();
+        }
+
+        let reopened = JobStore::open(dir.path());
+        assert!(
+            reopened.is_ok(),
+            "startup should not fail on invalid result_path"
+        );
+        assert!(
+            orphan.exists(),
+            "cleanup should be skipped when DB contains invalid result_path values"
+        );
+    }
+
+    #[test]
+    fn delete_never_removes_files_outside_results_dir() {
+        let dir = TempDir::new().unwrap();
+        let outside_file = dir.path().join("outside-delete.json");
+        fs::write(&outside_file, b"keep").unwrap();
+
+        let store = JobStore::open(dir.path()).unwrap();
+        let job = sample_job();
+        store.insert(&job).unwrap();
+
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE jobs SET status = 'failed', result_path = ?1 WHERE job_id = ?2",
+                params![
+                    outside_file.to_string_lossy().as_ref(),
+                    job.job_id.to_string()
+                ],
+            )
+            .unwrap();
+        }
+
+        assert!(store.delete(job.job_id).unwrap());
+        assert!(
+            outside_file.exists(),
+            "delete should not remove files outside results_dir"
+        );
+    }
+
+    #[test]
+    fn cleanup_removes_orphaned_result_files() {
+        let dir = TempDir::new().unwrap();
+        let results_dir = dir.path().join("results");
+
+        // First open to create schema and results dir.
+        {
+            let _store = JobStore::open(dir.path()).unwrap();
+        }
+
+        // Simulate crash mid-complete(): file exists but no DB row references it.
+        let orphan = results_dir.join(format!("{}.json", Uuid::new_v4()));
+        fs::write(&orphan, b"{}").unwrap();
+        assert!(orphan.exists());
+
+        // Re-open triggers orphan cleanup.
+        let _store = JobStore::open(dir.path()).unwrap();
+        assert!(
+            !orphan.exists(),
+            "orphaned result file should have been removed"
+        );
+    }
+
+    #[test]
+    fn cleanup_preserves_referenced_and_removes_orphans() {
+        let dir = TempDir::new().unwrap();
+        let results_dir = dir.path().join("results");
+
+        let (kept, orphan);
+        {
+            let store = JobStore::open(dir.path()).unwrap();
+            let job = sample_job();
+            store.insert(&job).unwrap();
+
+            // Simulate a completed job: write result file and update DB to reference it.
+            kept = results_dir.join(format!("{}.json", job.job_id));
+            fs::write(&kept, b"{}").unwrap();
+            {
+                let conn = store.conn.lock().unwrap();
+                conn.execute(
+                    "UPDATE jobs SET status = 'succeeded', finished_at = ?1,
+                            result_path = ?2, error = NULL
+                     WHERE job_id = ?3",
+                    params![
+                        now_unix_s() as i64,
+                        kept.to_string_lossy().as_ref(),
+                        job.job_id.to_string()
+                    ],
+                )
+                .unwrap();
+            }
+
+            // Create an orphan alongside the valid file.
+            orphan = results_dir.join(format!("{}.json", Uuid::new_v4()));
+            fs::write(&orphan, b"{}").unwrap();
+        }
+
+        // Re-open triggers orphan cleanup.
+        let _store = JobStore::open(dir.path()).unwrap();
+        assert!(kept.exists(), "referenced result file should be preserved");
+        assert!(
+            !orphan.exists(),
+            "orphaned result file should have been removed"
+        );
+    }
+
+    #[test]
+    fn sweep_empty_store_returns_zero() {
+        let (store, _dir) = test_store();
+        assert_eq!(store.sweep(1, 1).unwrap(), 0);
+    }
+
+    #[test]
+    fn sweep_reaps_expired_finished_jobs() {
+        let (store, _dir) = test_store();
+
+        // Expired job: failed with very old finished_at.
+        let j1 = sample_job();
+        store.insert(&j1).unwrap();
+        store.fail(j1.job_id, "old".into(), "proof_error").unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE jobs SET finished_at = 1000 WHERE job_id = ?1",
+                params![j1.job_id.to_string()],
+            )
+            .unwrap();
+        }
+
+        // Fresh job: failed just now — should survive.
+        let j2 = sample_job();
+        store.insert(&j2).unwrap();
+        store
+            .fail(j2.job_id, "fresh".into(), "proof_error")
+            .unwrap();
+
+        // TTL=1 → cutoff ≈ now-1. finished_at=1000 is way before cutoff.
+        // Large running_timeout so we don't accidentally reap running jobs.
+        let reaped = store.sweep(1, 86400).unwrap();
+        assert_eq!(reaped, 1);
+        assert!(
+            store.get(j1.job_id).unwrap().is_none(),
+            "expired job should be reaped"
+        );
+        assert!(
+            store.get(j2.job_id).unwrap().is_some(),
+            "fresh job should survive"
+        );
+    }
+
+    #[test]
+    fn sweep_reaps_stuck_running_jobs() {
+        let (store, _dir) = test_store();
+
+        let job = sample_job();
+        store.insert(&job).unwrap();
+        // Set started_at to ancient time to simulate a stuck job.
+        store
+            .update_status(job.job_id, JobStatus::Running, Some(1000))
+            .unwrap();
+
+        // running_timeout=1 → cutoff ≈ now-1. started_at=1000 is way before.
+        // Large TTL so we don't accidentally reap finished jobs.
+        let reaped = store.sweep(86400, 1).unwrap();
+        assert_eq!(reaped, 1);
+        assert!(store.get(job.job_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn sweep_deletes_result_files() {
+        let (store, dir) = test_store();
+        let results_dir = dir.path().join("results");
+
+        let job = sample_job();
+        store.insert(&job).unwrap();
+
+        // Simulate a succeeded job with a result file, backdated.
+        let result_file = results_dir.join(format!("{}.json", job.job_id));
+        fs::write(&result_file, b"{}").unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE jobs SET status = 'succeeded', finished_at = 1000,
+                        result_path = ?1, error = NULL
+                 WHERE job_id = ?2",
+                params![
+                    result_file.to_string_lossy().as_ref(),
+                    job.job_id.to_string()
+                ],
+            )
+            .unwrap();
+        }
+
+        assert!(result_file.exists());
+        let reaped = store.sweep(1, 86400).unwrap();
+        assert_eq!(reaped, 1);
+        assert!(
+            !result_file.exists(),
+            "sweep should delete result file of reaped job"
+        );
+    }
+
+    #[test]
+    fn delete_removes_result_file() {
+        let (store, dir) = test_store();
+        let results_dir = dir.path().join("results");
+
+        let job = sample_job();
+        store.insert(&job).unwrap();
+
+        // Simulate a succeeded job with a result file.
+        let result_file = results_dir.join(format!("{}.json", job.job_id));
+        fs::write(&result_file, b"{}").unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE jobs SET status = 'succeeded', finished_at = ?1,
+                        result_path = ?2, error = NULL
+                 WHERE job_id = ?3",
+                params![
+                    now_unix_s() as i64,
+                    result_file.to_string_lossy().as_ref(),
+                    job.job_id.to_string()
+                ],
+            )
+            .unwrap();
+        }
+
+        assert!(result_file.exists());
+        assert!(store.delete(job.job_id).unwrap());
+        assert!(
+            !result_file.exists(),
+            "delete should remove result file from disk"
+        );
     }
 }

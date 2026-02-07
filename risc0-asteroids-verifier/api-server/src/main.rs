@@ -442,6 +442,13 @@ async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: Pr
         Ok(result) => {
             if let Err(e) = state.jobs.complete(job_id, result) {
                 tracing::error!(job_id = %job_id, "failed to store proof result: {e}");
+                let failure = format!("failed to persist proof result: {e}");
+                if let Err(mark_err) = state.jobs.fail(job_id, failure, "internal_error") {
+                    tracing::error!(
+                        job_id = %job_id,
+                        "failed to mark job failed after persistence error: {mark_err}"
+                    );
+                }
             }
         }
         Err(err) => {
@@ -522,9 +529,7 @@ async fn create_prove_job_raw(
     }
     let options = match state.policy.to_options(&query) {
         Ok(options) => options,
-        Err((msg, code)) => {
-            return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code))
-        }
+        Err((msg, code)) => return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code)),
     };
 
     enqueue_proof_job(state, body.to_vec(), options).await
@@ -667,7 +672,11 @@ async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl R
 }
 
 async fn unauthorized() -> impl Responder {
-    json_error_with_code(StatusCode::UNAUTHORIZED, "unauthorized", Some("unauthorized"))
+    json_error_with_code(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        Some("unauthorized"),
+    )
 }
 
 #[actix_web::main]
@@ -965,5 +974,53 @@ mod tests {
         // Also verify the HTTP handler rejects.
         let response = enqueue_proof_job(state, vec![1_u8], sample_options()).await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn policy_accepts_valid_defaults() {
+        let policy = strict_policy();
+        let options = policy.to_options(&ProveTapeQuery::default()).unwrap();
+        assert_eq!(options.max_frames, MAX_FRAMES_DEFAULT);
+        assert_eq!(options.segment_limit_po2, SEGMENT_LIMIT_PO2_DEFAULT);
+        assert!(!options.allow_dev_mode);
+        assert!(!options.verify_receipt);
+    }
+
+    #[test]
+    fn policy_rejects_zero_max_frames() {
+        let policy = strict_policy();
+        let (_, code) = policy
+            .to_options(&ProveTapeQuery {
+                max_frames: Some(0),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(code, "invalid_max_frames");
+    }
+
+    #[test]
+    fn policy_rejects_segment_limit_below_minimum() {
+        let policy = strict_policy();
+        let (_, code) = policy
+            .to_options(&ProveTapeQuery {
+                segment_limit_po2: Some(DEFAULT_MIN_SEGMENT_LIMIT_PO2 - 1),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(code, "invalid_segment_limit");
+    }
+
+    #[test]
+    fn bearer_token_rejects_wrong_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Basic secret"));
+        assert!(bearer_token(&headers).is_none());
+    }
+
+    #[test]
+    fn bearer_token_rejects_empty_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer   "));
+        assert!(bearer_token(&headers).is_none());
     }
 }

@@ -136,7 +136,7 @@ export interface GameConfig {
 export class AsteroidsGame {
   private readonly canvas: HTMLCanvasElement | null;
 
-  private readonly ctx: CanvasRenderingContext2D | null;
+  private ctx: CanvasRenderingContext2D | null;
 
   private readonly input = new InputController();
 
@@ -315,8 +315,7 @@ export class AsteroidsGame {
     if (!ctx) {
       throw new Error("Unable to create 2D context.");
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bypass readonly for init
-    (this as any).ctx = ctx;
+    this.ctx = ctx;
 
     this.loadHighScore();
     this.seedStars(120);
@@ -344,7 +343,7 @@ export class AsteroidsGame {
     window.addEventListener("keyup", this.keyUpHandler, { passive: false });
     window.addEventListener("resize", this.resizeHandler);
     document.addEventListener("visibilitychange", this.visibilityHandler);
-    this.canvas!.addEventListener("pointerdown", this.pointerDownHandler);
+    this.canvas?.addEventListener("pointerdown", this.pointerDownHandler);
   }
 
   private detachEvents(): void {
@@ -352,11 +351,15 @@ export class AsteroidsGame {
     window.removeEventListener("keyup", this.keyUpHandler);
     window.removeEventListener("resize", this.resizeHandler);
     document.removeEventListener("visibilitychange", this.visibilityHandler);
-    this.canvas!.removeEventListener("pointerdown", this.pointerDownHandler);
+    this.canvas?.removeEventListener("pointerdown", this.pointerDownHandler);
   }
 
   private resize(): void {
-    const rect = this.canvas!.getBoundingClientRect();
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+    if (!canvas || !ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
     const width = Math.max(320, rect.width || WORLD_WIDTH);
     const height = Math.max(320, rect.height || WORLD_HEIGHT);
     const dpr = window.devicePixelRatio || 1;
@@ -365,11 +368,11 @@ export class AsteroidsGame {
     this.cssWidth = width;
     this.cssHeight = height;
 
-    this.canvas!.width = Math.floor(width * dpr);
-    this.canvas!.height = Math.floor(height * dpr);
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
 
-    this.ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.ctx!.imageSmoothingEnabled = false;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
 
     this.viewScale = Math.min(width / WORLD_WIDTH, height / WORLD_HEIGHT);
     this.viewOffsetX = (width - WORLD_WIDTH * this.viewScale) * 0.5;
@@ -2145,9 +2148,7 @@ export class AsteroidsGame {
     input.addEventListener("change", () => {
       const file = input.files?.[0];
       if (!file) return;
-      void file.arrayBuffer().then((buf) => {
-        this.loadReplay(new Uint8Array(buf));
-      });
+      void file.arrayBuffer().then((buf) => this.loadReplay(new Uint8Array(buf)));
     });
     input.click();
   }

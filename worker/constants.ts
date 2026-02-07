@@ -24,6 +24,7 @@ export const MAX_QUEUE_RETRIES = 10;
 export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "server_restarted",
   "internal_error",
+  "proof_timeout",
 ]);
 
 export const ACTIVE_JOB_KEY = "active_job_id";
