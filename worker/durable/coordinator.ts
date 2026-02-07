@@ -159,7 +159,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
       await this.ctx.storage.delete(entry.storageKey);
       await this.deleteArtifact(entry.job.tape.key);
-      await this.deleteArtifact(entry.job.result?.artifactKey);
+      // result.json is intentionally kept in R2 so users can fetch proof
+      // data after the DO record is pruned.  The R2 lifecycle rule
+      // (expire-proof-jobs, 7 days) handles cleanup.
     }
     /* eslint-enable no-await-in-loop */
   }
@@ -192,13 +194,32 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (activeJobId) {
       const activeJob = await this.loadJob(activeJobId);
       if (activeJob && !isTerminalProofStatus(activeJob.status)) {
-        return {
-          accepted: false,
-          message: "another proof job is already active",
-          activeJob,
-        };
+        const maxWallTimeMs = parseInteger(
+          this.env.MAX_JOB_WALL_TIME_MS,
+          DEFAULT_MAX_JOB_WALL_TIME_MS,
+          60_000,
+        );
+        const jobAgeMs = Date.now() - new Date(activeJob.createdAt).getTime();
+        if (jobAgeMs <= maxWallTimeMs) {
+          return {
+            accepted: false,
+            message: "another proof job is already active",
+            activeJob,
+          };
+        }
+
+        // Zombie recovery: the active job has exceeded the wall-time limit
+        // but was never moved to a terminal state (alarm lost, queue exhausted, etc.).
+        console.warn(
+          `[proof-worker] force-failing zombie job ${activeJob.jobId} (age ${Math.round(jobAgeMs / 60_000)} min)`,
+        );
+        await this.markFailed(
+          activeJob.jobId,
+          `zombie recovery: job exceeded wall-time limit (${Math.round(jobAgeMs / 60_000)} min)`,
+        );
+      } else {
+        await this.ctx.storage.delete(ACTIVE_JOB_KEY);
       }
-      await this.ctx.storage.delete(ACTIVE_JOB_KEY);
     }
 
     const jobId = crypto.randomUUID();

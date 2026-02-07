@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { DEFAULT_MAX_TAPE_BYTES } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
+import { resultKey } from "../keys";
 import { parseAndValidateTape } from "../tape";
 import { parseInteger, safeErrorMessage } from "../utils";
 
@@ -226,19 +227,26 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, "invalid job id in path");
     }
 
+    // Try the DO first for the canonical artifact key.
     const coordinator = coordinatorStub(c.env);
     const job = await coordinator.getJob(jobId);
-    if (!job) {
-      return jsonError(c, 404, `job not found: ${jobId}`);
+
+    let artifact: R2ObjectBody | null = null;
+
+    if (job?.result?.artifactKey) {
+      artifact = await c.env.PROOF_ARTIFACTS.get(job.result.artifactKey);
+    } else if (!job) {
+      // DO record was pruned — fall back to the well-known R2 key.
+      // result.json is retained in R2 beyond DO pruning so users can
+      // fetch proof data for on-chain submission.
+      artifact = await c.env.PROOF_ARTIFACTS.get(resultKey(jobId));
     }
 
-    if (!job.result?.artifactKey) {
-      return jsonError(c, 409, "proof result is not available for this job");
-    }
-
-    const artifact = await c.env.PROOF_ARTIFACTS.get(job.result.artifactKey);
     if (!artifact) {
-      return jsonError(c, 404, "proof artifact missing from storage");
+      if (job && !job.result?.artifactKey) {
+        return jsonError(c, 409, "proof result is not available for this job");
+      }
+      return jsonError(c, 404, "proof result not found");
     }
 
     return new Response(artifact.body, {

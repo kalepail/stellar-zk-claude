@@ -236,6 +236,15 @@ Harden the Cloudflare Workers deployment for mainnet traffic.
 - [ ] **Verify R2 bucket is private**. Check the Cloudflare dashboard to ensure
       `stellar-zk-proof-artifacts` has no public access rules. All access should
       be through the Worker binding only.
+- [ ] **Set R2 lifecycle rule** to auto-expire proof artifacts as a safety net.
+      The DO already prunes at 24hr/200 jobs, but orphaned R2 objects from edge
+      cases (crashes between R2 write and DO tracking) need a backstop:
+      ```bash
+      npx wrangler r2 bucket lifecycle add stellar-zk-proof-artifacts \
+        --name expire-proof-jobs \
+        --prefix proof-jobs/ \
+        --expire-days 7
+      ```
 - [ ] **Consider rate limiting** at the Cloudflare edge (WAF rules or Rate
       Limiting rules) to prevent tape submission spam.
 - [ ] **Review queue retry settings** in `wrangler.jsonc`. Current:
