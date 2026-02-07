@@ -135,9 +135,8 @@ nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
 nano /etc/stellar-zk/api-server.env
 # Set API_KEY and any other overrides (PROD: keep RISC0_DEV_MODE=0)
 
-# 4) Start supervisord (first time) or reload config
-supervisord -c /etc/supervisor/supervisord.conf   # first time only
-supervisorctl reread && supervisorctl update       # after config changes
+# 4) Load configs (supervisord is already running on Vast.ai images)
+supervisorctl reread && supervisorctl update
 
 # 5) Inspect
 supervisorctl status

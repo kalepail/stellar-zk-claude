@@ -311,9 +311,8 @@ Production readiness for the Vast.ai prover server.
       nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
       nano /etc/stellar-zk/api-server.env   # set API_KEY and other config
 
-      # 4. Start (or reload if supervisord is already running)
-      supervisord -c /etc/supervisor/supervisord.conf  # first time
-      supervisorctl reread && supervisorctl update      # after config changes
+      # 4. Load configs (supervisord is already running on Vast.ai images)
+      supervisorctl reread && supervisorctl update
       supervisorctl status                              # verify running
       tail -f /var/lib/stellar-zk/prover/api-server.log
       ```

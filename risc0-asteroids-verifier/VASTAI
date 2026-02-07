@@ -29,8 +29,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   libclang-dev \
   libssl-dev \
   protobuf-compiler \
-  pkg-config \
-  supervisor
+  pkg-config
 rm -rf /var/lib/apt/lists/*
 
 # ── 2. Clone / update repository ─────────────────────────────────────────
@@ -131,8 +130,7 @@ cat <<EOF
     cp deploy/supervisord/cloudflared.conf /etc/supervisor/conf.d/
     # For production: edit the conf to use a named tunnel instead of quick-tunnel
 
-    # Start everything:
-    supervisord -c /etc/supervisor/supervisord.conf
+    # Load configs (supervisord is already running on Vast.ai images):
     supervisorctl reread && supervisorctl update
     supervisorctl status                   # verify both are running
     tail -f /var/lib/stellar-zk/prover/api-server.log
