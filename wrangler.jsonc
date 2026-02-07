@@ -4,7 +4,8 @@
   "main": "./worker/index.ts",
   "compatibility_date": "2025-04-01",
   "assets": {
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
   },
   "vars": {
     "PROVER_BASE_URL": "https://replace-with-your-prover.example.com",
