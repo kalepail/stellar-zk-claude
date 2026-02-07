@@ -70,12 +70,13 @@ impl ServerPolicy {
         }
     }
 
-    fn to_options(&self, query: &ProveTapeQuery) -> Result<ProveOptions, String> {
+    /// Returns `(error_message, error_code)` on failure.
+    fn to_options(&self, query: &ProveTapeQuery) -> Result<ProveOptions, (String, &'static str)> {
         let max_frames = query.max_frames.unwrap_or(self.max_frames);
         if max_frames == 0 || max_frames > self.max_frames {
-            return Err(format!(
-                "max_frames must be between 1 and {}",
-                self.max_frames
+            return Err((
+                format!("max_frames must be between 1 and {}", self.max_frames),
+                "invalid_max_frames",
             ));
         }
 
@@ -83,15 +84,21 @@ impl ServerPolicy {
         if segment_limit_po2 < self.min_segment_limit_po2
             || segment_limit_po2 > self.max_segment_limit_po2
         {
-            return Err(format!(
-                "segment_limit_po2 must be in [{}..={}]",
-                self.min_segment_limit_po2, self.max_segment_limit_po2
+            return Err((
+                format!(
+                    "segment_limit_po2 must be in [{}..={}]",
+                    self.min_segment_limit_po2, self.max_segment_limit_po2
+                ),
+                "invalid_segment_limit",
             ));
         }
 
         let allow_dev_mode = query.allow_dev_mode.unwrap_or(false);
         if allow_dev_mode && !self.allow_dev_mode_requests {
-            return Err("allow_dev_mode is disabled by server policy".to_string());
+            return Err((
+                "allow_dev_mode is disabled by server policy".to_string(),
+                "dev_mode_disabled",
+            ));
         }
 
         // Default to false: verification happens on-chain, not server-side.
@@ -183,6 +190,8 @@ struct ProofJob {
     result: Option<ProofEnvelope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -266,13 +275,15 @@ fn read_env_bool(name: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-fn validate_tape_size(size: usize, max_tape_bytes: usize) -> Result<(), String> {
+/// Returns `(error_message, error_code)` on failure.
+fn validate_tape_size(size: usize, max_tape_bytes: usize) -> Result<(), (String, &'static str)> {
     if size == 0 {
-        return Err("tape payload is empty".to_string());
+        return Err(("tape payload is empty".to_string(), "tape_empty"));
     }
     if size > max_tape_bytes {
-        return Err(format!(
-            "tape payload too large: {size} bytes (max {max_tape_bytes})"
+        return Err((
+            format!("tape payload too large: {size} bytes (max {max_tape_bytes})"),
+            "tape_too_large",
         ));
     }
     Ok(())
@@ -289,11 +300,19 @@ fn options_summary(options: ProveOptions) -> ProveOptionsSummary {
     }
 }
 
-fn json_error(status: StatusCode, message: impl Into<String>) -> HttpResponse {
-    HttpResponse::build(status).json(serde_json::json!({
+fn json_error_with_code(
+    status: StatusCode,
+    message: impl Into<String>,
+    error_code: Option<&str>,
+) -> HttpResponse {
+    let mut body = serde_json::json!({
         "success": false,
         "error": message.into(),
-    }))
+    });
+    if let Some(code) = error_code {
+        body["error_code"] = serde_json::Value::String(code.to_string());
+    }
+    HttpResponse::build(status).json(body)
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -426,7 +445,14 @@ async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: Pr
             }
         }
         Err(err) => {
-            if let Err(e) = state.jobs.fail(job_id, err) {
+            let error_code = if err.contains("timed out") {
+                "proof_timeout"
+            } else if err.contains("prover worker join failure") {
+                "internal_error"
+            } else {
+                "proof_error"
+            };
+            if let Err(e) = state.jobs.fail(job_id, err, error_code) {
                 tracing::error!(job_id = %job_id, "failed to mark job failed: {e}");
             }
         }
@@ -455,7 +481,11 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         Ok(counts) => counts,
         Err(e) => {
             tracing::error!("health check failed: {e}");
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+            return json_error_with_code(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "job store error",
+                Some("internal_error"),
+            );
         }
     };
 
@@ -487,12 +517,14 @@ async fn create_prove_job_raw(
     query: web::Query<ProveTapeQuery>,
     body: web::Bytes,
 ) -> impl Responder {
-    if let Err(err) = validate_tape_size(body.len(), state.max_tape_bytes) {
-        return json_error(StatusCode::BAD_REQUEST, err);
+    if let Err((msg, code)) = validate_tape_size(body.len(), state.max_tape_bytes) {
+        return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code));
     }
     let options = match state.policy.to_options(&query) {
         Ok(options) => options,
-        Err(err) => return json_error(StatusCode::BAD_REQUEST, err),
+        Err((msg, code)) => {
+            return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code))
+        }
     };
 
     enqueue_proof_job(state, body.to_vec(), options).await
@@ -504,9 +536,10 @@ async fn enqueue_proof_job(
     options: ProveOptions,
 ) -> HttpResponse {
     if state.prover_semaphore.available_permits() == 0 {
-        return json_error(
+        return json_error_with_code(
             StatusCode::TOO_MANY_REQUESTS,
             "prover is busy: no execution slots available",
+            Some("no_slots"),
         );
     }
 
@@ -521,25 +554,32 @@ async fn enqueue_proof_job(
         options: options_summary(options),
         result: None,
         error: None,
+        error_code: None,
     };
 
     match state.jobs.try_enqueue(&job, state.max_jobs) {
         Ok(EnqueueResult::Inserted) => {}
         Ok(EnqueueResult::ProverBusy) => {
-            return json_error(
+            return json_error_with_code(
                 StatusCode::TOO_MANY_REQUESTS,
                 "prover is busy (single-flight mode): retry after the active job finishes",
+                Some("prover_busy"),
             );
         }
         Ok(EnqueueResult::AtCapacity(cap)) => {
-            return json_error(
+            return json_error_with_code(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("job store is at capacity ({cap}) with no finished jobs to evict"),
+                Some("at_capacity"),
             );
         }
         Err(e) => {
             tracing::error!("try_enqueue failed: {e}");
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+            return json_error_with_code(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "job store error",
+                Some("internal_error"),
+            );
         }
     }
 
@@ -560,10 +600,18 @@ async fn get_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl Resp
     let job_id = path.into_inner();
     match state.jobs.get(job_id) {
         Ok(Some(job)) => HttpResponse::Ok().json(job),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Ok(None) => json_error_with_code(
+            StatusCode::NOT_FOUND,
+            format!("job not found: {job_id}"),
+            Some("job_not_found"),
+        ),
         Err(e) => {
             tracing::error!(job_id = %job_id, "get_job failed: {e}");
-            json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error")
+            json_error_with_code(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "job store error",
+                Some("internal_error"),
+            )
         }
     }
 }
@@ -573,16 +621,27 @@ async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl R
     match state.jobs.get(job_id) {
         Ok(Some(job)) => {
             if job.status == JobStatus::Queued || job.status == JobStatus::Running {
-                return json_error(
+                return json_error_with_code(
                     StatusCode::CONFLICT,
                     "cannot delete an active job (status is queued or running)",
+                    Some("job_active"),
                 );
             }
         }
-        Ok(None) => return json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Ok(None) => {
+            return json_error_with_code(
+                StatusCode::NOT_FOUND,
+                format!("job not found: {job_id}"),
+                Some("job_not_found"),
+            )
+        }
         Err(e) => {
             tracing::error!(job_id = %job_id, "delete preflight get failed: {e}");
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+            return json_error_with_code(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "job store error",
+                Some("internal_error"),
+            );
         }
     }
 
@@ -591,16 +650,24 @@ async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl R
             "success": true,
             "job_id": job_id,
         })),
-        Ok(false) => json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Ok(false) => json_error_with_code(
+            StatusCode::NOT_FOUND,
+            format!("job not found: {job_id}"),
+            Some("job_not_found"),
+        ),
         Err(e) => {
             tracing::error!(job_id = %job_id, "delete_job failed: {e}");
-            json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error")
+            json_error_with_code(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "job store error",
+                Some("internal_error"),
+            )
         }
     }
 }
 
 async fn unauthorized() -> impl Responder {
-    json_error(StatusCode::UNAUTHORIZED, "unauthorized")
+    json_error_with_code(StatusCode::UNAUTHORIZED, "unauthorized", Some("unauthorized"))
 }
 
 #[actix_web::main]
@@ -774,44 +841,51 @@ mod tests {
     #[test]
     fn validate_tape_size_checks_bounds() {
         assert!(validate_tape_size(1, 10).is_ok());
-        assert!(validate_tape_size(0, 10).is_err());
-        assert!(validate_tape_size(11, 10).is_err());
+
+        let (_, code) = validate_tape_size(0, 10).unwrap_err();
+        assert_eq!(code, "tape_empty");
+
+        let (_, code) = validate_tape_size(11, 10).unwrap_err();
+        assert_eq!(code, "tape_too_large");
     }
 
     #[test]
     fn policy_rejects_allow_dev_mode_when_disabled() {
         let policy = strict_policy();
-        let err = policy
+        let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 allow_dev_mode: Some(true),
                 ..Default::default()
             })
             .unwrap_err();
-        assert!(err.contains("allow_dev_mode"));
+        assert!(msg.contains("allow_dev_mode"));
+        assert_eq!(code, "dev_mode_disabled");
     }
 
     #[test]
     fn policy_rejects_out_of_range_segment_limit() {
         let policy = strict_policy();
-        let err = policy
+        let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 segment_limit_po2: Some(DEFAULT_MAX_SEGMENT_LIMIT_PO2 + 1),
                 ..Default::default()
             })
             .unwrap_err();
-        assert!(err.contains("segment_limit_po2"));
+        assert!(msg.contains("segment_limit_po2"));
+        assert_eq!(code, "invalid_segment_limit");
     }
 
     #[test]
     fn policy_rejects_out_of_range_max_frames() {
         let policy = strict_policy();
-        let err = policy
+        let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 max_frames: Some(MAX_FRAMES_DEFAULT + 1),
                 ..Default::default()
             })
             .unwrap_err();
-        assert!(err.contains("max_frames"));
+        assert!(msg.contains("max_frames"));
+        assert_eq!(code, "invalid_max_frames");
     }
 
     #[test]
@@ -862,6 +936,7 @@ mod tests {
             options: options_summary(sample_options()),
             result: None,
             error: None,
+            error_code: None,
         };
         state.jobs.insert(&existing_job).unwrap();
         state
@@ -880,6 +955,7 @@ mod tests {
             options: options_summary(sample_options()),
             result: None,
             error: None,
+            error_code: None,
         };
         assert!(matches!(
             state.jobs.try_enqueue(&new_job, DEFAULT_MAX_JOBS).unwrap(),

@@ -135,11 +135,35 @@ export interface ProverJobResultEnvelope {
 }
 
 export interface ProverGetJobResponse {
-  success: boolean;
+  job_id: string;
   status: ProverJobStatus;
-  error?: string;
+  created_at_unix_s: number;
+  started_at_unix_s?: number;
+  finished_at_unix_s?: number;
+  tape_size_bytes: number;
+  options: {
+    max_frames: number;
+    receipt_kind: string;
+    segment_limit_po2: number;
+    allow_dev_mode: boolean;
+    verify_receipt: boolean;
+    accelerator: string;
+  };
   result?: ProverJobResultEnvelope;
+  error?: string;
+  error_code?: string;
 }
+
+export interface ProverErrorResponse {
+  success: false;
+  error: string;
+  error_code?: string;
+}
+
+export const RETRYABLE_JOB_ERROR_CODES = new Set([
+  "server_restarted",
+  "internal_error",
+]);
 
 export type ProverSubmitResult =
   | { type: "success"; jobId: string; statusUrl: string }

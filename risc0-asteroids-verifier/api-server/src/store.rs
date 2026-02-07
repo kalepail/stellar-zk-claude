@@ -186,8 +186,8 @@ impl JobStore {
                 tape_size_bytes,
                 opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
                 opt_allow_dev_mode, opt_verify_receipt, opt_accelerator,
-                result_path, error
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                result_path, error, error_code
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 job.job_id.to_string(),
                 status_to_str(job.status),
@@ -203,6 +203,7 @@ impl JobStore {
                 job.options.accelerator,
                 Option::<String>::None,
                 job.error.as_deref(),
+                job.error_code.as_deref(),
             ],
         )
         .map_err(|e| format!("insert job failed: {e}"))?;
@@ -219,7 +220,7 @@ impl JobStore {
                         tape_size_bytes,
                         opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
                         opt_allow_dev_mode, opt_verify_receipt, opt_accelerator,
-                        result_path, error
+                        result_path, error, error_code
                  FROM jobs WHERE job_id = ?1",
                 params![job_id.to_string()],
                 |row| {
@@ -238,6 +239,7 @@ impl JobStore {
                         _opt_accelerator: row.get(11)?,
                         result_path: row.get(12)?,
                         error: row.get(13)?,
+                        error_code: row.get(14)?,
                     })
                 },
             )
@@ -279,7 +281,8 @@ impl JobStore {
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE jobs SET status = 'succeeded', finished_at = ?1, result_path = ?2, error = NULL
+            "UPDATE jobs SET status = 'succeeded', finished_at = ?1, result_path = ?2,
+                    error = NULL, error_code = NULL
              WHERE job_id = ?3",
             params![
                 now_unix_s() as i64,
@@ -291,11 +294,12 @@ impl JobStore {
         Ok(())
     }
 
-    pub fn fail(&self, job_id: Uuid, error: String) -> Result<(), String> {
+    pub fn fail(&self, job_id: Uuid, error: String, error_code: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE jobs SET status = 'failed', finished_at = ?1, error = ?2 WHERE job_id = ?3",
-            params![now_unix_s() as i64, error, job_id.to_string()],
+            "UPDATE jobs SET status = 'failed', finished_at = ?1, error = ?2,
+                    error_code = ?3 WHERE job_id = ?4",
+            params![now_unix_s() as i64, error, error_code, job_id.to_string()],
         )
         .map_err(|e| format!("fail job failed: {e}"))?;
         Ok(())
@@ -508,6 +512,7 @@ impl JobStore {
             },
             result,
             error: r.error,
+            error_code: r.error_code,
         })
     }
 }
@@ -527,6 +532,7 @@ struct RawJobRow {
     _opt_accelerator: String,
     result_path: Option<String>,
     error: Option<String>,
+    error_code: Option<String>,
 }
 
 fn status_to_str(status: JobStatus) -> &'static str {
@@ -572,6 +578,7 @@ mod tests {
             options: options_summary(ProveOptions::default()),
             result: None,
             error: None,
+            error_code: None,
         }
     }
 
@@ -616,7 +623,7 @@ mod tests {
         store.insert(&job).unwrap();
 
         store
-            .fail(job.job_id, "something broke".to_string())
+            .fail(job.job_id, "something broke".to_string(), "proof_error")
             .unwrap();
 
         let loaded = store.get(job.job_id).unwrap().unwrap();
@@ -650,7 +657,9 @@ mod tests {
             .unwrap();
         assert!(store.has_active_job().unwrap());
 
-        store.fail(job.job_id, "done".to_string()).unwrap();
+        store
+            .fail(job.job_id, "done".to_string(), "proof_error")
+            .unwrap();
         assert!(!store.has_active_job().unwrap());
     }
 
@@ -681,12 +690,16 @@ mod tests {
         let mut j1 = sample_job();
         j1.created_at_unix_s = 1000;
         store.insert(&j1).unwrap();
-        store.fail(j1.job_id, "old".to_string()).unwrap();
+        store
+            .fail(j1.job_id, "old".to_string(), "proof_error")
+            .unwrap();
 
         let mut j2 = sample_job();
         j2.created_at_unix_s = 2000;
         store.insert(&j2).unwrap();
-        store.fail(j2.job_id, "newer".to_string()).unwrap();
+        store
+            .fail(j2.job_id, "newer".to_string(), "proof_error")
+            .unwrap();
 
         let evicted = store.evict_oldest_finished().unwrap();
         assert_eq!(evicted, Some(j1.job_id));
@@ -712,7 +725,9 @@ mod tests {
         assert_eq!(store.count().unwrap(), 1);
 
         // Finish j1, then j2 should be accepted.
-        store.fail(j1.job_id, "done".into()).unwrap();
+        store
+            .fail(j1.job_id, "done".into(), "proof_error")
+            .unwrap();
         assert!(matches!(
             store.try_enqueue(&j2, 64).unwrap(),
             EnqueueResult::Inserted
@@ -730,7 +745,9 @@ mod tests {
             let mut j = sample_job();
             j.created_at_unix_s = 1000 + i as u64;
             store.insert(&j).unwrap();
-            store.fail(j.job_id, format!("err-{i}")).unwrap();
+            store
+                .fail(j.job_id, format!("err-{i}"), "proof_error")
+                .unwrap();
         }
         assert_eq!(store.count().unwrap(), max_jobs);
 
@@ -764,6 +781,7 @@ mod tests {
     #[test]
     fn recover_on_startup_marks_orphans_failed() {
         let dir = TempDir::new().unwrap();
+        let job_id;
 
         // First open — insert a "running" job, then drop the store (simulating crash).
         {
@@ -771,35 +789,41 @@ mod tests {
             let mut job = sample_job();
             job.status = JobStatus::Running;
             job.started_at_unix_s = Some(now_unix_s());
-            // Insert directly via SQL to avoid going through insert() which sets queued.
-            let conn = store.conn.lock().unwrap();
-            conn.execute(
-                "INSERT INTO jobs (
-                    job_id, status, created_at, started_at, finished_at,
-                    tape_size_bytes,
-                    opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
-                    opt_allow_dev_mode, opt_verify_receipt, opt_accelerator,
-                    result_path, error
-                ) VALUES (?1,'running',?2,?3,NULL,?4,?5,?6,?7,?8,?9,?10,NULL,NULL)",
-                params![
-                    job.job_id.to_string(),
-                    job.created_at_unix_s as i64,
-                    job.started_at_unix_s.map(|v| v as i64),
-                    job.tape_size_bytes as i64,
-                    job.options.max_frames as i64,
-                    job.options.receipt_kind.as_str(),
-                    job.options.segment_limit_po2 as i64,
-                    job.options.allow_dev_mode as i64,
-                    job.options.verify_receipt as i64,
-                    job.options.accelerator,
-                ],
-            )
-            .unwrap();
+            job_id = job.job_id;
+            store.insert(&job).unwrap();
+            store
+                .update_status(job.job_id, JobStatus::Running, Some(now_unix_s()))
+                .unwrap();
         }
 
-        // Re-open — recovery should mark it failed.
+        // Re-open — recovery should mark it failed with error_code.
         let store = JobStore::open(dir.path()).unwrap();
         let (_, running, _) = store.count_by_status().unwrap();
         assert_eq!(running, 0);
+
+        let loaded = store.get(job_id).unwrap().unwrap();
+        assert_eq!(loaded.status, JobStatus::Failed);
+        assert_eq!(loaded.error.as_deref(), Some("server restarted"));
+        assert_eq!(loaded.error_code.as_deref(), Some("server_restarted"));
+    }
+
+    #[test]
+    fn fail_with_code_and_get() {
+        let (store, _dir) = test_store();
+        let job = sample_job();
+        store.insert(&job).unwrap();
+
+        store
+            .fail(
+                job.job_id,
+                "proof generation timed out".to_string(),
+                "proof_timeout",
+            )
+            .unwrap();
+
+        let loaded = store.get(job.job_id).unwrap().unwrap();
+        assert_eq!(loaded.status, JobStatus::Failed);
+        assert_eq!(loaded.error.as_deref(), Some("proof generation timed out"));
+        assert_eq!(loaded.error_code.as_deref(), Some("proof_timeout"));
     }
 }

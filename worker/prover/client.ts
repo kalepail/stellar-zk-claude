@@ -5,12 +5,14 @@ import {
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
 } from "../constants";
 import type { WorkerEnv } from "../env";
-import type {
-  ProverCreateJobResponse,
-  ProverGetJobResponse,
-  ProverPollResult,
-  ProverSubmitResult,
-  ProofResultSummary,
+import {
+  RETRYABLE_JOB_ERROR_CODES,
+  type ProverCreateJobResponse,
+  type ProverErrorResponse,
+  type ProverGetJobResponse,
+  type ProverPollResult,
+  type ProverSubmitResult,
+  type ProofResultSummary,
 } from "../types";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 
@@ -124,9 +126,16 @@ export async function submitToProver(
   }
 
   if (response.status === 429 || response.status >= 500) {
+    let errorCode: string | undefined;
+    try {
+      const body = (await response.json()) as ProverErrorResponse;
+      errorCode = body.error_code;
+    } catch {
+      // Ignore parse errors.
+    }
     return {
       type: "retry",
-      message: `prover create endpoint returned ${response.status}`,
+      message: `prover create endpoint returned ${response.status}${errorCode ? ` (${errorCode})` : ""}`,
     };
   }
 
@@ -264,6 +273,13 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
     }
 
     if (payload.status === "failed") {
+      if (payload.error_code && RETRYABLE_JOB_ERROR_CODES.has(payload.error_code)) {
+        return {
+          type: "retry",
+          message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
+          clearProverJob: true,
+        };
+      }
       return {
         type: "fatal",
         message: payload.error ?? "prover marked job as failed",
