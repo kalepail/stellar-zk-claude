@@ -160,11 +160,6 @@ export interface ProverErrorResponse {
   error_code?: string;
 }
 
-export const RETRYABLE_JOB_ERROR_CODES = new Set([
-  "server_restarted",
-  "internal_error",
-]);
-
 export type ProverSubmitResult =
   | { type: "success"; jobId: string; statusUrl: string }
   | { type: "retry"; message: string }

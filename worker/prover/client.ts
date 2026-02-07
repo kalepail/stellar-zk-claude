@@ -3,16 +3,16 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_POLL_TIMEOUT_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+  RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
-import {
-  RETRYABLE_JOB_ERROR_CODES,
-  type ProverCreateJobResponse,
-  type ProverErrorResponse,
-  type ProverGetJobResponse,
-  type ProverPollResult,
-  type ProverSubmitResult,
-  type ProofResultSummary,
+import type {
+  ProverCreateJobResponse,
+  ProverErrorResponse,
+  ProverGetJobResponse,
+  ProverPollResult,
+  ProverSubmitResult,
+  ProofResultSummary,
 } from "../types";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 

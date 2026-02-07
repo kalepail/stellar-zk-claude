@@ -21,5 +21,10 @@ export const MAX_RETRY_DELAY_SECONDS = 300;
 // as permanently failed rather than retried again.
 export const MAX_QUEUE_RETRIES = 10;
 
+export const RETRYABLE_JOB_ERROR_CODES = new Set([
+  "server_restarted",
+  "internal_error",
+]);
+
 export const ACTIVE_JOB_KEY = "active_job_id";
 export const JOB_KEY_PREFIX = "job:";
