@@ -64,13 +64,16 @@ Most relevant:
 
 - `API_KEY`: optional shared secret for `/api/*`
 - `MAX_TAPE_BYTES`: request payload cap
-- `MAX_JOBS`: max retained jobs in memory
+- `MAX_JOBS`: max retained jobs in SQLite metadata store
 - `JOB_TTL_SECS`, `JOB_SWEEP_SECS`: retention + cleanup interval
 - `MAX_FRAMES`: upper bound for replay length
 - `MIN_SEGMENT_LIMIT_PO2`, `MAX_SEGMENT_LIMIT_PO2`: allowed segment bounds
 - `HTTP_MAX_CONNECTIONS`: inbound socket ceiling
 - `HTTP_KEEP_ALIVE_SECS`: keep-alive window
 - `HTTP_WORKERS` (optional): explicit Actix worker count
+- `CORS_ALLOWED_ORIGIN` (optional): allow browser access from one explicit origin (disabled by default)
+- `RUNNING_JOB_TIMEOUT_SECS`: mark long-running proofs as timed out
+- `TIMED_OUT_PROOF_KILL_SECS`: after timeout, abort process if proof task still has not returned (set `0` to disable)
 
 Prover concurrency is fixed at `1` in code.
 
@@ -82,9 +85,11 @@ Prover concurrency is fixed at `1` in code.
 
 These defaults keep proving in production-safe mode.
 
+For timeout recovery in production, run the server under a supervisor (`systemd`, Docker restart policy, Kubernetes, etc.) so process aborts are automatically restarted.
+
 ## Vast.ai Deployment
 
-See the parent [README.md](../README.md) for full Vast.ai setup, build, run, and Cloudflare Tunnel instructions.
+See the parent [README.md](../README.md) for full Vast.ai setup, build, run, `systemd` supervisor setup, and Cloudflare Tunnel instructions.
 
 ## Cloudflare Tunnel
 

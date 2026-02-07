@@ -5,6 +5,76 @@ import type { WorkerEnv } from "../env";
 import { parseAndValidateTape } from "../tape";
 import { parseInteger, safeErrorMessage } from "../utils";
 
+class PayloadTooLargeError extends Error {
+  readonly sizeBytes: number;
+  readonly maxBytes: number;
+
+  constructor(sizeBytes: number, maxBytes: number) {
+    super(`tape payload too large: ${sizeBytes} bytes (max ${maxBytes})`);
+    this.name = "PayloadTooLargeError";
+    this.sizeBytes = sizeBytes;
+    this.maxBytes = maxBytes;
+  }
+}
+
+function parseContentLength(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+async function readRequestBodyWithLimit(
+  request: Request,
+  maxTapeBytes: number,
+): Promise<Uint8Array> {
+  const reader = request.body?.getReader();
+  if (!reader) {
+    return new Uint8Array();
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalSize = 0;
+
+  try {
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+
+      totalSize += value.byteLength;
+      if (totalSize > maxTapeBytes) {
+        void reader.cancel("payload too large");
+        throw new PayloadTooLargeError(totalSize, maxTapeBytes);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return body;
+}
+
 function jsonError(
   c: { json: (body: unknown, status?: number) => Response },
   status: number,
@@ -36,7 +106,24 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
 
   api.post("/proofs/jobs", async (c) => {
     const maxTapeBytes = parseInteger(c.env.MAX_TAPE_BYTES, DEFAULT_MAX_TAPE_BYTES, 1);
-    const tapeBytes = new Uint8Array(await c.req.arrayBuffer());
+    const declaredLength = parseContentLength(c.req.header("content-length"));
+    if (declaredLength !== null && declaredLength > maxTapeBytes) {
+      return jsonError(
+        c,
+        413,
+        `tape payload too large: ${declaredLength} bytes (max ${maxTapeBytes})`,
+      );
+    }
+
+    let tapeBytes: Uint8Array;
+    try {
+      tapeBytes = await readRequestBodyWithLimit(c.req.raw, maxTapeBytes);
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        return jsonError(c, 413, error.message);
+      }
+      return jsonError(c, 400, `failed reading request body: ${safeErrorMessage(error)}`);
+    }
 
     let metadata;
     try {
@@ -52,10 +139,13 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     });
 
     if (!createResult.accepted) {
-      return jsonError(
-        c,
+      return c.json(
+        {
+          success: false,
+          error: "proof queue is currently busy; retry when the active job completes",
+          active_job: asPublicJob(createResult.activeJob),
+        },
         429,
-        "proof queue is currently busy; retry when the active job completes",
       );
     }
 

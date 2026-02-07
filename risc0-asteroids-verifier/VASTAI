@@ -114,6 +114,15 @@ cat <<'DONE'
     # Run:
     API_KEY='your-secret' cargo run --release -p api-server
 
+    # Recommended production mode (systemd supervisor):
+    mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
+    cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
+    cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/risc0-asteroids-api.service
+    nano /etc/stellar-zk/api-server.env
+    systemctl daemon-reload
+    systemctl enable --now risc0-asteroids-api
+    journalctl -u risc0-asteroids-api -f
+
     # Verify GPU is active:
     curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 

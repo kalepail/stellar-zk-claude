@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 TAPE="${1:-../test-fixtures/test-short.tape}"
-RESULTS="benchmark_results.txt"
+RESULTS="benchmarks/benchmark_results.txt"
 CARGO_TOML="Cargo.toml"
 CARGO_TOML_BAK="Cargo.toml.bak"
 

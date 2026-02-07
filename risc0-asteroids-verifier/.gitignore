@@ -3,3 +3,5 @@ Cargo.lock
 methods/guest/Cargo.lock
 target/
 benchmarks/runs/
+*.bak
+benchmark_results.txt

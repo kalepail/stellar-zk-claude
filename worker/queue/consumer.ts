@@ -60,8 +60,11 @@ async function processQueueMessage(
     submitResult = await submitToProver(env, tapeBytes);
   } catch (error) {
     const reason = `submit error: ${safeErrorMessage(error)}`;
-    if (message.attempts > MAX_QUEUE_RETRIES) {
-      await coordinator.markFailed(jobId, `${reason} (exhausted ${message.attempts} delivery attempts)`);
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
       message.ack();
       return;
     }
@@ -77,7 +80,7 @@ async function processQueueMessage(
   }
 
   if (submitResult.type === "retry") {
-    if (message.attempts > MAX_QUEUE_RETRIES) {
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
       await coordinator.markFailed(
         jobId,
         `${submitResult.message} (exhausted ${message.attempts} delivery attempts)`,

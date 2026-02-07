@@ -151,11 +151,8 @@ impl JobStore {
 
                 match row {
                     Some((evict_id, result_path)) => {
-                        conn.execute(
-                            "DELETE FROM jobs WHERE job_id = ?1",
-                            params![evict_id],
-                        )
-                        .map_err(|e| format!("try_enqueue evict delete: {e}"))?;
+                        conn.execute("DELETE FROM jobs WHERE job_id = ?1", params![evict_id])
+                            .map_err(|e| format!("try_enqueue evict delete: {e}"))?;
                         evicted_path = result_path;
                         tracing::info!(evicted_job_id = %evict_id, "evicted oldest finished job to make room");
                     }
@@ -271,10 +268,9 @@ impl JobStore {
     /// Mark a job as succeeded and write the result envelope to disk as JSON.
     pub fn complete(&self, job_id: Uuid, result: ProofEnvelope) -> Result<(), String> {
         let result_path = self.results_dir.join(format!("{job_id}.json"));
-        let json = serde_json::to_vec(&result)
-            .map_err(|e| format!("failed to serialize result: {e}"))?;
-        fs::write(&result_path, json)
-            .map_err(|e| format!("failed to write result file: {e}"))?;
+        let json =
+            serde_json::to_vec(&result).map_err(|e| format!("failed to serialize result: {e}"))?;
+        fs::write(&result_path, json).map_err(|e| format!("failed to write result file: {e}"))?;
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -424,7 +420,9 @@ impl JobStore {
         let to_reap: Vec<(String, Option<String>)> = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn
-                .prepare(&format!("SELECT job_id, result_path FROM jobs WHERE {sweep_where}"))
+                .prepare(&format!(
+                    "SELECT job_id, result_path FROM jobs WHERE {sweep_where}"
+                ))
                 .map_err(|e| format!("sweep select failed: {e}"))?;
 
             let rows: Vec<_> = stmt
@@ -463,8 +461,7 @@ impl JobStore {
     // ── internal helpers ──
 
     fn row_to_job(&self, r: RawJobRow) -> Result<ProofJob, String> {
-        let job_id =
-            Uuid::parse_str(&r.job_id).map_err(|e| format!("bad uuid in db: {e}"))?;
+        let job_id = Uuid::parse_str(&r.job_id).map_err(|e| format!("bad uuid in db: {e}"))?;
         let status = status_from_str(&r.status)?;
         let receipt_kind = ReceiptKind::from_str(&r.opt_receipt_kind)
             .map_err(|e| format!("bad receipt_kind in db: {e}"))?;
@@ -648,9 +645,7 @@ mod tests {
             .unwrap();
         assert!(store.has_active_job().unwrap());
 
-        store
-            .fail(job.job_id, "done".to_string())
-            .unwrap();
+        store.fail(job.job_id, "done".to_string()).unwrap();
         assert!(!store.has_active_job().unwrap());
     }
 

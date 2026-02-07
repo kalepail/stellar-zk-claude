@@ -114,7 +114,39 @@ curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 # Should print "cuda" on GPU instances, "cpu" if built with --no-default-features
 ```
 
-### 5. Expose via Cloudflare Tunnel
+### 5. Recommended production run (systemd supervisor)
+
+The API server now intentionally aborts the process if a timed-out proof remains stuck after the grace window (`TIMED_OUT_PROOF_KILL_SECS`). Running under `systemd` ensures automatic recovery.
+
+```bash
+cd /workspace/stellar-zk/risc0-asteroids-verifier
+
+# 1) Install config + unit templates
+mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
+cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
+cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/risc0-asteroids-api.service
+
+# 2) Edit secrets/settings
+nano /etc/stellar-zk/api-server.env
+# Set API_KEY and any other overrides (PROD: keep RISC0_DEV_MODE=0)
+
+# 3) Enable + start service
+systemctl daemon-reload
+systemctl enable --now risc0-asteroids-api
+
+# 4) Inspect
+systemctl status risc0-asteroids-api --no-pager
+journalctl -u risc0-asteroids-api -f
+curl -s http://127.0.0.1:8080/health | jq
+```
+
+If you update `/etc/stellar-zk/api-server.env`, apply changes with:
+
+```bash
+systemctl restart risc0-asteroids-api
+```
+
+### 6. Expose via Cloudflare Tunnel
 
 Install cloudflared (if not done during setup):
 
@@ -173,7 +205,7 @@ echo "Job ID: ${JOB_ID}"
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
-| `segment_limit_po2` | `19` | Segment size (2^n), range [16..22] |
+| `segment_limit_po2` | `19` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
 | `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
 | `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
@@ -233,15 +265,18 @@ See `api-server/.env.example` for all options. Key variables:
 | `RUST_LOG` | `info` | Log level |
 | `RISC0_DEV_MODE` | `0` | Set to `1` for fake proofs (testing only) |
 | `MAX_TAPE_BYTES` | `2097152` | Max tape payload size (2 MB) |
-| `MAX_JOBS` | `64` | Max retained jobs in memory |
+| `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |
 | `MIN_SEGMENT_LIMIT_PO2` | `16` | Min allowed segment limit |
-| `MAX_SEGMENT_LIMIT_PO2` | `22` | Max allowed segment limit |
+| `MAX_SEGMENT_LIMIT_PO2` | `21` | Max allowed segment limit |
 | `JOB_TTL_SECS` | `86400` | Finished job retention (24h) |
 | `JOB_SWEEP_SECS` | `60` | Cleanup interval |
+| `RUNNING_JOB_TIMEOUT_SECS` | `1800` | Timeout for active proofs before marking failed |
+| `TIMED_OUT_PROOF_KILL_SECS` | `120` | Grace window after timeout before forced process abort (`0` disables) |
 | `HTTP_MAX_CONNECTIONS` | `25000` | Max inbound connections |
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
+| `CORS_ALLOWED_ORIGIN` | _(empty)_ | Optional single allowed browser origin |
 | `ALLOW_DEV_MODE_REQUESTS` | `false` | Allow `allow_dev_mode=true` query param |
 
 ## Connecting the Cloudflare Worker
@@ -254,9 +289,17 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_API_KEY` (secret) | Must match the `API_KEY` on the api-server |
 | `PROVER_ACCESS_CLIENT_ID` (secret) | _(optional)_ Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` (secret) | _(optional)_ Cloudflare Access service token secret |
-| `PROVER_RECEIPT_KIND` | `composite` (should match api-server policy) |
-| `PROVER_SEGMENT_LIMIT_PO2` | `19` (must be within api-server's [min, max] range) |
+| `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
+| `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
+| `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
+| `PROVER_POLL_TIMEOUT_MS` | Absolute poll timeout before transition to retry/failure path |
+| `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |
+| `PROVER_REQUEST_TIMEOUT_MS` | Timeout for each outbound prover request |
+| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime |
+| `MAX_COMPLETED_JOBS` | Retention cap for terminal jobs in the coordinator DO |
+| `COMPLETED_JOB_RETENTION_MS` | Time-based retention cutoff for terminal jobs in the coordinator DO |
+| `ALLOW_INSECURE_PROVER_URL` | Keep `0` in production; only allow non-HTTPS for local/dev endpoints |
 
 Set the secrets:
 

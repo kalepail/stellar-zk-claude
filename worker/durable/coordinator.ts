@@ -2,8 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 import {
   ACTIVE_JOB_KEY,
   COORDINATOR_OBJECT_NAME,
+  DEFAULT_COMPLETED_JOB_RETENTION_MS,
   DEFAULT_MAX_JOB_WALL_TIME_MS,
+  DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
+  JOB_KEY_PREFIX,
 } from "../constants";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
@@ -47,6 +50,120 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
 }
 
 export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
+  private timestampMs(value: string | null): number {
+    if (!value) {
+      return 0;
+    }
+
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private async deleteArtifact(key: string | null | undefined): Promise<void> {
+    if (!key) {
+      return;
+    }
+
+    try {
+      await this.env.PROOF_ARTIFACTS.delete(key);
+    } catch (error) {
+      console.warn(`[proof-worker] failed deleting artifact ${key}: ${safeErrorMessage(error)}`);
+    }
+  }
+
+  private async pruneCompletedJobs(): Promise<void> {
+    const maxCompletedJobs = parseInteger(
+      this.env.MAX_COMPLETED_JOBS,
+      DEFAULT_MAX_COMPLETED_JOBS,
+      1,
+    );
+    const retentionMs = parseInteger(
+      this.env.COMPLETED_JOB_RETENTION_MS,
+      DEFAULT_COMPLETED_JOB_RETENTION_MS,
+      60_000,
+    );
+    const nowMs = Date.now();
+
+    const completed: Array<{
+      storageKey: string;
+      job: ProofJobRecord;
+      terminalAtMs: number;
+    }> = [];
+
+    const listPageSize = 128;
+    let startAfter: string | undefined;
+    /* eslint-disable no-await-in-loop */
+    while (true) {
+      const page = await this.ctx.storage.list<ProofJobRecord>({
+        prefix: JOB_KEY_PREFIX,
+        startAfter,
+        limit: listPageSize,
+      });
+      if (page.size === 0) {
+        break;
+      }
+
+      for (const [storageKey, value] of page) {
+        if (!value || !isTerminalProofStatus(value.status)) {
+          continue;
+        }
+
+        completed.push({
+          storageKey,
+          job: value,
+          terminalAtMs: Math.max(
+            this.timestampMs(value.completedAt),
+            this.timestampMs(value.updatedAt),
+            this.timestampMs(value.createdAt),
+          ),
+        });
+      }
+
+      const pageKeys = Array.from(page.keys());
+      const lastKey = pageKeys[pageKeys.length - 1];
+      if (!lastKey || page.size < listPageSize) {
+        break;
+      }
+
+      startAfter = lastKey;
+    }
+    /* eslint-enable no-await-in-loop */
+
+    if (completed.length === 0) {
+      return;
+    }
+
+    completed.sort((a, b) => a.terminalAtMs - b.terminalAtMs);
+
+    const toDelete = new Set<string>();
+    for (const entry of completed) {
+      if (nowMs - entry.terminalAtMs > retentionMs) {
+        toDelete.add(entry.storageKey);
+      }
+    }
+
+    const overflow = Math.max(0, completed.length - maxCompletedJobs);
+    for (let index = 0; index < overflow; index += 1) {
+      toDelete.add(completed[index].storageKey);
+    }
+
+    if (toDelete.size === 0) {
+      return;
+    }
+
+    /* eslint-disable no-await-in-loop */
+    for (const entry of completed) {
+      if (!toDelete.has(entry.storageKey)) {
+        continue;
+      }
+
+      await this.ctx.storage.delete(entry.storageKey);
+      await this.deleteArtifact(entry.job.tape.key);
+      await this.deleteArtifact(entry.job.result?.artifactKey);
+    }
+    /* eslint-enable no-await-in-loop */
+  }
+
   private async getActiveJobId(): Promise<string | null> {
     return (await this.ctx.storage.get<string>(ACTIVE_JOB_KEY)) ?? null;
   }
@@ -246,6 +363,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
+    try {
+      await this.pruneCompletedJobs();
+    } catch (error) {
+      console.warn(`[proof-worker] prune after success failed: ${safeErrorMessage(error)}`);
+    }
     return job;
   }
 
@@ -269,6 +391,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
+    try {
+      await this.pruneCompletedJobs();
+    } catch (error) {
+      console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
+    }
     return job;
   }
 
@@ -310,10 +437,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     let pollResult: Awaited<ReturnType<typeof pollProver>>;
     try {
       pollResult = await pollProver(this.env, proverJobId);
-    } catch {
+    } catch (error) {
       job.prover.pollingErrors += 1;
-      await this.saveJob(job);
+      job.status = "retrying";
+      job.updatedAt = nowIso();
+      job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
       const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+      job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+      await this.saveJob(job);
       await this.scheduleAlarm(delaySec * 1000);
       return;
     }
@@ -324,6 +455,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.prover.lastPolledAt = nowIso();
       job.updatedAt = nowIso();
       job.queue.lastError = null;
+      job.queue.nextRetryAt = null;
       await this.saveJob(job);
       await this.scheduleAlarm(pollIntervalMs);
       return;
@@ -361,10 +493,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       } catch (error) {
         // R2 write failed — retry with backoff rather than failing the job.
         job.prover.pollingErrors += 1;
+        job.status = "retrying";
         job.queue.lastError = `failed writing proof artifact to R2: ${safeErrorMessage(error)}`;
         job.updatedAt = nowIso();
-        await this.saveJob(job);
         const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+        job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+        await this.saveJob(job);
         await this.scheduleAlarm(delaySec * 1000);
         return;
       }
@@ -400,8 +534,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           job.status = "retrying";
           job.updatedAt = nowIso();
           job.queue.lastError = submitResult.message;
-          await this.saveJob(job);
           const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+          job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+          await this.saveJob(job);
           await this.scheduleAlarm(delaySec * 1000);
           return;
         }
@@ -416,8 +551,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.status = "retrying";
       job.updatedAt = nowIso();
       job.queue.lastError = pollResult.message;
-      await this.saveJob(job);
       const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+      job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+      await this.saveJob(job);
       await this.scheduleAlarm(delaySec * 1000);
       return;
     }

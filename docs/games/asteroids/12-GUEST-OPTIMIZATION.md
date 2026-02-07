@@ -111,17 +111,19 @@ profiling overhead.
 
 ### A/B test script
 
-A reusable script is checked in at `run_ab_test.sh`. It takes an optional tape path argument:
+A reusable script is checked in at `benchmarks/run_ab_test.sh`. It takes an optional tape path argument:
 
 ```bash
+cd risc0-asteroids-verifier
+
 # Short tape (default)
-./run_ab_test.sh
+./benchmarks/run_ab_test.sh
 
 # Medium tape
-./run_ab_test.sh ../test-fixtures/test-medium.tape
+./benchmarks/run_ab_test.sh ../test-fixtures/test-medium.tape
 
 # Any tape
-./run_ab_test.sh /path/to/your.tape
+./benchmarks/run_ab_test.sh /path/to/your.tape
 ```
 
 The script patches `Cargo.toml` for each experiment, builds, runs in dev mode,

@@ -1,0 +1,17 @@
+[Unit]
+Description=RISC0 Asteroids Verifier API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/workspace/stellar-zk/risc0-asteroids-verifier
+EnvironmentFile=/etc/stellar-zk/api-server.env
+ExecStart=/workspace/stellar-zk/risc0-asteroids-verifier/target/release/api-server
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -35,6 +35,7 @@ const DEFAULT_MIN_SEGMENT_LIMIT_PO2: u32 = 16;
 const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 21;
 const DEFAULT_HTTP_MAX_CONNECTIONS: usize = 25_000;
 const DEFAULT_HTTP_KEEP_ALIVE_SECS: u64 = 75;
+const DEFAULT_TIMED_OUT_PROOF_KILL_SECS: u64 = 120;
 
 #[derive(Debug, Clone, Copy)]
 struct ServerPolicy {
@@ -118,6 +119,7 @@ struct AppState {
     http_workers: Option<usize>,
     http_max_connections: usize,
     http_keep_alive_secs: u64,
+    timed_out_proof_kill_secs: u64,
     auth_required: bool,
 }
 
@@ -203,6 +205,7 @@ struct HealthResponse {
     http_workers: Option<usize>,
     http_max_connections: usize,
     http_keep_alive_secs: u64,
+    timed_out_proof_kill_secs: u64,
     auth_required: bool,
 }
 
@@ -233,6 +236,13 @@ fn read_env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn read_env_u64_allow_zero(name: &str, default: u64) -> u64 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
 }
 
@@ -317,18 +327,10 @@ fn is_request_authorized(headers: &HeaderMap, expected_api_key: Option<&str>) ->
 }
 
 async fn run_proof(
-    state: AppState,
     tape: Vec<u8>,
     options: ProveOptions,
+    started: Instant,
 ) -> Result<ProofEnvelope, String> {
-    let _permit = state
-        .prover_semaphore
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|err| format!("failed to acquire prover semaphore: {err}"))?;
-
-    let started = Instant::now();
     let proof = tokio::task::spawn_blocking(move || prove_tape(tape, options))
         .await
         .map_err(|err| format!("prover worker join failure: {err}"))?
@@ -340,21 +342,79 @@ async fn run_proof(
 }
 
 async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: ProveOptions) {
-    if let Err(e) = state
+    let permit = match state.prover_semaphore.clone().acquire_owned().await {
+        Ok(permit) => permit,
+        Err(err) => {
+            tracing::error!(job_id = %job_id, "failed to acquire prover semaphore: {err}");
+            return;
+        }
+    };
+
+    if let Err(err) = state
         .jobs
         .update_status(job_id, JobStatus::Running, Some(now_unix_s()))
     {
-        tracing::error!(job_id = %job_id, "failed to mark job running: {e}");
+        tracing::error!(job_id = %job_id, "failed to mark job running: {err}");
         return;
     }
 
+    let started = Instant::now();
     let timeout = Duration::from_secs(state.running_job_timeout_secs);
-    let prove_result = match tokio::time::timeout(timeout, run_proof(state.clone(), tape, options))
-        .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            tracing::error!(job_id = %job_id, timeout_secs = state.running_job_timeout_secs, "proof generation timed out");
+    let mut proof_task = Box::pin(run_proof(tape, options, started));
+
+    let prove_result = tokio::select! {
+        result = &mut proof_task => {
+            drop(permit);
+            result
+        }
+        _ = tokio::time::sleep(timeout) => {
+            tracing::error!(
+                job_id = %job_id,
+                timeout_secs = state.running_job_timeout_secs,
+                "proof generation timed out"
+            );
+            let mut detached_proof_task = proof_task;
+            let timed_out_job_id = job_id;
+            let timed_out_proof_kill_secs = state.timed_out_proof_kill_secs;
+            tokio::spawn(async move {
+                let _permit_guard = permit;
+                if timed_out_proof_kill_secs == 0 {
+                    match detached_proof_task.as_mut().await {
+                        Ok(_) => tracing::warn!(
+                            job_id = %timed_out_job_id,
+                            "proof completed after timeout and result was discarded"
+                        ),
+                        Err(err) => tracing::warn!(
+                            job_id = %timed_out_job_id,
+                            "proof task ended after timeout with error: {err}"
+                        ),
+                    }
+                    return;
+                }
+
+                tokio::select! {
+                    result = detached_proof_task.as_mut() => {
+                        match result {
+                            Ok(_) => tracing::warn!(
+                                job_id = %timed_out_job_id,
+                                "proof completed after timeout and result was discarded"
+                            ),
+                            Err(err) => tracing::warn!(
+                                job_id = %timed_out_job_id,
+                                "proof task ended after timeout with error: {err}"
+                            ),
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(timed_out_proof_kill_secs)) => {
+                        tracing::error!(
+                            job_id = %timed_out_job_id,
+                            timeout_secs = timed_out_proof_kill_secs,
+                            "timed-out proof is still running; aborting process for supervisor restart"
+                        );
+                        std::process::abort();
+                    }
+                }
+            });
             Err("proof generation timed out".to_string())
         }
     };
@@ -417,6 +477,7 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         http_workers: state.http_workers,
         http_max_connections: state.http_max_connections,
         http_keep_alive_secs: state.http_keep_alive_secs,
+        timed_out_proof_kill_secs: state.timed_out_proof_kill_secs,
         auth_required: state.auth_required,
     })
 }
@@ -442,6 +503,13 @@ async fn enqueue_proof_job(
     tape: Vec<u8>,
     options: ProveOptions,
 ) -> HttpResponse {
+    if state.prover_semaphore.available_permits() == 0 {
+        return json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "prover is busy: no execution slots available",
+        );
+    }
+
     let job_id = Uuid::new_v4();
     let job = ProofJob {
         job_id,
@@ -502,6 +570,22 @@ async fn get_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl Resp
 
 async fn delete_job(state: web::Data<AppState>, path: web::Path<Uuid>) -> impl Responder {
     let job_id = path.into_inner();
+    match state.jobs.get(job_id) {
+        Ok(Some(job)) => {
+            if job.status == JobStatus::Queued || job.status == JobStatus::Running {
+                return json_error(
+                    StatusCode::CONFLICT,
+                    "cannot delete an active job (status is queued or running)",
+                );
+            }
+        }
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, format!("job not found: {job_id}")),
+        Err(e) => {
+            tracing::error!(job_id = %job_id, "delete preflight get failed: {e}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "job store error");
+        }
+    }
+
     match state.jobs.delete(job_id) {
         Ok(true) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
@@ -538,6 +622,14 @@ async fn main() -> std::io::Result<()> {
     let http_workers = read_env_optional_usize("HTTP_WORKERS");
     let http_max_connections = read_env_usize("HTTP_MAX_CONNECTIONS", DEFAULT_HTTP_MAX_CONNECTIONS);
     let http_keep_alive_secs = read_env_u64("HTTP_KEEP_ALIVE_SECS", DEFAULT_HTTP_KEEP_ALIVE_SECS);
+    let timed_out_proof_kill_secs = read_env_u64_allow_zero(
+        "TIMED_OUT_PROOF_KILL_SECS",
+        DEFAULT_TIMED_OUT_PROOF_KILL_SECS,
+    );
+    let cors_allowed_origin = env::var("CORS_ALLOWED_ORIGIN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let api_key = env::var("API_KEY")
         .ok()
         .map(|value| value.trim().to_string())
@@ -549,7 +641,7 @@ async fn main() -> std::io::Result<()> {
     let job_store = JobStore::open(&data_dir).expect("failed to open job store");
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} auth_required={} data_dir={}",
+        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
         bind_addr,
         accelerator(),
         FIXED_PROVER_CONCURRENCY,
@@ -561,6 +653,8 @@ async fn main() -> std::io::Result<()> {
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
+        timed_out_proof_kill_secs,
+        cors_allowed_origin.as_deref().unwrap_or("disabled"),
         auth_required,
         data_dir.display()
     );
@@ -576,19 +670,25 @@ async fn main() -> std::io::Result<()> {
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
+        timed_out_proof_kill_secs,
         auth_required,
     };
     spawn_job_cleanup_task(state.clone(), job_sweep_secs);
 
     let state_for_server = state.clone();
     let api_key_for_server = api_key.clone();
+    let cors_allowed_origin_for_server = cors_allowed_origin.clone();
     let mut server = HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
-            .expose_any_header()
-            .max_age(3600);
+        let cors = if let Some(origin) = cors_allowed_origin_for_server.clone() {
+            Cors::default()
+                .allowed_origin(&origin)
+                .allowed_methods(vec!["GET", "POST", "DELETE"])
+                .allow_any_header()
+                .expose_any_header()
+                .max_age(3600)
+        } else {
+            Cors::default()
+        };
         let required_api_key = api_key_for_server.clone();
 
         App::new()
@@ -655,6 +755,7 @@ mod tests {
             http_workers: None,
             http_max_connections: DEFAULT_HTTP_MAX_CONNECTIONS,
             http_keep_alive_secs: DEFAULT_HTTP_KEEP_ALIVE_SECS,
+            timed_out_proof_kill_secs: DEFAULT_TIMED_OUT_PROOF_KILL_SECS,
             auth_required: false,
         };
         (state, dir)
