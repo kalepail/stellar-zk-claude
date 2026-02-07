@@ -78,6 +78,10 @@ impl JobStore {
         )
         .map_err(|e| format!("failed to create schema: {e}"))?;
 
+        // Idempotent migration: add error_code column if it doesn't exist.
+        conn.execute("ALTER TABLE jobs ADD COLUMN error_code TEXT", [])
+            .ok();
+
         let store = Self {
             conn: Mutex::new(conn),
             results_dir,
@@ -96,7 +100,8 @@ impl JobStore {
         let conn = self.conn.lock().unwrap();
         let now = now_unix_s();
         conn.execute(
-            "UPDATE jobs SET status = 'failed', finished_at = ?1, error = 'server restarted'
+            "UPDATE jobs SET status = 'failed', finished_at = ?1, error = 'server restarted',
+                    error_code = 'server_restarted'
              WHERE status IN ('queued', 'running')",
             params![now as i64],
         )
