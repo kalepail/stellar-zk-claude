@@ -85,16 +85,12 @@ Prover concurrency is fixed at `1` in code.
 
 These defaults keep proving in production-safe mode.
 
-For timeout recovery in production, run the server under a supervisor (`systemd`, Docker restart policy, Kubernetes, etc.) so process aborts are automatically restarted.
+For timeout recovery in production, run the server under a process supervisor (supervisord, Docker restart policy, Kubernetes, etc.) so process aborts are automatically restarted.
 
 ## Vast.ai Deployment
 
-See the parent [README.md](../README.md) for full Vast.ai setup, build, run, `systemd` supervisor setup, and Cloudflare Tunnel instructions.
+See the parent [README.md](../README.md) for full Vast.ai setup, build, run, supervisord setup, and Cloudflare Tunnel instructions.
 
 ## Cloudflare Tunnel
 
-```bash
-cloudflared tunnel --url http://127.0.0.1:8080
-```
-
-For production, pair Tunnel with Cloudflare Access service tokens and keep `API_KEY` enabled as app-level defense in depth.
+The tunnel is managed by supervisord for automatic restart. See the parent [README.md](../README.md) for setup. For production, use a named tunnel and pair with Cloudflare Access service tokens, keeping `API_KEY` enabled as app-level defense in depth.

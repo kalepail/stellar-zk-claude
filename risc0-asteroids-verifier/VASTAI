@@ -29,7 +29,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   libclang-dev \
   libssl-dev \
   protobuf-compiler \
-  pkg-config
+  pkg-config \
+  supervisor
 rm -rf /var/lib/apt/lists/*
 
 # ── 2. Clone / update repository ─────────────────────────────────────────
@@ -113,28 +114,31 @@ cat <<EOF
     # Build (CPU only, for testing without GPU):
     cargo build --locked --release -p api-server --no-default-features
 
-    # Run:
-    API_KEY='your-secret' cargo run --release -p api-server
+    # Quick test run (foreground):
+    API_KEY='your-secret' ./target/release/api-server
 
-    # Recommended production mode (systemd supervisor):
+    # Recommended production mode (supervisord — Vast.ai has no systemd):
     mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
-    cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
-    cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
+    cp deploy/supervisord/risc0-asteroids-api.conf /etc/supervisor/conf.d/
+    cp api-server/.env.example /etc/stellar-zk/api-server.env
 
-    # IMPORTANT: Update WorkingDirectory and ExecStart in the service file
+    # IMPORTANT: Update command and directory paths in the supervisor conf
     # to match your actual clone path (${PROVER_DIR}):
-    nano /etc/systemd/system/risc0-asteroids-api.service
-    nano /etc/stellar-zk/api-server.env
+    nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
+    nano /etc/stellar-zk/api-server.env   # set API_KEY and other config
 
-    systemctl daemon-reload
-    systemctl enable --now risc0-asteroids-api
-    journalctl -u risc0-asteroids-api -f
+    # Cloudflare Tunnel (also supervised for auto-restart):
+    cp deploy/supervisord/cloudflared.conf /etc/supervisor/conf.d/
+    # For production: edit the conf to use a named tunnel instead of quick-tunnel
+
+    # Start everything:
+    supervisord -c /etc/supervisor/supervisord.conf
+    supervisorctl reread && supervisorctl update
+    supervisorctl status                   # verify both are running
+    tail -f /var/lib/stellar-zk/prover/api-server.log
 
     # Verify GPU is active:
     curl -s http://127.0.0.1:8080/health | jq '.accelerator'
-
-    # Expose via Cloudflare Tunnel:
-    cloudflared tunnel --url http://127.0.0.1:8080
 
   See risc0-asteroids-verifier/README.md for full documentation.
 ========================================================================

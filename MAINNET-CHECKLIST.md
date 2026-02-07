@@ -283,14 +283,15 @@ Production readiness for the Vast.ai prover server.
       fetches latest. Pin specific versions.
 - [ ] **Use `cargo build --locked`** to ensure the `Cargo.lock` is respected
       and dependencies don't drift.
-- [ ] **Run the api-server under systemd** for automatic restart on crash. The
-      api-server intentionally aborts the process when a timed-out proof remains
-      stuck (see `TIMED_OUT_PROOF_KILL_SECS`). Running under systemd ensures
-      automatic recovery. The compiled binary is self-contained (no `cargo` or
-      RISC Zero CLI tools needed at runtime; CUDA libs are in system `ld` paths
-      on Vast.ai). Deploy files already exist at
-      `deploy/systemd/risc0-asteroids-api.service` and
-      `deploy/systemd/api-server.env.example`:
+- [ ] **Run the api-server under supervisord** for automatic restart on crash.
+      The api-server intentionally aborts the process when a timed-out proof
+      remains stuck (see `TIMED_OUT_PROOF_KILL_SECS`). A process supervisor
+      ensures automatic recovery. **Vast.ai containers do not have systemd**
+      (PID 1 is not init), so use supervisord instead. The compiled binary is
+      self-contained (no `cargo` or RISC Zero CLI tools needed at runtime;
+      CUDA libs are in system `ld` paths on Vast.ai). Deploy files:
+      - `deploy/supervisord/risc0-asteroids-api.conf` (supervisord program)
+      - `api-server/.env.example` (env config)
       ```bash
       # On the Vast.ai box via SSH:
       cd <your-clone>/risc0-asteroids-verifier
@@ -298,22 +299,23 @@ Production readiness for the Vast.ai prover server.
       # 1. Build first (the service runs the compiled binary, not cargo run)
       cargo build --locked --release -p api-server
 
-      # 2. Install the systemd unit
+      # 2. Install supervisord config and env file
       mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
-      cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
-      cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
+      cp deploy/supervisord/risc0-asteroids-api.conf /etc/supervisor/conf.d/
+      cp api-server/.env.example /etc/stellar-zk/api-server.env
 
       # 3. IMPORTANT: Edit BOTH files to match your actual clone path.
-      #    The service file defaults to /workspace/stellar-zk/ but a manual
-      #    git clone uses /workspace/stellar-zk-claude/. Update
-      #    WorkingDirectory and ExecStart in the .service file accordingly.
-      nano /etc/systemd/system/risc0-asteroids-api.service
+      #    The VASTAI script defaults to /workspace/stellar-zk/ but a manual
+      #    git clone uses /workspace/stellar-zk-claude/. Update command and
+      #    directory in the .conf file accordingly.
+      nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
       nano /etc/stellar-zk/api-server.env   # set API_KEY and other config
 
-      # 4. Enable and start
-      systemctl daemon-reload
-      systemctl enable --now risc0-asteroids-api
-      journalctl -u risc0-asteroids-api -f  # verify it started
+      # 4. Start (or reload if supervisord is already running)
+      supervisord -c /etc/supervisor/supervisord.conf  # first time
+      supervisorctl reread && supervisorctl update      # after config changes
+      supervisorctl status                              # verify running
+      tail -f /var/lib/stellar-zk/prover/api-server.log
       ```
 
 ---
@@ -417,8 +419,7 @@ Final verification before flipping the switch.
       - `stellar-asteroids-contract/.gitignore` ignores `.testnet-state.env`
         — but **no `.testnet-state.env.example`** exists
       - `risc0-asteroids-verifier/api-server/.env.example` exists (good)
-      - `risc0-asteroids-verifier/deploy/systemd/api-server.env.example`
-        exists (good)
+      - `risc0-asteroids-verifier/api-server/.env.example` exists (good)
       - Root `.gitignore` does **not** ignore `.env` — add a catch-all
         `.env*` pattern (excluding `.env.example`) as a safety net
       - `risc0-asteroids-verifier/.gitignore` does **not** exist — any
@@ -442,12 +443,12 @@ anything to mainnet so all deployed config points to the final names.
       paths today:
       - `risc0-asteroids-verifier/VASTAI` — `REPO_URL`, `WORKDIR`,
         "Next steps" output (line 106)
-      - `risc0-asteroids-verifier/deploy/systemd/risc0-asteroids-api.service`
-        — `WorkingDirectory`, `ExecStart`
+      - `risc0-asteroids-verifier/deploy/supervisord/risc0-asteroids-api.conf`
+        — `command`, `directory`
       - `risc0-asteroids-verifier/README.md` — clone URLs, paths
       - `MAINNET-CHECKLIST.md` — references throughout
 - [ ] **Update `REPO_URL`** in the VASTAI script to the new GitHub URL.
-- [ ] **Update `WORKDIR`** in the VASTAI script and systemd service paths to
+- [ ] **Update `WORKDIR`** in the VASTAI script and supervisord conf paths to
       match the new directory layout.
 - [ ] **Update Cloudflare Tunnel config** if the tunnel name or origin path
       references the old repo name.

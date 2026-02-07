@@ -114,49 +114,48 @@ curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 # Should print "cuda" on GPU instances, "cpu" if built with --no-default-features
 ```
 
-### 5. Recommended production run (systemd supervisor)
+### 5. Recommended production run (supervisord)
 
-The API server now intentionally aborts the process if a timed-out proof remains stuck after the grace window (`TIMED_OUT_PROOF_KILL_SECS`). Running under `systemd` ensures automatic recovery.
+The API server intentionally aborts the process if a timed-out proof remains stuck after the grace window (`TIMED_OUT_PROOF_KILL_SECS`). Running under supervisord ensures automatic recovery. Vast.ai containers do not have systemd, so supervisord is the recommended process manager.
 
 ```bash
 cd <WORKDIR>/risc0-asteroids-verifier
 
-# 1) Install config + unit templates
+# 1) Install config
 mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
-cp deploy/systemd/api-server.env.example /etc/stellar-zk/api-server.env
-cp deploy/systemd/risc0-asteroids-api.service /etc/systemd/system/
+cp deploy/supervisord/risc0-asteroids-api.conf /etc/supervisor/conf.d/
+cp api-server/.env.example /etc/stellar-zk/api-server.env
 
-# 2) Update the service file paths to match your actual clone directory.
-#    The defaults assume /workspace/stellar-zk — edit WorkingDirectory and
-#    ExecStart if your clone is elsewhere (e.g. /workspace/stellar-zk-claude).
-nano /etc/systemd/system/risc0-asteroids-api.service
+# 2) Update the conf file paths to match your actual clone directory.
+#    The defaults assume /workspace/stellar-zk — edit command and directory
+#    if your clone is elsewhere (e.g. /workspace/stellar-zk-claude).
+nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
 
 # 3) Edit secrets/settings
 nano /etc/stellar-zk/api-server.env
 # Set API_KEY and any other overrides (PROD: keep RISC0_DEV_MODE=0)
 
-# 4) Enable + start service
-systemctl daemon-reload
-systemctl enable --now risc0-asteroids-api
+# 4) Start supervisord (first time) or reload config
+supervisord -c /etc/supervisor/supervisord.conf   # first time only
+supervisorctl reread && supervisorctl update       # after config changes
 
 # 5) Inspect
-systemctl status risc0-asteroids-api --no-pager
-journalctl -u risc0-asteroids-api -f
+supervisorctl status
+tail -f /var/lib/stellar-zk/prover/api-server.log
 curl -s http://127.0.0.1:8080/health | jq
 ```
 
 If you update `/etc/stellar-zk/api-server.env`, apply changes with:
 
 ```bash
-systemctl restart risc0-asteroids-api
+supervisorctl restart risc0-asteroids-api
 ```
 
 ### 6. Expose via Cloudflare Tunnel
 
-Install cloudflared (if not done during setup):
+Install cloudflared (if not done during setup — the VASTAI script handles this when `INSTALL_CLOUDFLARED=1`):
 
 ```bash
-# Install
 mkdir -p --mode=0755 /usr/share/keyrings
 curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | \
   tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
@@ -165,16 +164,25 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudf
 apt-get update -qq && apt-get install -y cloudflared
 ```
 
-Start the tunnel:
+The tunnel is managed by supervisord alongside the api-server for automatic restart:
 
 ```bash
-# Quick tunnel (generates a temporary *.trycloudflare.com URL):
-cloudflared tunnel --url http://127.0.0.1:8080
+cp deploy/supervisord/cloudflared.conf /etc/supervisor/conf.d/
+supervisorctl reread && supervisorctl update
+supervisorctl status   # both risc0-asteroids-api and cloudflared should be RUNNING
 ```
 
-The tunnel will print a URL like `https://something-random.trycloudflare.com`. Use this as the `PROVER_BASE_URL` in your Cloudflare Worker config.
+By default this uses quick-tunnel mode (temporary `*.trycloudflare.com` URL). For production, set up a named tunnel so the URL is stable across restarts:
 
-For a persistent named tunnel, see the [Cloudflare Tunnel docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+```bash
+cloudflared tunnel login
+cloudflared tunnel create risc0-prover
+# Then edit /etc/supervisor/conf.d/cloudflared.conf:
+#   command=cloudflared tunnel run risc0-prover
+supervisorctl reread && supervisorctl update
+```
+
+Use the tunnel URL as `PROVER_BASE_URL` in your Cloudflare Worker config. For more details see the [Cloudflare Tunnel docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
 
 ## API Endpoints
 
