@@ -28,6 +28,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAPE_FILE="$ROOT_DIR/test-fixtures/test-medium.tape"
 SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
+LONG_TAPE="$ROOT_DIR/test-fixtures/test-real-game.tape"
 POLL_INTERVAL=5
 DELAY_MINUTES=5
 
@@ -169,6 +170,9 @@ echo ""
 echo "Target:      $PROVER_URL"
 echo "Tape:        $(basename "$TAPE_FILE") ($(wc -c < "$TAPE_FILE" | tr -d ' ') bytes)"
 echo "Short tape:  $(basename "$SHORT_TAPE") ($(wc -c < "$SHORT_TAPE" | tr -d ' ') bytes)"
+if [[ -f "$LONG_TAPE" ]]; then
+echo "Long tape:   $(basename "$LONG_TAPE") ($(wc -c < "$LONG_TAPE" | tr -d ' ') bytes)"
+fi
 echo "Delay test:  ${DELAY_MINUTES} minutes"
 echo ""
 
@@ -540,12 +544,101 @@ done
 
 echo ""
 
-# ── Phase 5: Immediate Retrieval ────────────────────────────────────────────
+# ── Phase 5: Running Status Observation (long tape) ─────────────────────────
 
-echo "── Phase 5: Immediate Retrieval ───────────────────────────────"
+echo "── Phase 5: Running Status Observation (long tape) ────────────"
+
+if [[ -f "$LONG_TAPE" ]]; then
+  wait_for_idle
+
+  echo ""
+  echo "[5a] Submit long tape to observe 'running' status"
+  long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
+  info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
+
+  resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20&receipt_kind=composite" \
+    --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
+
+  if [[ $? -ne 0 ]]; then
+    fail "failed to submit long tape"
+  else
+    LONG_JOB_ID=$(echo "$resp" | json_field job_id)
+    JOBS_TO_CLEAN+=("$LONG_JOB_ID")
+
+    if [[ -n "$LONG_JOB_ID" ]]; then
+      pass "long tape submitted, job_id=$LONG_JOB_ID"
+
+      # Poll aggressively at 1s intervals to catch 'running'
+      echo ""
+      echo "[5b] Polling at 1s intervals for 'running' status"
+      saw_queued=false
+      saw_running=false
+      long_start=$(date +%s)
+
+      while true; do
+        sleep 1
+        elapsed=$(( $(date +%s) - long_start ))
+        jr=$(curl -sf "$PROVER_URL/api/jobs/$LONG_JOB_ID" 2>/dev/null) || { info "poll error (${elapsed}s)"; continue; }
+        status=$(echo "$jr" | json_field status)
+
+        if [[ "$status" == "queued" && "$saw_queued" == "false" ]]; then
+          saw_queued=true
+          info "observed 'queued' at ${elapsed}s"
+        fi
+
+        if [[ "$status" == "running" && "$saw_running" == "false" ]]; then
+          saw_running=true
+          pass "observed 'running' status at ${elapsed}s"
+        fi
+
+        if [[ "$status" == "succeeded" ]]; then
+          long_elapsed=$(( $(date +%s) - long_start ))
+          pass "long tape proof completed in ${long_elapsed}s"
+
+          long_score=$(echo "$jr" | json_field_nested result.proof.journal.final_score)
+          long_frames=$(echo "$jr" | json_field_nested result.proof.journal.frame_count)
+          long_segs=$(echo "$jr" | json_field_nested result.proof.stats.segments)
+          info "final_score=$long_score, frame_count=$long_frames, segments=$long_segs"
+
+          if [[ "$saw_running" == "true" ]]; then
+            pass "full lifecycle observed: queued → running → succeeded"
+          else
+            fail "never observed 'running' status despite ${long_elapsed}s proving time"
+          fi
+          break
+
+        elif [[ "$status" == "failed" ]]; then
+          error_msg=$(echo "$jr" | json_field error)
+          fail "long tape proof failed: $error_msg"
+          break
+        else
+          # Print status every 5s to avoid spam
+          if [[ $((elapsed % 5)) -eq 0 ]]; then
+            info "$status (${elapsed}s)..."
+          fi
+          if [[ $elapsed -gt 900 ]]; then
+            fail "long tape proof stuck for over 15 minutes"
+            break
+          fi
+        fi
+      done
+    else
+      fail "no job_id in submission response"
+    fi
+  fi
+else
+  info "long tape not found at $LONG_TAPE — skipping running-status test"
+  warn "skipped running-status observation (no long tape)"
+fi
 
 echo ""
-echo "[5a] GET completed job immediately after proving"
+
+# ── Phase 6: Immediate Retrieval ────────────────────────────────────────────
+
+echo "── Phase 6: Immediate Retrieval ───────────────────────────────"
+
+echo ""
+echo "[6a] GET completed job immediately after proving"
 jr=$(curl -sf "$PROVER_URL/api/jobs/$JOB_ID" 2>/dev/null)
 if [[ $? -eq 0 ]]; then
   status=$(echo "$jr" | json_field status)
@@ -568,7 +661,7 @@ fi
 
 # Verify the earliest garbage job is STILL retrievable
 echo ""
-echo "[5b] GET first garbage job (cross-job persistence)"
+echo "[6b] GET first garbage job (cross-job persistence)"
 if [[ -n "$GARBAGE_JOB_1" ]]; then
   gjr=$(curl -sf "$PROVER_URL/api/jobs/$GARBAGE_JOB_1" 2>/dev/null)
   if [[ $? -eq 0 ]]; then
@@ -585,9 +678,9 @@ fi
 
 echo ""
 
-# ── Phase 6: Post-Prove Health ──────────────────────────────────────────────
+# ── Phase 7: Post-Prove Health ──────────────────────────────────────────────
 
-echo "── Phase 6: Post-Prove Health ─────────────────────────────────"
+echo "── Phase 7: Post-Prove Health ─────────────────────────────────"
 
 health_resp=$(curl -sf "$PROVER_URL/health" 2>/dev/null)
 stored=$(echo "$health_resp" | json_field stored_jobs)
@@ -602,7 +695,7 @@ else
   fail "prover not idle: running=$running, queued=$queued"
 fi
 
-# stored should be initial + garbage_1 + 5 accumulated + medium proof = initial + 7
+# stored should be initial + garbage_1 + 5 accumulated + medium proof (+ long proof if run) = initial + 7 or 8
 expected_stored=$((INITIAL_STORED + 7))
 if [[ "$stored" -ge "$expected_stored" ]]; then
   pass "stored_jobs count accurate ($stored >= $expected_stored)"
@@ -612,9 +705,9 @@ fi
 
 echo ""
 
-# ── Phase 7: Delayed Retrieval ──────────────────────────────────────────────
+# ── Phase 8: Delayed Retrieval ──────────────────────────────────────────────
 
-echo "── Phase 7: Delayed Retrieval (${DELAY_MINUTES} minute wait) ──────────────"
+echo "── Phase 8: Delayed Retrieval (${DELAY_MINUTES} minute wait) ──────────────"
 
 delay_secs=$((DELAY_MINUTES * 60))
 echo ""
@@ -648,7 +741,7 @@ while [[ $elapsed_wait -lt $delay_secs ]]; do
 done
 
 echo ""
-echo "[7a] GET succeeded job after ${DELAY_MINUTES} minute delay"
+echo "[8a] GET succeeded job after ${DELAY_MINUTES} minute delay"
 resp_raw=$(http_status_and_body "$PROVER_URL/api/jobs/$JOB_ID")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -688,7 +781,7 @@ fi
 
 # Re-check ALL accumulated failed jobs
 echo ""
-echo "[7b] GET all accumulated failed jobs after ${DELAY_MINUTES} minute delay"
+echo "[8b] GET all accumulated failed jobs after ${DELAY_MINUTES} minute delay"
 failed_still_ok=0
 failed_missing=0
 for jid in "${ACCUMULATED_IDS[@]}"; do
@@ -717,7 +810,7 @@ fi
 # Re-check the very first garbage job
 if [[ -n "$GARBAGE_JOB_1" ]]; then
   echo ""
-  echo "[7c] GET first garbage job after ${DELAY_MINUTES} minute delay"
+  echo "[8c] GET first garbage job after ${DELAY_MINUTES} minute delay"
   gjr_delayed=$(curl -sf "$PROVER_URL/api/jobs/$GARBAGE_JOB_1" 2>/dev/null)
   if [[ $? -eq 0 ]]; then
     gstatus=$(echo "$gjr_delayed" | json_field status)
@@ -735,12 +828,12 @@ fi
 
 echo ""
 
-# ── Phase 8: Delete & Verify ───────────────────────────────────────────────
+# ── Phase 9: Delete & Verify ───────────────────────────────────────────────
 
-echo "── Phase 8: Delete & Verify ───────────────────────────────────"
+echo "── Phase 9: Delete & Verify ───────────────────────────────────"
 
 echo ""
-echo "[8a] DELETE succeeded job"
+echo "[9a] DELETE succeeded job"
 resp_raw=$(http_status_and_body -X DELETE "$PROVER_URL/api/jobs/$JOB_ID")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -757,7 +850,7 @@ else
 fi
 
 echo ""
-echo "[8b] GET deleted job (should be 404)"
+echo "[9b] GET deleted job (should be 404)"
 resp_raw=$(http_status_and_body "$PROVER_URL/api/jobs/$JOB_ID")
 http_code=$(echo "$resp_raw" | tail -1)
 
@@ -768,7 +861,7 @@ else
 fi
 
 echo ""
-echo "[8c] DELETE already-deleted job (should be 404)"
+echo "[9c] DELETE already-deleted job (should be 404)"
 resp_raw=$(http_status_and_body -X DELETE "$PROVER_URL/api/jobs/$JOB_ID")
 http_code=$(echo "$resp_raw" | tail -1)
 
@@ -780,9 +873,9 @@ fi
 
 echo ""
 
-# ── Phase 9: Cleanup ───────────────────────────────────────────────────────
+# ── Phase 10: Cleanup ──────────────────────────────────────────────────────
 
-echo "── Phase 9: Cleanup ─────────────────────────────────────────"
+echo "── Phase 10: Cleanup ────────────────────────────────────────"
 echo ""
 echo "Deleting all test jobs..."
 
@@ -802,7 +895,7 @@ info "stored_jobs after cleanup: $stored_after (was $INITIAL_STORED at start)"
 
 echo ""
 
-# ── Phase 10: Summary ──────────────────────────────────────────────────────
+# ── Phase 11: Summary ──────────────────────────────────────────────────────
 
 echo "================================================================"
 echo "STRESS TEST SUMMARY"
