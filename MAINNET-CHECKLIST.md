@@ -407,6 +407,24 @@ Final verification before flipping the switch.
       - Can the R2 bucket be accessed publicly?
       - Are all dev-mode flags disabled?
       - Is HTTPS enforced end-to-end?
+- [ ] **Verify no secrets are committed and `.example` files exist** for every
+      env-var surface. Audit the repo for leaked keys, tokens, or credentials
+      and ensure every place that consumes env variables has a checked-in
+      example file so new developers know what to set. Current state:
+      - `.gitignore` ignores `.dev.vars` (Cloudflare Worker secrets) — but
+        **no `.dev.vars.example`** exists to document expected keys
+        (`PROVER_API_KEY`, `PROVER_ACCESS_CLIENT_ID`, etc.)
+      - `stellar-asteroids-contract/.gitignore` ignores `.testnet-state.env`
+        — but **no `.testnet-state.env.example`** exists
+      - `risc0-asteroids-verifier/api-server/.env.example` exists (good)
+      - `risc0-asteroids-verifier/deploy/systemd/api-server.env.example`
+        exists (good)
+      - Root `.gitignore` does **not** ignore `.env` — add a catch-all
+        `.env*` pattern (excluding `.env.example`) as a safety net
+      - `risc0-asteroids-verifier/.gitignore` does **not** exist — any
+        `.env` dropped in the prover workspace would be committed
+      - Run `git log --all --diff-filter=A -- '*.env' '*.vars' '*secret*'`
+        to check history for accidentally committed secrets
 
 ---
 
@@ -461,6 +479,24 @@ anything to mainnet so all deployed config points to the final names.
       - Decide if all components should use the same license or if different
         parts warrant different licenses (e.g. MIT for frontend, Apache 2.0
         for prover)
+- [ ] **Comprehensive documentation sweep.** Review and update all READMEs,
+      inline code comments, doc specs, and operational notes for accuracy,
+      staleness, and consistency with the final project name/URLs. Files to
+      cover:
+      - READMEs: `docs/README.md`, `risc0-asteroids-verifier/README.md`,
+        `risc0-asteroids-verifier/api-server/README.md`,
+        `stellar-asteroids-contract/README.md` (no root-level README exists
+        — consider adding one)
+      - Specs (30+ files): `docs/games/asteroids/` (game, verification,
+        integer math, proving system, proof gateway, client integration,
+        guest optimization specs) and `docs/zk/` (protocol foundations,
+        proving systems, developer tools, security)
+      - Operational docs: `MAINNET-CHECKLIST.md`,
+        `stellar-asteroids-contract/codex-improvements.md`
+      - Inline comments: code comments referencing testnet contract IDs,
+        placeholder URLs, old repo names, or TODO/FIXME/HACK markers
+      - Script help text: `VASTAI` "Next steps" output, deploy script
+        banners, CLI `--help` strings
 - [ ] **Review terms of service / disclaimer** for the game and token. Minting
       tokens based on game scores may have regulatory considerations depending
       on jurisdiction.
