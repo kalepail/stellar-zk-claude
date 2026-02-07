@@ -21,3 +21,6 @@ Thumbs.db
 # Logs
 *.log
 bun-debug.log*
+
+# Batch test output
+batch-results/
