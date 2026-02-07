@@ -12,7 +12,6 @@ pub const SEGMENT_LIMIT_PO2_DEFAULT: u32 = 21;
 /// Each u32 word is encoded as little-endian, matching RISC Zero's Digest byte order.
 pub fn image_id_hex() -> String {
     VERIFY_TAPE_ID
-        .as_words()
         .iter()
         .flat_map(|w| w.to_le_bytes())
         .map(|b| format!("{b:02x}"))
