@@ -29,7 +29,7 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
       return;
     }
 
-    const game = new AsteroidsGame(canvas);
+    const game = new AsteroidsGame({ canvas });
     let modeBefore = game.getMode();
     let watcherFrame: number | null = null;
     let disposed = false;

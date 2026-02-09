@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
+  MAX_PROVER_RECOVERY_ATTEMPTS,
 } from "../constants";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
@@ -171,7 +172,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   private async loadJob(jobId: string): Promise<ProofJobRecord | null> {
-    return (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
+    const job = (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
+    if (!job) {
+      return null;
+    }
+
+    if (typeof job.prover.recoveryAttempts !== "number") {
+      job.prover.recoveryAttempts = 0;
+    }
+
+    return job;
   }
 
   private async saveJob(job: ProofJobRecord): Promise<void> {
@@ -247,6 +257,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         statusUrl: null,
         lastPolledAt: null,
         pollingErrors: 0,
+        recoveryAttempts: 0,
       },
       result: null,
       error: null,
@@ -332,6 +343,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     proverJobId: string,
     statusUrl: string,
+    recoveryAttempts?: number,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -346,6 +358,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.status = "queued";
     job.prover.statusUrl = statusUrl;
     job.prover.pollingErrors = 0;
+    job.prover.recoveryAttempts = recoveryAttempts ?? job.prover.recoveryAttempts;
     await this.saveJob(job);
 
     const pollIntervalMs = parseInteger(
@@ -451,7 +464,59 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     const proverJobId = job.prover.jobId;
     if (!proverJobId) {
-      await this.markFailed(activeJobId, "alarm fired but no prover job ID set");
+      const recoveryAttempts = job.prover.recoveryAttempts;
+      if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+        await this.markFailed(
+          activeJobId,
+          `prover recovery exhausted after ${recoveryAttempts} attempt(s): missing prover job ID`,
+        );
+        return;
+      }
+
+      const nextRecoveryAttempts = recoveryAttempts + 1;
+      const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
+      if (!tapeObject) {
+        await this.markFailed(activeJobId, "missing tape artifact in R2 during re-submit");
+        return;
+      }
+
+      const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
+      const submitResult = await submitToProver(this.env, tapeBytes);
+
+      if (submitResult.type === "success") {
+        await this.markProverAccepted(
+          activeJobId,
+          submitResult.jobId,
+          submitResult.statusUrl,
+          nextRecoveryAttempts,
+        );
+        // markProverAccepted already schedules the next alarm
+        return;
+      }
+
+      if (submitResult.type === "retry") {
+        if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+          await this.markFailed(
+            activeJobId,
+            `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
+          );
+          return;
+        }
+
+        job.prover.pollingErrors += 1;
+        job.prover.recoveryAttempts = nextRecoveryAttempts;
+        job.status = "retrying";
+        job.updatedAt = nowIso();
+        job.queue.lastError = submitResult.message;
+        const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+        job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+        await this.saveJob(job);
+        await this.scheduleAlarm(delaySec * 1000);
+        return;
+      }
+
+      // fatal
+      await this.markFailed(activeJobId, submitResult.message);
       return;
     }
 
@@ -530,6 +595,17 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     if (pollResult.type === "retry") {
       if (pollResult.clearProverJob) {
+        const recoveryAttempts = job.prover.recoveryAttempts;
+        if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+          await this.markFailed(
+            activeJobId,
+            `prover recovery exhausted after ${recoveryAttempts} attempt(s): ${pollResult.message}`,
+          );
+          return;
+        }
+
+        const nextRecoveryAttempts = recoveryAttempts + 1;
+
         // Prover lost the job (e.g. restart). Re-read tape and re-submit.
         const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
         if (!tapeObject) {
@@ -541,17 +617,31 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         const submitResult = await submitToProver(this.env, tapeBytes);
 
         if (submitResult.type === "success") {
-          await this.markProverAccepted(activeJobId, submitResult.jobId, submitResult.statusUrl);
+          await this.markProverAccepted(
+            activeJobId,
+            submitResult.jobId,
+            submitResult.statusUrl,
+            nextRecoveryAttempts,
+          );
           // markProverAccepted already schedules the next alarm
           return;
         }
 
         if (submitResult.type === "retry") {
+          if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+            await this.markFailed(
+              activeJobId,
+              `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
+            );
+            return;
+          }
+
           job.prover.jobId = null;
           job.prover.status = null;
           job.prover.statusUrl = null;
           job.prover.lastPolledAt = null;
           job.prover.pollingErrors += 1;
+          job.prover.recoveryAttempts = nextRecoveryAttempts;
           job.status = "retrying";
           job.updatedAt = nowIso();
           job.queue.lastError = submitResult.message;

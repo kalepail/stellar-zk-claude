@@ -136,7 +136,7 @@
   padding: 0;
   display: grid;
   gap: 0.5rem 0.8rem;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(6, 1fr);
 }
 
 .proof-meta-grid div {

@@ -32,6 +32,7 @@ export interface ProverTracking {
   statusUrl: string | null;
   lastPolledAt: string | null;
   pollingErrors: number;
+  recoveryAttempts: number;
 }
 
 export interface ProofJournal {
@@ -106,7 +107,6 @@ export interface GatewayHealthResponse {
   success: true;
   service: string;
   mode: string;
-  prover_base_url: string;
   expected: {
     rules_digest_hex: string;
     ruleset: string;

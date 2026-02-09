@@ -41,12 +41,12 @@ export class SeededRng {
     return min + this.nextInt(max - min);
   }
 
-  /** Random float in [0, 1) - for compatibility during transition */
+  /** Random float in [0, 1) */
   nextFloat(): number {
     return this.next() / 0x100000000;
   }
 
-  /** Random float in [min, max) - for compatibility during transition */
+  /** Random float in [min, max) */
   nextFloatRange(min: number, max: number): number {
     return min + this.nextFloat() * (max - min);
   }

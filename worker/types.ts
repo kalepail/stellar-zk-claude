@@ -69,6 +69,7 @@ export interface ProverTracking {
   statusUrl: string | null;
   lastPolledAt: string | null;
   pollingErrors: number;
+  recoveryAttempts: number;
 }
 
 export interface ProofJobRecord {

@@ -293,22 +293,16 @@ export class AsteroidsGame {
     this.rafId = window.requestAnimationFrame(this.frameHandler);
   };
 
-  constructor(config: GameConfig | HTMLCanvasElement) {
-    // Backward compatible: accept raw canvas or config object
-    const cfg: GameConfig =
-      typeof HTMLCanvasElement !== "undefined" && config instanceof HTMLCanvasElement
-        ? { canvas: config }
-        : (config as GameConfig);
-
-    this.headless = cfg.headless === true;
-    this.canvas = cfg.canvas ?? null;
+  constructor(config: GameConfig) {
+    this.headless = config.headless === true;
+    this.canvas = config.canvas ?? null;
     this.ctx = null;
     this.ship = this.createShip();
 
     if (this.headless) {
       // Headless mode: no rendering, no events, no audio
-      if (cfg.seed !== undefined) {
-        this.gameSeed = cfg.seed;
+      if (config.seed !== undefined) {
+        this.gameSeed = config.seed;
         setGameSeed(this.gameSeed);
       }
       return;

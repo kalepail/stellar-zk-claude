@@ -14,6 +14,7 @@ export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 export const DEFAULT_MAX_JOB_WALL_TIME_MS = 60 * 60_000; // 1 hour
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
+export const MAX_PROVER_RECOVERY_ATTEMPTS = 1;
 
 export const MAX_RETRY_DELAY_SECONDS = 300;
 
@@ -26,6 +27,7 @@ export const EXPECTED_RULESET = "AST2";
 
 export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "server_restarted",
+  "proof_error",
   "internal_error",
   "proof_timeout",
 ]);

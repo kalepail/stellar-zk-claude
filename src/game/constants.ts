@@ -13,19 +13,11 @@ export const SHIP_TURN_SPEED = 4.8;
 export const SHIP_THRUST = 280;
 export const SHIP_DRAG = 0.992;
 export const SHIP_MAX_SPEED = 340;
-export const SHIP_RESPAWN_DELAY = 1.25; // deprecated: use SHIP_RESPAWN_FRAMES
-export const SHIP_SPAWN_INVULNERABLE = 2; // deprecated: use SHIP_SPAWN_INVULNERABLE_FRAMES
 
 export const SHIP_BULLET_SPEED = 520;
-export const SHIP_BULLET_LIFETIME = 1.2; // deprecated: use SHIP_BULLET_LIFETIME_FRAMES
-export const SHIP_BULLET_COOLDOWN = 0.16; // deprecated: use SHIP_BULLET_COOLDOWN_FRAMES
 export const SHIP_BULLET_LIMIT = 4;
 
 export const SAUCER_BULLET_SPEED = 280;
-export const SAUCER_BULLET_LIFETIME = 1.2; // deprecated: use SAUCER_BULLET_LIFETIME_FRAMES
-
-export const SAUCER_SPAWN_MIN = 7; // deprecated: use SAUCER_SPAWN_MIN_FRAMES
-export const SAUCER_SPAWN_MAX = 14; // deprecated: use SAUCER_SPAWN_MAX_FRAMES
 
 // Frame-count timer constants (integer, ZK-friendly)
 export const SHIP_RESPAWN_FRAMES = 75; // 1.25s * 60fps
@@ -65,8 +57,6 @@ export const SCANLINE_OPACITY = 0.08;
 export const CRT_CURVATURE = 0.02;
 
 // Anti-lurking behavior
-export const LURK_TIME_THRESHOLD = 6; // deprecated: use LURK_TIME_THRESHOLD_FRAMES
-export const LURK_SAUCER_SPAWN_FAST = 3; // deprecated: use LURK_SAUCER_SPAWN_FAST_FRAMES
 export const LURK_TIME_THRESHOLD_FRAMES = 360; // 6s * 60fps
 export const LURK_SAUCER_SPAWN_FAST_FRAMES = 180; // 3s * 60fps
 

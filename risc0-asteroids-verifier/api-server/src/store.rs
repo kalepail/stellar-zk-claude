@@ -117,16 +117,17 @@ impl JobStore {
 
     /// Extract a safe result filename from the DB value.
     ///
-    /// Accepts both current values (`{job_id}.json`) and legacy absolute paths.
+    /// Only plain filenames (for example: `{job_id}.json`) are accepted.
     fn result_filename_from_db_value(value: &str) -> Result<String, String> {
-        let filename = Path::new(value)
-            .file_name()
-            .ok_or_else(|| format!("invalid result_path without filename: {value}"))?
-            .to_string_lossy()
-            .into_owned();
+        let filename = value.trim();
 
         if filename.is_empty() {
             return Err("invalid result_path with empty filename".to_string());
+        }
+        if filename.contains('/') || filename.contains('\\') {
+            return Err(format!(
+                "invalid result_path (must be a filename, not a path): {value}"
+            ));
         }
         if !filename.ends_with(".json") {
             return Err(format!(
@@ -134,7 +135,7 @@ impl JobStore {
             ));
         }
 
-        Ok(filename)
+        Ok(filename.to_string())
     }
 
     fn result_path_from_db_value(&self, value: &str) -> Result<PathBuf, String> {
@@ -1048,13 +1049,14 @@ mod tests {
             fs::write(&kept, b"{}").unwrap();
             {
                 let conn = store.conn.lock().unwrap();
+                let kept_filename = format!("{}.json", job.job_id);
                 conn.execute(
                     "UPDATE jobs SET status = 'succeeded', finished_at = ?1,
                             result_path = ?2, error = NULL
                      WHERE job_id = ?3",
                     params![
                         now_unix_s() as i64,
-                        kept.to_string_lossy().as_ref(),
+                        kept_filename,
                         job.job_id.to_string()
                     ],
                 )
@@ -1150,14 +1152,12 @@ mod tests {
         fs::write(&result_file, b"{}").unwrap();
         {
             let conn = store.conn.lock().unwrap();
+            let result_filename = format!("{}.json", job.job_id);
             conn.execute(
                 "UPDATE jobs SET status = 'succeeded', finished_at = 1000,
                         result_path = ?1, error = NULL
                  WHERE job_id = ?2",
-                params![
-                    result_file.to_string_lossy().as_ref(),
-                    job.job_id.to_string()
-                ],
+                params![result_filename, job.job_id.to_string()],
             )
             .unwrap();
         }
@@ -1184,13 +1184,14 @@ mod tests {
         fs::write(&result_file, b"{}").unwrap();
         {
             let conn = store.conn.lock().unwrap();
+            let result_filename = format!("{}.json", job.job_id);
             conn.execute(
                 "UPDATE jobs SET status = 'succeeded', finished_at = ?1,
                         result_path = ?2, error = NULL
                  WHERE job_id = ?3",
                 params![
                     now_unix_s() as i64,
-                    result_file.to_string_lossy().as_ref(),
+                    result_filename,
                     job.job_id.to_string()
                 ],
             )

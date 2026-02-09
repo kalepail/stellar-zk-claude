@@ -10,6 +10,7 @@ import {
   type ProofJobPublic,
   type ProofJobStatus,
 } from "./proof/api";
+import { deserializeTape } from "./game/tape";
 import "./App.css";
 
 function formatHex32(value: number): string {
@@ -85,6 +86,39 @@ function App() {
 
       return isTerminalProofStatus(current.status) ? null : current;
     });
+  }, []);
+
+  const loadTapeFile = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".tape";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void (async () => {
+        try {
+          const buf = await file.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          const tape = deserializeTape(bytes);
+          setLatestRun({
+            tape: bytes,
+            score: tape.footer.finalScore,
+            frameCount: tape.header.frameCount,
+            seed: tape.header.seed,
+            finalRngState: tape.footer.finalRngState,
+            endedAtMs: Date.now(),
+          });
+          setProofError(null);
+          setProofJob((current) =>
+            current && isTerminalProofStatus(current.status) ? null : current,
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          setProofError(`failed to load tape file: ${detail}`);
+        }
+      })();
+    });
+    input.click();
   }, []);
 
   const submitLatestRun = useCallback(async () => {
@@ -301,13 +335,23 @@ function App() {
         ) : null}
 
         <div className="proof-actions">
+          <button type="button" onClick={loadTapeFile} disabled={proofBusy}>
+            Load Tape
+          </button>
           <button type="button" onClick={submitLatestRun} disabled={!canSubmit}>
-            {isSubmitting ? "Submitting Tape..." : "Submit Latest Run For Proof"}
+            {isSubmitting ? "Submitting Tape..." : "Submit For Proof"}
           </button>
           {proofJob?.result ? (
-            <a href={`/api/proofs/jobs/${proofJob.jobId}/result`} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await fetch(`/api/proofs/jobs/${proofJob.jobId}/result`);
+                const blob = new Blob([await res.text()], { type: "application/json" });
+                window.open(URL.createObjectURL(blob), "_blank");
+              }}
+            >
               Open Raw Proof JSON
-            </a>
+            </button>
           ) : null}
         </div>
 

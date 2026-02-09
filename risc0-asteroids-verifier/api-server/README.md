@@ -49,7 +49,7 @@ Submit a job:
 ```bash
 JOB_ID=$(curl -sS \
   -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=19' \
-  --data-binary @../test-fixtures/test-short.tape \
+  --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
 ```

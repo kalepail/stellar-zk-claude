@@ -203,6 +203,10 @@ method drives all subsequent prover polling:
 6. **Retry with `clearProverJob`** (prover lost the job, e.g. restart):
    re-read tape from R2, re-submit to prover. If re-submit succeeds,
    `markProverAccepted()` schedules the next alarm. Otherwise backoff + retry.
+   This recovery path is intentionally capped to 1 attempt per job to avoid
+   long retry loops on deterministic prover failures.
+   The same bounded recovery policy applies if an alarm observes a missing
+   prover job ID and needs to re-submit from stored tape.
 7. **Retry without `clearProverJob`** (transient poll error): increment
    `pollingErrors`, backoff, schedule alarm.
 8. **Fatal**: `markFailed()`.

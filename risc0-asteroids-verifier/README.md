@@ -205,7 +205,7 @@ If `API_KEY` is set, all `/api/*` routes require either:
 ```bash
 JOB_ID=$(curl -sS \
   -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=19' \
-  --data-binary @../test-fixtures/test-short.tape \
+  --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
 
@@ -221,6 +221,9 @@ echo "Job ID: ${JOB_ID}"
 | `max_frames` | `18000` | Max game frames to replay |
 | `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
 | `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
+
+Zero-score tapes (`final_score == 0`) are rejected with `400` and
+`error_code: "zero_score_not_allowed"`.
 
 ### Poll for completion
 
@@ -248,7 +251,7 @@ The server is single-flight: only one proving job runs at a time. New submission
         "final_score": 100,
         "final_rng_state": 67890,
         "tape_checksum": 11111,
-        "rules_digest": 22222
+        "rules_digest": 1095980082
       },
       "receipt": { "..." },
       "requested_receipt_kind": "composite",
