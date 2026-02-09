@@ -230,6 +230,31 @@
   color: #ffd79f;
 }
 
+.gateway-health {
+  border: 1px solid rgba(108, 159, 230, 0.24);
+  background: rgba(13, 22, 40, 0.45);
+  border-radius: 8px;
+  padding: 0.48rem 0.62rem;
+  display: grid;
+  gap: 0.26rem;
+}
+
+.gateway-health--ok {
+  border-color: rgba(122, 231, 174, 0.35);
+  background: rgba(10, 36, 29, 0.45);
+}
+
+.gateway-health--warn {
+  border-color: rgba(255, 165, 129, 0.35);
+  background: rgba(42, 22, 15, 0.42);
+}
+
+.gateway-health p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
 .proof-result-box {
   margin-top: 0.2rem;
   padding-top: 0.45rem;

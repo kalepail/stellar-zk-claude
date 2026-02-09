@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TAPE_BYTES } from "../constants";
+import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST, EXPECTED_RULESET } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
+import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
 import { parseInteger, safeErrorMessage } from "../utils";
 
@@ -97,11 +98,62 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
   api.get("/health", async (c) => {
     const coordinator = coordinatorStub(c.env);
     const activeJob = await coordinator.getActiveJob();
+    const expectedImageIdRaw = c.env.PROVER_EXPECTED_IMAGE_ID?.trim() ?? "";
+    const expectedImageId = expectedImageIdRaw.length > 0 ? expectedImageIdRaw : null;
+
+    let prover:
+      | {
+          status: "compatible";
+          service: string;
+          accelerator: string | null;
+          image_id: string;
+          rules_digest: number;
+          rules_digest_hex: string;
+          ruleset: string;
+          dev_mode: boolean | null;
+          auth_required: boolean | null;
+        }
+      | {
+          status: "degraded";
+          code: string;
+          retryable: boolean;
+          error: string;
+        };
+
+    try {
+      const health = await getValidatedProverHealth(c.env);
+      prover = {
+        status: "compatible",
+        service: health.service,
+        accelerator: health.accelerator,
+        image_id: health.imageId,
+        rules_digest: health.rulesDigest,
+        rules_digest_hex: health.rulesDigestHex,
+        ruleset: health.ruleset,
+        dev_mode: health.devMode,
+        auth_required: health.authRequired,
+      };
+    } catch (error) {
+      const healthError = describeProverHealthError(error);
+      prover = {
+        status: "degraded",
+        code: healthError.code,
+        retryable: healthError.retryable,
+        error: healthError.message,
+      };
+    }
 
     return c.json({
       success: true,
       service: "stellar-zk-proof-gateway",
       mode: "single-active-job",
+      prover_base_url: c.env.PROVER_BASE_URL,
+      expected_rules_digest: EXPECTED_RULES_DIGEST >>> 0,
+      expected_rules_digest_hex: `0x${(EXPECTED_RULES_DIGEST >>> 0).toString(16).padStart(8, "0")}`,
+      expected_ruleset: EXPECTED_RULESET,
+      expected_image_id: expectedImageId,
+      checked_at: new Date().toISOString(),
+      prover,
       active_job: activeJob ? asPublicJob(activeJob) : null,
     });
   });

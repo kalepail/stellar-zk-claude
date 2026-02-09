@@ -76,6 +76,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 - `image_id() -> BytesN<32>` — current verifier image ID
 - `router_id() -> Address` — router contract address
 - `token_id() -> Address` — token contract address
+- `rules_digest() -> u32` — expected journal rules digest (`0x4153_5432`)
 
 ## Admin Functions
 

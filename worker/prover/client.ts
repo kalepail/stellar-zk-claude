@@ -2,8 +2,10 @@ import {
   DEFAULT_POLL_BUDGET_MS,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_POLL_TIMEOUT_MS,
+  DEFAULT_PROVER_HEALTH_CACHE_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
   EXPECTED_RULES_DIGEST,
+  EXPECTED_RULESET,
   RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
@@ -11,19 +13,61 @@ import type {
   ProverCreateJobResponse,
   ProverErrorResponse,
   ProverGetJobResponse,
+  ProverHealthResponse,
   ProverPollResult,
   ProverSubmitResult,
   ProofResultSummary,
 } from "../types";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 
-function buildProverCreateUrl(env: WorkerEnv): URL {
+export interface ValidatedProverHealth {
+  service: string;
+  accelerator: string | null;
+  imageId: string;
+  rulesDigest: number;
+  rulesDigestHex: string;
+  ruleset: string;
+  devMode: boolean | null;
+  authRequired: boolean | null;
+}
+
+type ProverHealthErrorCode =
+  | "unreachable"
+  | "invalid_response"
+  | "rules_mismatch"
+  | "image_mismatch"
+  | "config_error";
+
+class ProverHealthCheckError extends Error {
+  readonly retryable: boolean;
+  readonly code: ProverHealthErrorCode;
+
+  constructor(message: string, code: ProverHealthErrorCode, retryable: boolean) {
+    super(message);
+    this.name = "ProverHealthCheckError";
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+
+let proverHealthCache: {
+  cacheKey: string;
+  fetchedAtMs: number;
+  value: ValidatedProverHealth;
+} | null = null;
+
+function normalizeHex32Bytes(raw: string): string | null {
+  const normalized = raw.trim().toLowerCase().replace(/^0x/, "");
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
+function buildProverUrl(env: WorkerEnv, pathname: string): URL {
   const base = env.PROVER_BASE_URL?.trim();
   if (!base) {
     throw new Error("missing PROVER_BASE_URL");
   }
 
-  const url = new URL("/api/jobs/prove-tape/raw", base);
+  const url = new URL(pathname, base);
   if (
     url.protocol !== "https:" &&
     !parseBoolean(env.ALLOW_INSECURE_PROVER_URL, false) &&
@@ -31,6 +75,12 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
   ) {
     throw new Error("PROVER_BASE_URL must use https in production");
   }
+
+  return url;
+}
+
+function buildProverCreateUrl(env: WorkerEnv): URL {
+  const url = buildProverUrl(env, "/api/jobs/prove-tape/raw");
 
   const receiptKind = env.PROVER_RECEIPT_KIND?.trim();
   if (receiptKind) {
@@ -42,6 +92,7 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
 
   const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
   url.searchParams.set("max_frames", String(maxFrames));
+
   const verifyReceipt = parseBoolean(env.PROVER_VERIFY_RECEIPT, true);
   url.searchParams.set("verify_receipt", verifyReceipt ? "true" : "false");
 
@@ -49,21 +100,11 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
 }
 
 function buildProverStatusUrl(env: WorkerEnv, proverJobId: string): URL {
-  const base = env.PROVER_BASE_URL?.trim();
-  if (!base) {
-    throw new Error("missing PROVER_BASE_URL");
-  }
+  return buildProverUrl(env, `/api/jobs/${proverJobId}`);
+}
 
-  const url = new URL(`/api/jobs/${proverJobId}`, base);
-  if (
-    url.protocol !== "https:" &&
-    !parseBoolean(env.ALLOW_INSECURE_PROVER_URL, false) &&
-    !isLocalHostname(url.hostname)
-  ) {
-    throw new Error("PROVER_BASE_URL must use https in production");
-  }
-
-  return url;
+function buildProverHealthUrl(env: WorkerEnv): URL {
+  return buildProverUrl(env, "/health");
 }
 
 function buildProverHeaders(env: WorkerEnv, includeContentType: boolean): Headers {
@@ -100,10 +141,190 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
+export function describeProverHealthError(error: unknown): {
+  retryable: boolean;
+  code: ProverHealthErrorCode;
+  message: string;
+} {
+  if (error instanceof ProverHealthCheckError) {
+    return {
+      retryable: error.retryable,
+      code: error.code,
+      message: error.message,
+    };
+  }
+
+  return {
+    retryable: true,
+    code: "unreachable",
+    message: safeErrorMessage(error),
+  };
+}
+
+function cacheKeyForHealthCheck(env: WorkerEnv): string {
+  const proverBaseUrl = env.PROVER_BASE_URL?.trim() ?? "";
+  const expectedImageId = env.PROVER_EXPECTED_IMAGE_ID?.trim() ?? "";
+  return `${proverBaseUrl}|${expectedImageId}`;
+}
+
+export async function getValidatedProverHealth(
+  env: WorkerEnv,
+  options?: { forceRefresh?: boolean },
+): Promise<ValidatedProverHealth> {
+  const forceRefresh = options?.forceRefresh ?? false;
+  const cacheMs = parseInteger(env.PROVER_HEALTH_CACHE_MS, DEFAULT_PROVER_HEALTH_CACHE_MS, 1_000);
+  const cacheKey = cacheKeyForHealthCheck(env);
+  const now = Date.now();
+
+  if (
+    !forceRefresh &&
+    proverHealthCache &&
+    proverHealthCache.cacheKey === cacheKey &&
+    now - proverHealthCache.fetchedAtMs <= cacheMs
+  ) {
+    return proverHealthCache.value;
+  }
+
+  const timeoutMs = parseInteger(
+    env.PROVER_REQUEST_TIMEOUT_MS,
+    DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+    1_000,
+  );
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      buildProverHealthUrl(env),
+      {
+        method: "GET",
+        headers: buildProverHeaders(env, false),
+      },
+      timeoutMs,
+    );
+  } catch (error) {
+    throw new ProverHealthCheckError(
+      `failed reaching prover health endpoint: ${safeErrorMessage(error)}`,
+      "unreachable",
+      true,
+    );
+  }
+
+  if (response.status >= 500 || response.status === 429) {
+    throw new ProverHealthCheckError(
+      `prover health endpoint returned ${response.status}`,
+      "unreachable",
+      true,
+    );
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch {
+      // Ignore parse errors.
+    }
+    throw new ProverHealthCheckError(
+      `prover health endpoint returned ${response.status}: ${detail || "no body"}`,
+      "invalid_response",
+      false,
+    );
+  }
+
+  let payload: ProverHealthResponse;
+  try {
+    payload = await parseJson<ProverHealthResponse>(response);
+  } catch (error) {
+    throw new ProverHealthCheckError(
+      `failed parsing prover health response: ${safeErrorMessage(error)}`,
+      "invalid_response",
+      true,
+    );
+  }
+
+  const normalizedImageId =
+    typeof payload.image_id === "string" ? normalizeHex32Bytes(payload.image_id) : null;
+  if (!normalizedImageId) {
+    throw new ProverHealthCheckError(
+      "prover health missing valid image_id (expected 32-byte hex)",
+      "invalid_response",
+      false,
+    );
+  }
+
+  const rulesDigest =
+    typeof payload.rules_digest === "number" && Number.isFinite(payload.rules_digest)
+      ? payload.rules_digest >>> 0
+      : null;
+  if (rulesDigest === null) {
+    throw new ProverHealthCheckError(
+      "prover health missing rules_digest (u32)",
+      "invalid_response",
+      false,
+    );
+  }
+
+  if (rulesDigest !== EXPECTED_RULES_DIGEST >>> 0) {
+    throw new ProverHealthCheckError(
+      `prover health rules_digest mismatch: 0x${rulesDigest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
+      "rules_mismatch",
+      false,
+    );
+  }
+
+  const expectedImageIdRaw = env.PROVER_EXPECTED_IMAGE_ID?.trim();
+  if (expectedImageIdRaw && expectedImageIdRaw.length > 0) {
+    const normalizedExpectedImageId = normalizeHex32Bytes(expectedImageIdRaw);
+    if (!normalizedExpectedImageId) {
+      throw new ProverHealthCheckError(
+        "PROVER_EXPECTED_IMAGE_ID must be 32-byte hex",
+        "config_error",
+        false,
+      );
+    }
+    if (normalizedExpectedImageId !== normalizedImageId) {
+      throw new ProverHealthCheckError(
+        `prover health image_id mismatch: ${normalizedImageId} (expected ${normalizedExpectedImageId})`,
+        "image_mismatch",
+        false,
+      );
+    }
+  }
+
+  const validated: ValidatedProverHealth = {
+    service: typeof payload.service === "string" ? payload.service : "unknown",
+    accelerator: typeof payload.accelerator === "string" ? payload.accelerator : null,
+    imageId: normalizedImageId,
+    rulesDigest,
+    rulesDigestHex: `0x${rulesDigest.toString(16).padStart(8, "0")}`,
+    ruleset: typeof payload.ruleset === "string" ? payload.ruleset : EXPECTED_RULESET,
+    devMode: typeof payload.dev_mode === "boolean" ? payload.dev_mode : null,
+    authRequired: typeof payload.auth_required === "boolean" ? payload.auth_required : null,
+  };
+
+  proverHealthCache = {
+    cacheKey,
+    fetchedAtMs: now,
+    value: validated,
+  };
+
+  return validated;
+}
+
 export async function submitToProver(
   env: WorkerEnv,
   tapeBytes: Uint8Array,
 ): Promise<ProverSubmitResult> {
+  try {
+    await getValidatedProverHealth(env);
+  } catch (error) {
+    const healthError = describeProverHealthError(error);
+    return {
+      type: healthError.retryable ? "retry" : "fatal",
+      message: `prover health check failed [${healthError.code}]: ${healthError.message}`,
+    };
+  }
+
   const timeoutMs = parseInteger(
     env.PROVER_REQUEST_TIMEOUT_MS,
     DEFAULT_PROVER_REQUEST_TIMEOUT_MS,

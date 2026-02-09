@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AsteroidsCanvas, type CompletedGameRun } from "./components/AsteroidsCanvas";
 import {
+  getGatewayHealth,
   ProofApiError,
+  type GatewayHealthResponse,
   getProofJob,
   isTerminalProofStatus,
   submitProofJob,
@@ -12,6 +14,13 @@ import "./App.css";
 
 function formatHex32(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+}
+
+function abbreviateHex(value: string, keep = 8): string {
+  if (value.length <= keep * 2) {
+    return value;
+  }
+  return `${value.slice(0, keep)}...${value.slice(-keep)}`;
 }
 
 function formatDuration(ms: number): string {
@@ -61,6 +70,8 @@ function App() {
   const [proofJob, setProofJob] = useState<ProofJobPublic | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResponse | null>(null);
+  const [gatewayHealthError, setGatewayHealthError] = useState<string | null>(null);
   const activeProofJobId = proofJob?.jobId ?? null;
   const activeProofJobStatus = proofJob?.status ?? null;
 
@@ -142,10 +153,50 @@ function App() {
     };
   }, [activeProofJobId, activeProofJobStatus]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const pollHealth = async () => {
+      try {
+        const response = await getGatewayHealth();
+        if (cancelled) {
+          return;
+        }
+        setGatewayHealth(response);
+        setGatewayHealthError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "failed to refresh gateway health";
+        setGatewayHealthError(message);
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(pollHealth, 15_000);
+        }
+      }
+    };
+
+    timeoutId = window.setTimeout(pollHealth, 300);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, []);
+
   const proofBusy = proofJob ? !isTerminalProofStatus(proofJob.status) : false;
   const canSubmit = Boolean(latestRun) && !isSubmitting && !proofBusy;
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
+  const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
+  const proverHealthClassName =
+    proverHealthStatus === "compatible"
+      ? "gateway-health gateway-health--ok"
+      : "gateway-health gateway-health--warn";
 
   return (
     <main className="app-shell">
@@ -170,6 +221,47 @@ function App() {
         <p className="proof-panel__intro">
           The queue is intentionally single-active-job to match prover single-flight behavior.
         </p>
+        <div className={proverHealthClassName}>
+          <p>
+            <strong>Gateway Health:</strong>{" "}
+            {gatewayHealth ? (
+              gatewayHealth.prover.status === "compatible" ? (
+                <>
+                  compatible ({gatewayHealth.prover.ruleset} /{" "}
+                  {gatewayHealth.prover.rules_digest_hex.toUpperCase()})
+                </>
+              ) : (
+                <>degraded ({gatewayHealth.prover.code})</>
+              )
+            ) : (
+              "loading"
+            )}
+          </p>
+          {gatewayHealth?.prover.status === "compatible" ? (
+            <>
+              <p>
+                <strong>Prover Image:</strong>{" "}
+                <code>{abbreviateHex(gatewayHealth.prover.image_id)}</code>
+              </p>
+              {gatewayHealth.expected_image_id ? (
+                <p>
+                  <strong>Pinned Image:</strong>{" "}
+                  <code>{abbreviateHex(gatewayHealth.expected_image_id)}</code>
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {gatewayHealth?.prover.status === "degraded" ? (
+            <p className="proof-warning">
+              <strong>Health Error:</strong> {gatewayHealth.prover.error}
+            </p>
+          ) : null}
+          {gatewayHealthError ? (
+            <p className="proof-warning">
+              <strong>Health Polling:</strong> {gatewayHealthError}
+            </p>
+          ) : null}
+        </div>
 
         {latestRun ? (
           <dl className="proof-meta-grid">

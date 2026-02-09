@@ -292,11 +292,11 @@ npx wrangler deploy
 
 ### After prover deploy
 
-1. **Health check** — confirm new timeout is reported:
+1. **Health check** — confirm timeout and rules metadata are reported:
    ```bash
-   curl -s https://risc0-kalien.stellar.buzz/health | jq '{timed_out_proof_kill_secs}'
+   curl -s https://risc0-kalien.stellar.buzz/health | jq '{timed_out_proof_kill_secs, ruleset, rules_digest_hex, image_id}'
    ```
-   Expected: `"timed_out_proof_kill_secs": 60`
+   Expected: timeout configured correctly and `ruleset` / `rules_digest_hex` match the deployed contract + worker expectations.
 
 2. **Submit a known-good tape** — verify it completes well under 5 min:
    ```bash

@@ -157,6 +157,11 @@ impl AsteroidsScoreContract {
     pub fn token_id(env: Env) -> Address {
         env.storage().instance().get(&DataKey::TokenId).unwrap()
     }
+
+    /// Read the expected rules digest.
+    pub fn rules_digest(_env: Env) -> u32 {
+        RULES_DIGEST_V2
+    }
 }
 
 /// Read a u32 from bytes at the given offset in little-endian order.

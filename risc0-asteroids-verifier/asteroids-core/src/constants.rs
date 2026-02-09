@@ -50,3 +50,4 @@ pub const LURK_TIME_THRESHOLD_FRAMES: i32 = 360;
 pub const LURK_SAUCER_SPAWN_FAST_FRAMES: i32 = 180;
 
 pub const RULES_DIGEST_V2: u32 = 0x4153_5432; // "AST2"
+pub const RULESET_V2_NAME: &str = "AST2";

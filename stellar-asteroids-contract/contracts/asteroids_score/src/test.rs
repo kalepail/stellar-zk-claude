@@ -110,6 +110,7 @@ fn test_initialize() {
 
     assert_eq!(client.image_id(), dummy_image_id(&env));
     assert_eq!(client.token_id(), token_addr);
+    assert_eq!(client.rules_digest(), 0x4153_5432);
     // router_id should be set (just check it doesn't panic)
     let _ = client.router_id();
 }

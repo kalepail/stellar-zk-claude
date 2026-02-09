@@ -226,6 +226,15 @@ test_read_functions() {
     token_id 2>&1) || true
   token_result=$(echo "$token_result" | tr -d '"')
   assert_eq "token_id matches" "$TOKEN_ID" "$token_result"
+
+  local rules_digest_result
+  rules_digest_result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    rules_digest 2>&1) || true
+  assert_eq "rules_digest matches AST2" "$((0x41535432))" "$rules_digest_result"
 }
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ export const DEFAULT_POLL_INTERVAL_MS = 3_000;
 export const DEFAULT_POLL_TIMEOUT_MS = 15 * 60_000;
 export const DEFAULT_PROVER_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_POLL_BUDGET_MS = 45_000;
+export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 export const DEFAULT_MAX_JOB_WALL_TIME_MS = 60 * 60_000; // 1 hour
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
@@ -21,6 +22,7 @@ export const MAX_RETRY_DELAY_SECONDS = 300;
 // as permanently failed rather than retried again.
 export const MAX_QUEUE_RETRIES = 10;
 export const EXPECTED_RULES_DIGEST = 0x41535432; // "AST2"
+export const EXPECTED_RULESET = "AST2";
 
 export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "server_restarted",

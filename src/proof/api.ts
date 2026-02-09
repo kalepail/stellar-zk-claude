@@ -88,6 +88,41 @@ export interface GetProofJobResponse {
   job: ProofJobPublic;
 }
 
+export interface GatewayProverCompatibleHealth {
+  status: "compatible";
+  service: string;
+  accelerator: string | null;
+  image_id: string;
+  rules_digest: number;
+  rules_digest_hex: string;
+  ruleset: string;
+  dev_mode: boolean | null;
+  auth_required: boolean | null;
+}
+
+export interface GatewayProverDegradedHealth {
+  status: "degraded";
+  code: string;
+  retryable: boolean;
+  error: string;
+}
+
+export type GatewayProverHealth = GatewayProverCompatibleHealth | GatewayProverDegradedHealth;
+
+export interface GatewayHealthResponse {
+  success: true;
+  service: string;
+  mode: string;
+  prover_base_url: string;
+  expected_rules_digest: number;
+  expected_rules_digest_hex: string;
+  expected_ruleset: string;
+  expected_image_id: string | null;
+  checked_at: string;
+  prover: GatewayProverHealth;
+  active_job: ProofJobPublic | null;
+}
+
 interface ApiErrorResponse {
   success: false;
   error?: string;
@@ -162,4 +197,16 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
   }
 
   return parseJson<GetProofJobResponse>(response);
+}
+
+export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
+  const response = await fetch("/api/health", {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  return parseJson<GatewayHealthResponse>(response);
 }

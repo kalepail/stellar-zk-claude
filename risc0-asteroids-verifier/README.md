@@ -305,6 +305,8 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
 | `PROVER_VERIFY_RECEIPT` | `1` by default; keep enabled so worker only accepts receipts that verify |
+| `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
+| `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
 | `PROVER_POLL_TIMEOUT_MS` | Absolute poll timeout before transition to retry/failure path |
 | `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |

@@ -16,7 +16,7 @@ use actix_web::{
     },
     middleware, web, App, HttpResponse, HttpServer, Responder,
 };
-use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
+use asteroids_verifier_core::constants::{MAX_FRAMES_DEFAULT, RULESET_V2_NAME, RULES_DIGEST_V2};
 use host::{
     accelerator, prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT,
 };
@@ -200,6 +200,9 @@ struct HealthResponse {
     service: &'static str,
     accelerator: &'static str,
     image_id: String,
+    rules_digest: u32,
+    rules_digest_hex: String,
+    ruleset: &'static str,
     dev_mode: bool,
     queued_jobs: usize,
     running_jobs: usize,
@@ -501,6 +504,9 @@ async fn health(state: web::Data<AppState>) -> impl Responder {
         service: "risc0-asteroids-api",
         accelerator: accelerator(),
         image_id: host::image_id_hex(),
+        rules_digest: RULES_DIGEST_V2,
+        rules_digest_hex: format!("0x{RULES_DIGEST_V2:08x}"),
+        ruleset: RULESET_V2_NAME,
         dev_mode: host::risc0_dev_mode_enabled(),
         queued_jobs,
         running_jobs,

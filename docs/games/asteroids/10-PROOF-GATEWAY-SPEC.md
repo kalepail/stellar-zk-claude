@@ -277,6 +277,8 @@ bytes needed for on-chain verification.
 | `PROVER_SEGMENT_LIMIT_PO2` | `"21"` | Segment size limit (power of 2) |
 | `PROVER_MAX_FRAMES` | `"18000"` | ~5 minutes at 60fps |
 | `PROVER_VERIFY_RECEIPT` | `"1"` | Verifies receipt server-side before success |
+| `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
+| `PROVER_HEALTH_CACHE_MS` | `"30000"` | Prover health cache TTL in Worker isolate |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |
 | `PROVER_POLL_TIMEOUT_MS` | `"900000"` | 15 min absolute poll timeout |
 | `PROVER_POLL_BUDGET_MS` | `"45000"` | Max polling time per alarm |
