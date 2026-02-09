@@ -204,7 +204,7 @@ If `API_KEY` is set, all `/api/*` routes require either:
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=19' \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21' \
   --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
@@ -217,7 +217,7 @@ echo "Job ID: ${JOB_ID}"
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
-| `segment_limit_po2` | `19` | Segment size (2^n), range [16..21] |
+| `segment_limit_po2` | `21` | Segment size (2^n), range [16..22] |
 | `max_frames` | `18000` | Max game frames to replay |
 | `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
 | `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
@@ -283,7 +283,7 @@ See `api-server/.env.example` for all options. Key variables:
 | `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |
 | `MIN_SEGMENT_LIMIT_PO2` | `16` | Min allowed segment limit |
-| `MAX_SEGMENT_LIMIT_PO2` | `21` | Max allowed segment limit |
+| `MAX_SEGMENT_LIMIT_PO2` | `22` | Max allowed segment limit |
 | `JOB_TTL_SECS` | `86400` | Finished job retention (24h) |
 | `JOB_SWEEP_SECS` | `60` | Cleanup interval |
 | `RUNNING_JOB_TIMEOUT_SECS` | `1800` | Timeout for active proofs before marking failed |
@@ -305,9 +305,9 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_ACCESS_CLIENT_ID` (secret) | _(optional)_ Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` (secret) | _(optional)_ Cloudflare Access service token secret |
 | `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
-| `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
+| `PROVER_SEGMENT_LIMIT_PO2` | `22` by default (must be within api-server's [min, max] range) |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
-| `PROVER_VERIFY_RECEIPT` | `1` by default; keep enabled so worker only accepts receipts that verify |
+| `PROVER_VERIFY_RECEIPT` | `0` by default; on-chain verification is the source of truth |
 | `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
 | `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
@@ -354,3 +354,28 @@ cargo run -p host --release --bin benchmark -- --tape ../test-fixtures/test-medi
 ```bash
 cargo test -p asteroids-verifier-core
 ```
+
+## Segment Sweep Benchmark (Remote Prover)
+
+Use this when tuning `segment_limit_po2` on your x86/CUDA prover host:
+
+```bash
+bash scripts/bench-segment-sweep.sh https://your-prover.example.com \
+  --seg-floor 19 \
+  --seg-ceiling 22 \
+  --receipt composite \
+  --receipt succinct \
+  --repeat 2 \
+  --verify-receipt false \
+  --include-real
+```
+
+Key knobs:
+- `--seg-floor` / `--seg-ceiling`: requested sweep bounds (clamped to `/health` policy unless `--strict-bounds`).
+- `--receipt`: repeatable; benchmark `composite`, `succinct`, and/or `groth16`.
+- `--verify-receipt`: `false` by default to match production policy.
+- `--max-frames`: optional override for stress scenarios.
+- `--repeat`: run each configuration multiple times for stability.
+
+Output:
+- CSV is written to `batch-results/segment-sweep-<timestamp>.csv` by default.

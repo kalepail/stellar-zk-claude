@@ -74,13 +74,13 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
     url.searchParams.set("receipt_kind", receiptKind);
   }
 
-  const segmentLimitPo2 = parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 19, 1);
+  const segmentLimitPo2 = parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 22, 1);
   url.searchParams.set("segment_limit_po2", String(segmentLimitPo2));
 
   const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
   url.searchParams.set("max_frames", String(maxFrames));
 
-  const verifyReceipt = parseBoolean(env.PROVER_VERIFY_RECEIPT, true);
+  const verifyReceipt = parseBoolean(env.PROVER_VERIFY_RECEIPT, false);
   url.searchParams.set("verify_receipt", verifyReceipt ? "true" : "false");
 
   return url;

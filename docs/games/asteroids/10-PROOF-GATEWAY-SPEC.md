@@ -285,9 +285,9 @@ bytes needed for on-chain verification.
 | Variable | Value | Notes |
 |----------|-------|-------|
 | `PROVER_RECEIPT_KIND` | `"groth16"` | On-chain-verifiable proof type |
-| `PROVER_SEGMENT_LIMIT_PO2` | `"21"` | Segment size limit (power of 2) |
+| `PROVER_SEGMENT_LIMIT_PO2` | `"22"` | Segment size limit (power of 2) |
 | `PROVER_MAX_FRAMES` | `"18000"` | ~5 minutes at 60fps |
-| `PROVER_VERIFY_RECEIPT` | `"1"` | Verifies receipt server-side before success |
+| `PROVER_VERIFY_RECEIPT` | `"0"` | Skip prover-side receipt verification (on-chain verification is the source of truth) |
 | `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
 | `PROVER_HEALTH_CACHE_MS` | `"30000"` | Prover health cache TTL in Worker isolate |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |

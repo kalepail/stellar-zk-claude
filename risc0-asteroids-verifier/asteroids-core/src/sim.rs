@@ -236,6 +236,16 @@ const ASTEROID_VEC_CAPACITY: usize = ASTEROID_CAP + 16;
 const SHIP_BULLET_VEC_CAPACITY: usize = SHIP_BULLET_LIMIT;
 const SAUCER_VEC_CAPACITY: usize = 4;
 const SAUCER_BULLET_VEC_CAPACITY: usize = 16;
+const MAX_SCORE_DELTA_PER_FRAME: u32 = (SHIP_BULLET_LIMIT as u32) * SCORE_SMALL_SAUCER;
+const LEGAL_SCORE_DELTA_TABLE_SIZE: usize = MAX_SCORE_DELTA_PER_FRAME as usize + 1;
+const SCORE_EVENT_VALUES: [u32; 5] = [
+    SCORE_LARGE_ASTEROID,
+    SCORE_MEDIUM_ASTEROID,
+    SCORE_SMALL_ASTEROID,
+    SCORE_LARGE_SAUCER,
+    SCORE_SMALL_SAUCER,
+];
+const LEGAL_SCORE_DELTAS: [bool; LEGAL_SCORE_DELTA_TABLE_SIZE] = build_legal_score_delta_table();
 
 pub fn replay(seed: u32, inputs: &[u8]) -> ReplayResult {
     let mut game = Game::new(seed);
@@ -438,50 +448,53 @@ fn expected_ship_fire_latch(
     true
 }
 
-fn is_legal_score_delta(delta: u32) -> bool {
-    const EVENT_VALUES: [u32; 5] = [
-        SCORE_LARGE_ASTEROID,
-        SCORE_MEDIUM_ASTEROID,
-        SCORE_SMALL_ASTEROID,
-        SCORE_LARGE_SAUCER,
-        SCORE_SMALL_SAUCER,
-    ];
+const fn build_legal_score_delta_table() -> [bool; LEGAL_SCORE_DELTA_TABLE_SIZE] {
+    let mut table = [false; LEGAL_SCORE_DELTA_TABLE_SIZE];
+    table[0] = true;
 
-    if delta == 0 {
-        return true;
+    let mut i = 0;
+    while i < SCORE_EVENT_VALUES.len() {
+        let a = SCORE_EVENT_VALUES[i];
+        table[a as usize] = true;
+
+        let mut j = 0;
+        while j < SCORE_EVENT_VALUES.len() {
+            let two = a + SCORE_EVENT_VALUES[j];
+            if two <= MAX_SCORE_DELTA_PER_FRAME {
+                table[two as usize] = true;
+            }
+
+            let mut k = 0;
+            while k < SCORE_EVENT_VALUES.len() {
+                let three = two + SCORE_EVENT_VALUES[k];
+                if three <= MAX_SCORE_DELTA_PER_FRAME {
+                    table[three as usize] = true;
+                }
+
+                let mut m = 0;
+                while m < SCORE_EVENT_VALUES.len() {
+                    let four = three + SCORE_EVENT_VALUES[m];
+                    if four <= MAX_SCORE_DELTA_PER_FRAME {
+                        table[four as usize] = true;
+                    }
+                    m += 1;
+                }
+                k += 1;
+            }
+            j += 1;
+        }
+        i += 1;
     }
 
-    if delta > (SHIP_BULLET_LIMIT as u32 * SCORE_SMALL_SAUCER) {
+    table
+}
+
+fn is_legal_score_delta(delta: u32) -> bool {
+    if delta > MAX_SCORE_DELTA_PER_FRAME {
         return false;
     }
 
-    for a in EVENT_VALUES {
-        if a == delta {
-            return true;
-        }
-
-        for b in EVENT_VALUES {
-            let two = a + b;
-            if two == delta {
-                return true;
-            }
-
-            for c in EVENT_VALUES {
-                let three = two + c;
-                if three == delta {
-                    return true;
-                }
-
-                for d in EVENT_VALUES {
-                    if three + d == delta {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    false
+    LEGAL_SCORE_DELTAS[delta as usize]
 }
 
 pub fn replay_with_checkpoints(
@@ -1706,6 +1719,52 @@ mod tests {
             small: false,
             fire_cooldown: 0,
             drift_timer: 0,
+        }
+    }
+
+    fn brute_force_legal_score_delta(delta: u32) -> bool {
+        if delta > MAX_SCORE_DELTA_PER_FRAME {
+            return false;
+        }
+        if delta == 0 {
+            return true;
+        }
+
+        for a in SCORE_EVENT_VALUES {
+            if a == delta {
+                return true;
+            }
+            for b in SCORE_EVENT_VALUES {
+                let two = a + b;
+                if two == delta {
+                    return true;
+                }
+                for c in SCORE_EVENT_VALUES {
+                    let three = two + c;
+                    if three == delta {
+                        return true;
+                    }
+                    for d in SCORE_EVENT_VALUES {
+                        if three + d == delta {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    #[test]
+    fn legal_score_delta_lookup_matches_bruteforce() {
+        for delta in 0..=(MAX_SCORE_DELTA_PER_FRAME + 500) {
+            assert_eq!(
+                is_legal_score_delta(delta),
+                brute_force_legal_score_delta(delta),
+                "delta {} mismatch",
+                delta
+            );
         }
     }
 

@@ -170,7 +170,7 @@ run_stage() {
   wait_for_idle
 
   # Submit
-  local query="receipt_kind=${receipt}&verify_receipt=true"
+  local query="receipt_kind=${receipt}&verify_receipt=false"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${tape}" -H "content-type: application/octet-stream")

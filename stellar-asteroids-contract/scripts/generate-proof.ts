@@ -145,7 +145,7 @@ async function submitTape(
   segmentLimitPo2: string,
   maxFrames: string
 ): Promise<string> {
-  const url = `${proverUrl}/api/jobs/prove-tape/raw?receipt_kind=${receiptKind}&segment_limit_po2=${segmentLimitPo2}&max_frames=${maxFrames}&verify_receipt=true`;
+  const url = `${proverUrl}/api/jobs/prove-tape/raw?receipt_kind=${receiptKind}&segment_limit_po2=${segmentLimitPo2}&max_frames=${maxFrames}&verify_receipt=false`;
 
   console.log(`Submitting tape (${tapeBytes.length} bytes) to ${proverUrl}...`);
 

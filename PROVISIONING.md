@@ -35,7 +35,7 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 | HTTP max connections | **25,000** | `HTTP_MAX_CONNECTIONS` | `api-server/src/main.rs:36` | Actix-web connection limit. |
 | Max tape bytes | **2 MiB** | `MAX_TAPE_BYTES` | `api-server/src/main.rs:28` | Request body size limit for tape uploads. |
 | Max frames | **18,000** | `MAX_FRAMES` | `api-server/.env.example:20` | Capped at game-engine constant `MAX_FRAMES_DEFAULT`. Passed to guest prover. |
-| Segment limit po2 | **21** (range 16–21) | `MIN/MAX_SEGMENT_LIMIT_PO2` | `api-server/src/main.rs:34-35` | RISC Zero segment size. Higher = fewer segments but more memory. |
+| Segment limit po2 | **21** (range 16–22) | `MIN/MAX_SEGMENT_LIMIT_PO2` | `api-server/src/main.rs:34-35` | RISC Zero segment size. Higher = fewer segments but more memory. |
 
 **Relevant code paths:**
 - Timeout + detach + abort: `api-server/src/main.rs:348-467` (`run_proof_job`)

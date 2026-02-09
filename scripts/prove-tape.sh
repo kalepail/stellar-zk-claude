@@ -10,6 +10,7 @@ set -euo pipefail
 # Options (passed as query params):
 #   --seg <n>          segment_limit_po2 (default: 21)
 #   --receipt <kind>   composite|succinct|groth16 (default: composite)
+#   --verify           Enable receipt verification on prover (default: disabled)
 #   --no-verify        Skip receipt verification on the prover
 #   --poll <seconds>   Poll interval (default: 5)
 #   --keep             Don't delete the job after completion
@@ -17,7 +18,7 @@ set -euo pipefail
 # Examples:
 #   bash scripts/prove-tape.sh http://host:8080 test-fixtures/test-short.tape
 #   bash scripts/prove-tape.sh http://host:8080 test-fixtures/test-medium.tape --seg 20
-#   bash scripts/prove-tape.sh http://host:8080 my-game.tape --receipt succinct --keep
+#   bash scripts/prove-tape.sh http://host:8080 my-game.tape --receipt succinct --verify --keep
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <prover-url> <tape-file> [--seg N] [--receipt KIND] [--no-verify] [--poll N] [--keep]" >&2
@@ -30,7 +31,7 @@ shift 2
 
 SEG=21
 RECEIPT="composite"
-VERIFY="true"
+VERIFY="false"
 POLL_INTERVAL=5
 KEEP=0
 
@@ -38,6 +39,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --seg) SEG="$2"; shift 2 ;;
     --receipt) RECEIPT="$2"; shift 2 ;;
+    --verify) VERIFY="true"; shift ;;
     --no-verify) VERIFY="false"; shift ;;
     --poll) POLL_INTERVAL="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;

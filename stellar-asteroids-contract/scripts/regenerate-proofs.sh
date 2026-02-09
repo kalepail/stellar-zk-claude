@@ -116,7 +116,7 @@ assert_reject_zero_score_tape() {
   info "Checking zero-score rejection for short tape..."
   local resp http_code body error_code
   resp=$(curl -sS -X POST \
-    "${PROVER_URL}/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_receipt=true" \
+    "${PROVER_URL}/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_receipt=false" \
     -H "content-type: application/octet-stream" \
     --data-binary "@${tape_file}" \
     -w $'\n%{http_code}')

@@ -26,12 +26,12 @@ PROVER_URL="${1%/}"
 # Test configs: "label|tape_file|segment_limit_po2|receipt_kind|verify_receipt"
 # Tape files are relative to test-fixtures/.
 TESTS=(
-  "short-seg19|test-short.tape|19|composite|true"
-  "short-seg20|test-short.tape|20|composite|true"
-  "short-seg21|test-short.tape|21|composite|true"
-  "medium-seg19|test-medium.tape|19|composite|true"
-  "medium-seg20|test-medium.tape|20|composite|true"
-  "medium-seg21|test-medium.tape|21|composite|true"
+  "short-seg19|test-short.tape|19|composite|false"
+  "short-seg20|test-short.tape|20|composite|false"
+  "short-seg21|test-short.tape|21|composite|false"
+  "medium-seg19|test-medium.tape|19|composite|false"
+  "medium-seg20|test-medium.tape|20|composite|false"
+  "medium-seg21|test-medium.tape|21|composite|false"
 )
 
 # Add the large tape if it exists.
@@ -39,9 +39,9 @@ LARGE_TAPE="$(ls "$TAPE_DIR"/test-real-game.tape 2>/dev/null | head -n 1)"
 if [[ -n "$LARGE_TAPE" ]]; then
   large_basename="$(basename "$LARGE_TAPE")"
   TESTS+=(
-    "large-seg19|${large_basename}|19|composite|true"
-    "large-seg20|${large_basename}|20|composite|true"
-    "large-seg21|${large_basename}|21|composite|true"
+    "large-seg19|${large_basename}|19|composite|false"
+    "large-seg20|${large_basename}|20|composite|false"
+    "large-seg21|${large_basename}|21|composite|false"
   )
 fi
 
