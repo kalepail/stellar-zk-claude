@@ -125,14 +125,9 @@ export interface ProverCreateJobResponse {
 
 export interface ProverHealthResponse {
   status: string;
-  service: string;
-  accelerator?: string;
   image_id?: string;
   rules_digest?: number;
-  rules_digest_hex?: string;
   ruleset?: string;
-  dev_mode?: boolean;
-  auth_required?: boolean;
 }
 
 export interface ProverJobResultEnvelope {

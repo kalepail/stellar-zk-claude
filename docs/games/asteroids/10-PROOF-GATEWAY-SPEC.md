@@ -62,8 +62,14 @@ RISC0 host + zkVM guest             │  polls prover  │
 ### Public API surface
 
 **`GET /api/health`**
-- Returns service metadata and the active job (if any).
-- Response: `{ success, service: "stellar-zk-proof-gateway", mode: "single-active-job", active_job }`
+- Returns service metadata, compatibility expectations, prover compatibility
+  status, and the active job (if any).
+- Response includes:
+  - `expected.ruleset` and `expected.rules_digest_hex` (AST2 target)
+  - optional `expected.image_id` (if pinning is enabled)
+  - `prover.status` (`"compatible"` or `"degraded"`)
+  - on compatible: `prover.ruleset`, `prover.rules_digest_hex`, `prover.image_id`
+  - on degraded: `prover.error`
 
 **`POST /api/proofs/jobs`**
 - Request body: raw tape bytes (`application/octet-stream`).

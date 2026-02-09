@@ -104,19 +104,12 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     let prover:
       | {
           status: "compatible";
-          service: string;
-          accelerator: string | null;
           image_id: string;
-          rules_digest: number;
           rules_digest_hex: string;
           ruleset: string;
-          dev_mode: boolean | null;
-          auth_required: boolean | null;
         }
       | {
           status: "degraded";
-          code: string;
-          retryable: boolean;
           error: string;
         };
 
@@ -124,21 +117,14 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       const health = await getValidatedProverHealth(c.env);
       prover = {
         status: "compatible",
-        service: health.service,
-        accelerator: health.accelerator,
         image_id: health.imageId,
-        rules_digest: health.rulesDigest,
         rules_digest_hex: health.rulesDigestHex,
         ruleset: health.ruleset,
-        dev_mode: health.devMode,
-        auth_required: health.authRequired,
       };
     } catch (error) {
       const healthError = describeProverHealthError(error);
       prover = {
         status: "degraded",
-        code: healthError.code,
-        retryable: healthError.retryable,
         error: healthError.message,
       };
     }
@@ -148,10 +134,11 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       service: "stellar-zk-proof-gateway",
       mode: "single-active-job",
       prover_base_url: c.env.PROVER_BASE_URL,
-      expected_rules_digest: EXPECTED_RULES_DIGEST >>> 0,
-      expected_rules_digest_hex: `0x${(EXPECTED_RULES_DIGEST >>> 0).toString(16).padStart(8, "0")}`,
-      expected_ruleset: EXPECTED_RULESET,
-      expected_image_id: expectedImageId,
+      expected: {
+        rules_digest_hex: `0x${(EXPECTED_RULES_DIGEST >>> 0).toString(16).padStart(8, "0")}`,
+        ruleset: EXPECTED_RULESET,
+        image_id: expectedImageId,
+      },
       checked_at: new Date().toISOString(),
       prover,
       active_job: activeJob ? asPublicJob(activeJob) : null,

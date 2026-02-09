@@ -21,31 +21,18 @@ import type {
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 
 export interface ValidatedProverHealth {
-  service: string;
-  accelerator: string | null;
   imageId: string;
   rulesDigest: number;
   rulesDigestHex: string;
   ruleset: string;
-  devMode: boolean | null;
-  authRequired: boolean | null;
 }
-
-type ProverHealthErrorCode =
-  | "unreachable"
-  | "invalid_response"
-  | "rules_mismatch"
-  | "image_mismatch"
-  | "config_error";
 
 class ProverHealthCheckError extends Error {
   readonly retryable: boolean;
-  readonly code: ProverHealthErrorCode;
 
-  constructor(message: string, code: ProverHealthErrorCode, retryable: boolean) {
+  constructor(message: string, retryable: boolean) {
     super(message);
     this.name = "ProverHealthCheckError";
-    this.code = code;
     this.retryable = retryable;
   }
 }
@@ -141,22 +128,16 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function describeProverHealthError(error: unknown): {
-  retryable: boolean;
-  code: ProverHealthErrorCode;
-  message: string;
-} {
+export function describeProverHealthError(error: unknown): { retryable: boolean; message: string } {
   if (error instanceof ProverHealthCheckError) {
     return {
       retryable: error.retryable,
-      code: error.code,
       message: error.message,
     };
   }
 
   return {
     retryable: true,
-    code: "unreachable",
     message: safeErrorMessage(error),
   };
 }
@@ -204,17 +185,12 @@ export async function getValidatedProverHealth(
   } catch (error) {
     throw new ProverHealthCheckError(
       `failed reaching prover health endpoint: ${safeErrorMessage(error)}`,
-      "unreachable",
       true,
     );
   }
 
   if (response.status >= 500 || response.status === 429) {
-    throw new ProverHealthCheckError(
-      `prover health endpoint returned ${response.status}`,
-      "unreachable",
-      true,
-    );
+    throw new ProverHealthCheckError(`prover health endpoint returned ${response.status}`, true);
   }
 
   if (!response.ok) {
@@ -226,7 +202,6 @@ export async function getValidatedProverHealth(
     }
     throw new ProverHealthCheckError(
       `prover health endpoint returned ${response.status}: ${detail || "no body"}`,
-      "invalid_response",
       false,
     );
   }
@@ -237,7 +212,6 @@ export async function getValidatedProverHealth(
   } catch (error) {
     throw new ProverHealthCheckError(
       `failed parsing prover health response: ${safeErrorMessage(error)}`,
-      "invalid_response",
       true,
     );
   }
@@ -247,7 +221,6 @@ export async function getValidatedProverHealth(
   if (!normalizedImageId) {
     throw new ProverHealthCheckError(
       "prover health missing valid image_id (expected 32-byte hex)",
-      "invalid_response",
       false,
     );
   }
@@ -257,17 +230,12 @@ export async function getValidatedProverHealth(
       ? payload.rules_digest >>> 0
       : null;
   if (rulesDigest === null) {
-    throw new ProverHealthCheckError(
-      "prover health missing rules_digest (u32)",
-      "invalid_response",
-      false,
-    );
+    throw new ProverHealthCheckError("prover health missing rules_digest (u32)", false);
   }
 
   if (rulesDigest !== EXPECTED_RULES_DIGEST >>> 0) {
     throw new ProverHealthCheckError(
       `prover health rules_digest mismatch: 0x${rulesDigest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
-      "rules_mismatch",
       false,
     );
   }
@@ -276,30 +244,21 @@ export async function getValidatedProverHealth(
   if (expectedImageIdRaw && expectedImageIdRaw.length > 0) {
     const normalizedExpectedImageId = normalizeHex32Bytes(expectedImageIdRaw);
     if (!normalizedExpectedImageId) {
-      throw new ProverHealthCheckError(
-        "PROVER_EXPECTED_IMAGE_ID must be 32-byte hex",
-        "config_error",
-        false,
-      );
+      throw new ProverHealthCheckError("PROVER_EXPECTED_IMAGE_ID must be 32-byte hex", false);
     }
     if (normalizedExpectedImageId !== normalizedImageId) {
       throw new ProverHealthCheckError(
         `prover health image_id mismatch: ${normalizedImageId} (expected ${normalizedExpectedImageId})`,
-        "image_mismatch",
         false,
       );
     }
   }
 
   const validated: ValidatedProverHealth = {
-    service: typeof payload.service === "string" ? payload.service : "unknown",
-    accelerator: typeof payload.accelerator === "string" ? payload.accelerator : null,
     imageId: normalizedImageId,
     rulesDigest,
     rulesDigestHex: `0x${rulesDigest.toString(16).padStart(8, "0")}`,
     ruleset: typeof payload.ruleset === "string" ? payload.ruleset : EXPECTED_RULESET,
-    devMode: typeof payload.dev_mode === "boolean" ? payload.dev_mode : null,
-    authRequired: typeof payload.auth_required === "boolean" ? payload.auth_required : null,
   };
 
   proverHealthCache = {
@@ -321,7 +280,7 @@ export async function submitToProver(
     const healthError = describeProverHealthError(error);
     return {
       type: healthError.retryable ? "retry" : "fatal",
-      message: `prover health check failed [${healthError.code}]: ${healthError.message}`,
+      message: `prover health check failed: ${healthError.message}`,
     };
   }
 

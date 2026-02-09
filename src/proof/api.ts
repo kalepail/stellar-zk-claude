@@ -90,20 +90,13 @@ export interface GetProofJobResponse {
 
 export interface GatewayProverCompatibleHealth {
   status: "compatible";
-  service: string;
-  accelerator: string | null;
   image_id: string;
-  rules_digest: number;
   rules_digest_hex: string;
   ruleset: string;
-  dev_mode: boolean | null;
-  auth_required: boolean | null;
 }
 
 export interface GatewayProverDegradedHealth {
   status: "degraded";
-  code: string;
-  retryable: boolean;
   error: string;
 }
 
@@ -114,10 +107,11 @@ export interface GatewayHealthResponse {
   service: string;
   mode: string;
   prover_base_url: string;
-  expected_rules_digest: number;
-  expected_rules_digest_hex: string;
-  expected_ruleset: string;
-  expected_image_id: string | null;
+  expected: {
+    rules_digest_hex: string;
+    ruleset: string;
+    image_id: string | null;
+  };
   checked_at: string;
   prover: GatewayProverHealth;
   active_job: ProofJobPublic | null;

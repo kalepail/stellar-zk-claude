@@ -226,12 +226,9 @@ function App() {
             <strong>Gateway Health:</strong>{" "}
             {gatewayHealth ? (
               gatewayHealth.prover.status === "compatible" ? (
-                <>
-                  compatible ({gatewayHealth.prover.ruleset} /{" "}
-                  {gatewayHealth.prover.rules_digest_hex.toUpperCase()})
-                </>
+                <>compatible</>
               ) : (
-                <>degraded ({gatewayHealth.prover.code})</>
+                <>degraded</>
               )
             ) : (
               "loading"
@@ -240,15 +237,14 @@ function App() {
           {gatewayHealth?.prover.status === "compatible" ? (
             <>
               <p>
+                <strong>Rules:</strong> {gatewayHealth.prover.ruleset} /{" "}
+                {gatewayHealth.prover.rules_digest_hex.toUpperCase()}
+              </p>
+              <p>
                 <strong>Prover Image:</strong>{" "}
                 <code>{abbreviateHex(gatewayHealth.prover.image_id)}</code>
+                {gatewayHealth.expected.image_id ? " (pinned)" : ""}
               </p>
-              {gatewayHealth.expected_image_id ? (
-                <p>
-                  <strong>Pinned Image:</strong>{" "}
-                  <code>{abbreviateHex(gatewayHealth.expected_image_id)}</code>
-                </p>
-              ) : null}
             </>
           ) : null}
           {gatewayHealth?.prover.status === "degraded" ? (
