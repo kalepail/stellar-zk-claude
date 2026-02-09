@@ -217,7 +217,7 @@ echo "Job ID: ${JOB_ID}"
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
-| `segment_limit_po2` | `21` | Segment size (2^n), range [16..22] |
+| `segment_limit_po2` | `21` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
 | `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
 | `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
@@ -283,7 +283,7 @@ See `api-server/.env.example` for all options. Key variables:
 | `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |
 | `MIN_SEGMENT_LIMIT_PO2` | `16` | Min allowed segment limit |
-| `MAX_SEGMENT_LIMIT_PO2` | `22` | Max allowed segment limit |
+| `MAX_SEGMENT_LIMIT_PO2` | `21` | Max allowed segment limit |
 | `JOB_TTL_SECS` | `86400` | Finished job retention (24h) |
 | `JOB_SWEEP_SECS` | `60` | Cleanup interval |
 | `RUNNING_JOB_TIMEOUT_SECS` | `1800` | Timeout for active proofs before marking failed |

@@ -2120,6 +2120,7 @@ export class AsteroidsGame {
   /** Load a tape and enter visual replay mode. */
   loadReplay(tapeData: Uint8Array): void {
     const tape = deserializeTape(tapeData);
+    this.audio.enable();
     this.startNewGame(tape.header.seed);
     this.mode = "replay";
     this.replaySpeed = 1;
