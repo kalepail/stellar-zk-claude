@@ -10,7 +10,8 @@
   "vars": {
     "PROVER_BASE_URL": "https://replace-with-your-prover.example.com",
     "PROVER_RECEIPT_KIND": "groth16",
-    "PROVER_SEGMENT_LIMIT_PO2": "22",
+    "PROVER_SEGMENT_LIMIT_PO2": "21",
+    "PROVER_FALLBACK_SEGMENT_LIMIT_PO2": "21",
     "PROVER_MAX_FRAMES": "18000",
     "PROVER_VERIFY_RECEIPT": "0",
     "PROVER_HEALTH_CACHE_MS": "30000",

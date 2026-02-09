@@ -180,6 +180,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (typeof job.prover.recoveryAttempts !== "number") {
       job.prover.recoveryAttempts = 0;
     }
+    if (typeof job.prover.segmentLimitPo2 !== "number") {
+      job.prover.segmentLimitPo2 = null;
+    }
 
     return job;
   }
@@ -197,6 +200,23 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private async scheduleAlarm(delayMs: number): Promise<void> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
+  }
+
+  private segmentFallbackForOom(job: ProofJobRecord, reason: string): number | null {
+    const currentSegment =
+      typeof job.prover.segmentLimitPo2 === "number"
+        ? job.prover.segmentLimitPo2
+        : parseInteger(this.env.PROVER_SEGMENT_LIMIT_PO2, 21, 1);
+    const fallbackSegment = parseInteger(this.env.PROVER_FALLBACK_SEGMENT_LIMIT_PO2, 21, 1);
+    const normalizedReason = reason.toLowerCase();
+    const looksLikeOom =
+      normalizedReason.includes("out of memory") || normalizedReason.includes("allocation failed");
+
+    if (!looksLikeOom || currentSegment <= fallbackSegment) {
+      return null;
+    }
+
+    return fallbackSegment;
   }
 
   async createJob(tapeInfo: Omit<ProofTapeInfo, "key">): Promise<CreateJobResult> {
@@ -255,6 +275,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         jobId: null,
         status: null,
         statusUrl: null,
+        segmentLimitPo2: null,
         lastPolledAt: null,
         pollingErrors: 0,
         recoveryAttempts: 0,
@@ -332,6 +353,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.prover.jobId = null;
       job.prover.status = null;
       job.prover.statusUrl = null;
+      job.prover.segmentLimitPo2 = null;
       job.prover.lastPolledAt = null;
       job.prover.pollingErrors = 0;
     }
@@ -343,6 +365,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     proverJobId: string,
     statusUrl: string,
+    segmentLimitPo2: number,
     recoveryAttempts?: number,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
@@ -357,6 +380,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.jobId = proverJobId;
     job.prover.status = "queued";
     job.prover.statusUrl = statusUrl;
+    job.prover.segmentLimitPo2 = segmentLimitPo2;
     job.prover.pollingErrors = 0;
     job.prover.recoveryAttempts = recoveryAttempts ?? job.prover.recoveryAttempts;
     await this.saveJob(job);
@@ -488,6 +512,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           activeJobId,
           submitResult.jobId,
           submitResult.statusUrl,
+          submitResult.segmentLimitPo2,
           nextRecoveryAttempts,
         );
         // markProverAccepted already schedules the next alarm
@@ -614,13 +639,24 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         }
 
         const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-        const submitResult = await submitToProver(this.env, tapeBytes);
+        const fallbackSegmentPo2 = this.segmentFallbackForOom(job, pollResult.message);
+        if (fallbackSegmentPo2 !== null) {
+          console.warn(
+            `[proof-worker] falling back segment_limit_po2 ${job.prover.segmentLimitPo2 ?? "unknown"} -> ${fallbackSegmentPo2} after OOM`,
+          );
+        }
+        const submitResult = await submitToProver(
+          this.env,
+          tapeBytes,
+          fallbackSegmentPo2 !== null ? { segmentLimitPo2: fallbackSegmentPo2 } : undefined,
+        );
 
         if (submitResult.type === "success") {
           await this.markProverAccepted(
             activeJobId,
             submitResult.jobId,
             submitResult.statusUrl,
+            submitResult.segmentLimitPo2,
             nextRecoveryAttempts,
           );
           // markProverAccepted already schedules the next alarm
@@ -639,6 +675,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           job.prover.jobId = null;
           job.prover.status = null;
           job.prover.statusUrl = null;
+          job.prover.segmentLimitPo2 = null;
           job.prover.lastPolledAt = null;
           job.prover.pollingErrors += 1;
           job.prover.recoveryAttempts = nextRecoveryAttempts;

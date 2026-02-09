@@ -305,7 +305,8 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_ACCESS_CLIENT_ID` (secret) | _(optional)_ Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` (secret) | _(optional)_ Cloudflare Access service token secret |
 | `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
-| `PROVER_SEGMENT_LIMIT_PO2` | `22` by default (must be within api-server's [min, max] range) |
+| `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
+| `PROVER_FALLBACK_SEGMENT_LIMIT_PO2` | `21` by default; auto-downgrade target when prover reports OOM/allocation failure |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
 | `PROVER_VERIFY_RECEIPT` | `0` by default; on-chain verification is the source of truth |
 | `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
@@ -376,6 +377,7 @@ Key knobs:
 - `--verify-receipt`: `false` by default to match production policy.
 - `--max-frames`: optional override for stress scenarios.
 - `--repeat`: run each configuration multiple times for stability.
+- Zero-score tapes are skipped automatically (prover policy rejects `final_score=0`).
 
 Output:
 - CSV is written to `batch-results/segment-sweep-<timestamp>.csv` by default.

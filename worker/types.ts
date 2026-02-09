@@ -67,6 +67,7 @@ export interface ProverTracking {
   jobId: string | null;
   status: ProverJobStatus | null;
   statusUrl: string | null;
+  segmentLimitPo2: number | null;
   lastPolledAt: string | null;
   pollingErrors: number;
   recoveryAttempts: number;
@@ -169,7 +170,7 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string }
+  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

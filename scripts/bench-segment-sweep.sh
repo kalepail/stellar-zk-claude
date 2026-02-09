@@ -57,6 +57,7 @@ Notes:
   - Runs sequentially (single-flight friendly).
   - Waits for prover idle state before each submission.
   - Records both wall-clock and prover elapsed_ms.
+  - Skips tapes with final_score=0 (these are rejected by prover policy).
 USAGE_EOF
 }
 
@@ -404,6 +405,10 @@ FAIL=0
 for tape_entry in "${TAPES[@]}"; do
   IFS='|' read -r tape_label tape_path <<< "$tape_entry"
   read -r tape_frames tape_score tape_seed tape_bytes <<< "$(read_tape_header "$tape_path")"
+  if [[ "$tape_score" == "0" ]]; then
+    echo "WARN: skipping $(basename "$tape_path") because final_score=0 (prover rejects zero-score tapes)"
+    continue
+  fi
   echo "== Tape: $tape_label ($(basename "$tape_path"), ${tape_bytes} bytes, frames=${tape_frames}) =="
 
   for receipt in "${RECEIPTS[@]}"; do

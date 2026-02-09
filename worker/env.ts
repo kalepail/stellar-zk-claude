@@ -12,6 +12,7 @@ export interface WorkerEnv {
   PROVER_ACCESS_CLIENT_SECRET?: string;
   PROVER_RECEIPT_KIND?: string;
   PROVER_SEGMENT_LIMIT_PO2?: string;
+  PROVER_FALLBACK_SEGMENT_LIMIT_PO2?: string;
   PROVER_MAX_FRAMES?: string;
   PROVER_VERIFY_RECEIPT?: string;
   PROVER_EXPECTED_IMAGE_ID?: string;

@@ -109,7 +109,12 @@ async function processQueueMessage(
   }
 
   // Submission succeeded — markProverAccepted sets the first alarm for polling.
-  await coordinator.markProverAccepted(jobId, submitResult.jobId, submitResult.statusUrl);
+  await coordinator.markProverAccepted(
+    jobId,
+    submitResult.jobId,
+    submitResult.statusUrl,
+    submitResult.segmentLimitPo2,
+  );
   message.ack();
 }
 

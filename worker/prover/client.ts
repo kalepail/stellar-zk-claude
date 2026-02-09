@@ -66,7 +66,11 @@ function buildProverUrl(env: WorkerEnv, pathname: string): URL {
   return url;
 }
 
-function buildProverCreateUrl(env: WorkerEnv): URL {
+interface ProverCreateOptions {
+  segmentLimitPo2?: number;
+}
+
+function buildProverCreateUrlWithOptions(env: WorkerEnv, options?: ProverCreateOptions): URL {
   const url = buildProverUrl(env, "/api/jobs/prove-tape/raw");
 
   const receiptKind = env.PROVER_RECEIPT_KIND?.trim();
@@ -74,7 +78,10 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
     url.searchParams.set("receipt_kind", receiptKind);
   }
 
-  const segmentLimitPo2 = parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 22, 1);
+  const segmentLimitPo2 =
+    typeof options?.segmentLimitPo2 === "number"
+      ? Math.max(1, Math.floor(options.segmentLimitPo2))
+      : parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 21, 1);
   url.searchParams.set("segment_limit_po2", String(segmentLimitPo2));
 
   const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
@@ -273,6 +280,7 @@ export async function getValidatedProverHealth(
 export async function submitToProver(
   env: WorkerEnv,
   tapeBytes: Uint8Array,
+  options?: ProverCreateOptions,
 ): Promise<ProverSubmitResult> {
   try {
     await getValidatedProverHealth(env);
@@ -290,10 +298,17 @@ export async function submitToProver(
     1_000,
   );
 
+  const createUrl = buildProverCreateUrlWithOptions(env, options);
+  const submittedSegmentLimitPo2 = parseInteger(
+    createUrl.searchParams.get("segment_limit_po2") ?? undefined,
+    parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 21, 1),
+    1,
+  );
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      buildProverCreateUrl(env),
+      createUrl,
       {
         method: "POST",
         headers: buildProverHeaders(env, true),
@@ -359,6 +374,7 @@ export async function submitToProver(
     type: "success",
     jobId: payload.job_id,
     statusUrl,
+    segmentLimitPo2: submittedSegmentLimitPo2,
   };
 }
 
