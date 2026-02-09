@@ -1,0 +1,14 @@
+{
+  "risk_weight_scale": 1.0,
+  "survival_weight_scale": 1.0,
+  "aggression_weight_scale": 1.0,
+  "fire_reward_scale": 1.0,
+  "shot_penalty_scale": 1.0,
+  "miss_fire_penalty_scale": 1.0,
+  "min_fire_quality_delta": 0.0,
+  "action_penalty_scale": 1.0,
+  "turn_penalty_scale": 1.0,
+  "thrust_penalty_scale": 1.0,
+  "center_weight_scale": 1.0,
+  "edge_penalty_scale": 1.0
+}

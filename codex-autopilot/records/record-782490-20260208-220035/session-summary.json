@@ -1,0 +1,164 @@
+{
+  "session": "session-20260209-025521",
+  "bot": "codex-potential-adaptive",
+  "iterations": 8,
+  "candidates": 16,
+  "max_frames": 108000,
+  "jobs": 8,
+  "selection_metric": "insane",
+  "seeds_file": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/seeds/ultra-hunt-seeds.txt",
+  "random_seed": 2026020910,
+  "start_profile": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/profiles/champion.json",
+  "best": {
+    "objective_value": 79940.93999999999,
+    "avg_score": 78171.15384615384,
+    "max_score": 782490,
+    "avg_frames": 22035.78846153846,
+    "iteration": 8,
+    "candidate": 14,
+    "strategy": "mutate"
+  },
+  "champion_profile": {
+    "risk_weight_scale": 1.060468,
+    "survival_weight_scale": 1.064528,
+    "aggression_weight_scale": 0.998651,
+    "fire_reward_scale": 0.35704,
+    "shot_penalty_scale": 0.602122,
+    "miss_fire_penalty_scale": 0.592075,
+    "action_penalty_scale": 0.94393,
+    "turn_penalty_scale": 0.96415,
+    "thrust_penalty_scale": 0.763477,
+    "center_weight_scale": 0.523974,
+    "edge_penalty_scale": 2.034496,
+    "lookahead_frames_scale": 1.8,
+    "flow_weight_scale": 0.51557,
+    "speed_soft_cap_scale": 1.485035,
+    "fire_distance_scale": 1.042262,
+    "lurk_trigger_scale": 0.632478,
+    "lurk_boost_scale": 0.56528,
+    "fire_tolerance_scale": 1.12408,
+    "min_fire_quality_delta": 0.277956
+  },
+  "history": [
+    {
+      "iteration": 1,
+      "base_step": 0.18,
+      "search_step": 0.18,
+      "improved": false,
+      "stagnation_count": 1,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 2,
+      "base_step": 0.1548,
+      "search_step": 0.20124,
+      "improved": false,
+      "stagnation_count": 2,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 3,
+      "base_step": 0.13312799999999997,
+      "search_step": 0.21300479999999997,
+      "improved": false,
+      "stagnation_count": 3,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 4,
+      "base_step": 0.11449008,
+      "search_step": 0.21753115199999998,
+      "improved": false,
+      "stagnation_count": 4,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 5,
+      "base_step": 0.0984614688,
+      "search_step": 0.21661523136,
+      "improved": false,
+      "stagnation_count": 5,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 6,
+      "base_step": 0.08467686316799998,
+      "search_step": 0.20322447160319995,
+      "improved": false,
+      "stagnation_count": 6,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 7,
+      "base_step": 0.07282210232447998,
+      "search_step": 0.17477304557875195,
+      "improved": false,
+      "stagnation_count": 7,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 200566.33538461535,
+        "avg_score": 197203.07692307694,
+        "max_score": 719970,
+        "avg_frames": 41579.192307692305
+      }
+    },
+    {
+      "iteration": 8,
+      "base_step": 0.06262700799905278,
+      "search_step": 0.15030481919772667,
+      "improved": true,
+      "stagnation_count": 0,
+      "winner": {
+        "candidate": 14,
+        "strategy": "mutate",
+        "objective_value": 79940.93999999999,
+        "avg_score": 78171.15384615384,
+        "max_score": 782490,
+        "avg_frames": 22035.78846153846
+      }
+    }
+  ]
+}

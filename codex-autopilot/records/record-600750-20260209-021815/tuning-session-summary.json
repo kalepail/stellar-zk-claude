@@ -1,0 +1,104 @@
+{
+  "session": "session-20260209-021705",
+  "bot": "codex-potential-adaptive",
+  "iterations": 4,
+  "candidates": 10,
+  "max_frames": 108000,
+  "jobs": 8,
+  "selection_metric": "insane",
+  "seeds_file": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/seeds/record-hunt-seeds.txt",
+  "random_seed": 2026020905,
+  "start_profile": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/profiles/champion.json",
+  "best": {
+    "objective_value": 93913.9975,
+    "avg_score": 91875.9375,
+    "max_score": 600750,
+    "avg_frames": 25335.125,
+    "iteration": 4,
+    "candidate": 9,
+    "strategy": "mutate"
+  },
+  "champion_profile": {
+    "risk_weight_scale": 1.008795,
+    "survival_weight_scale": 0.951972,
+    "aggression_weight_scale": 1.370588,
+    "fire_reward_scale": 0.483975,
+    "shot_penalty_scale": 0.681873,
+    "miss_fire_penalty_scale": 0.666532,
+    "action_penalty_scale": 0.662805,
+    "turn_penalty_scale": 1.182395,
+    "thrust_penalty_scale": 0.682976,
+    "center_weight_scale": 0.975581,
+    "edge_penalty_scale": 1.766888,
+    "lookahead_frames_scale": 1.680125,
+    "flow_weight_scale": 0.603279,
+    "speed_soft_cap_scale": 1.452048,
+    "fire_distance_scale": 1.686722,
+    "lurk_trigger_scale": 0.796999,
+    "lurk_boost_scale": 0.758694,
+    "fire_tolerance_scale": 0.999678,
+    "min_fire_quality_delta": 0.24561
+  },
+  "history": [
+    {
+      "iteration": 1,
+      "base_step": 0.18,
+      "search_step": 0.18,
+      "improved": true,
+      "stagnation_count": 0,
+      "winner": {
+        "candidate": 3,
+        "strategy": "chaos",
+        "objective_value": 50992.409999999996,
+        "avg_score": 49684.6875,
+        "max_score": 227050,
+        "avg_frames": 16346.53125
+      }
+    },
+    {
+      "iteration": 2,
+      "base_step": 0.1548,
+      "search_step": 0.1548,
+      "improved": true,
+      "stagnation_count": 0,
+      "winner": {
+        "candidate": 7,
+        "strategy": "mutate",
+        "objective_value": 80754.7075,
+        "avg_score": 78905.625,
+        "max_score": 500920,
+        "avg_frames": 22972.90625
+      }
+    },
+    {
+      "iteration": 3,
+      "base_step": 0.13312799999999997,
+      "search_step": 0.13312799999999997,
+      "improved": false,
+      "stagnation_count": 1,
+      "winner": {
+        "candidate": 0,
+        "strategy": "incumbent",
+        "objective_value": 80754.7075,
+        "avg_score": 78905.625,
+        "max_score": 500920,
+        "avg_frames": 22972.90625
+      }
+    },
+    {
+      "iteration": 4,
+      "base_step": 0.11449008,
+      "search_step": 0.148837104,
+      "improved": true,
+      "stagnation_count": 0,
+      "winner": {
+        "candidate": 9,
+        "strategy": "mutate",
+        "objective_value": 93913.9975,
+        "avg_score": 91875.9375,
+        "max_score": 600750,
+        "avg_frames": 25335.125
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+rank01-offline-wrap-endurancex-seed6046c93d-score289810-frames67109
+rank02-offline-wrap-endurancex-seedfb2a7978-score278190-frames54811
+rank03-offline-wrap-endurancex-seede35b682c-score267430-frames53605
+rank01-omega-marathon-seed6afa2869-score259820-frames47059
+rank02-omega-marathon-seed10d2c690-score167940-frames45514
+rank01-omega-marathon-seedea1ffa1c-score175040-frames46128
+rank01-omega-alltime-hunter-seed9d00301a-score196710-frames41892
+rank01-omega-supernova-seed5eb7221a-score146620-frames30270
+rank11-omega-lurk-breaker-seed3d9b1f5c-score125130-frames35133
+rank01-omega-ace-seed3747f9b0-score76520-frames23264
+rank01-offline-supernova-hunt-seedb4733ac5-score114800-frames26289
+rank01-offline-wrap-frugal-ace-seed2cdbe3d6-score158630-frames33612
+rank01-offline-wrap-endurancex-seed237d8467-score149390-frames30641
+rank02-offline-wrap-sniper30-seed855d1fd0-score94600-frames21564
+rank04-offline-wrap-sniper30-seed08499531-score72590-frames22846
+rank02-offline-wrap-apex-score-seed0cf06d60-score104160-frames22459
+rank05-offline-wrap-sureshot-seeda7105b28-score89210-frames26196
