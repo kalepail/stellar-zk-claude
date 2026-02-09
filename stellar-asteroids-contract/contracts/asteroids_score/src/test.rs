@@ -211,6 +211,23 @@ fn test_submit_score_wrong_rules_digest() {
 }
 
 #[test]
+fn test_submit_score_zero_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, player, _admin, token_addr) = setup(&env);
+    let journal = make_journal(&env, 0);
+    let seal = dummy_seal(&env);
+
+    let result = client.try_submit_score(&player, &seal, &journal);
+    assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
+
+    // No mint should happen for zero-score submissions.
+    let token = TokenClient::new(&env, &token_addr);
+    assert_eq!(token.balance(&player), 0);
+}
+
+#[test]
 fn test_set_image_id_admin_only() {
     let env = Env::default();
     // Do NOT mock all auths — we want to test auth enforcement
@@ -399,13 +416,47 @@ fn run_fixture_test(
 }
 
 #[test]
-fn test_fixture_short_tape_score_0() {
-    run_fixture_test(
+fn test_fixture_short_tape_score_0_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let player = Address::generate(&env);
+
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let router_addr = env.register(mock_router_ok::MockRouter, ());
+
+    let seal = hex_to_soroban_bytes(
+        &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
-        include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
-        include_str!("../../../../test-fixtures/proof-short-groth16.image_id"),
-        0, // 500 frames, no scoring
     );
+    let journal_raw = hex_to_soroban_bytes(
+        &env,
+        include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
+    );
+    let image_id = parse_image_id(
+        &env,
+        include_str!("../../../../test-fixtures/proof-short-groth16.image_id"),
+    );
+
+    let contract_id = env.register(
+        AsteroidsScoreContract,
+        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+    );
+
+    let sac_admin = StellarAssetClient::new(&env, &token_addr);
+    sac_admin.set_admin(&contract_id);
+
+    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
+    let result = client.try_submit_score(&player, &seal, &journal_raw);
+    assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
+
+    let token = TokenClient::new(&env, &token_addr);
+    assert_eq!(token.balance(&player), 0);
+
+    let digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
+    assert!(!client.is_claimed(&digest));
 }
 
 #[test]
@@ -419,16 +470,16 @@ fn test_fixture_medium_tape_score_90() {
 }
 
 #[test]
-fn test_fixture_real_game_score_1880() {
+fn test_fixture_real_game_score_32860() {
     run_fixture_test(
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
         include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
         include_str!("../../../../test-fixtures/proof-real-game-groth16.image_id"),
-        1880, // 6894 frames, real gameplay
+        32860, // 13829 frames, real gameplay
     );
 }
 
-/// Submit all 3 fixtures to the same contract to verify cumulative token minting
+/// Submit fixture proofs to the same contract to verify cumulative token minting
 /// and that different journal digests are independently tracked.
 #[test]
 fn test_fixture_all_three_cumulative() {
@@ -445,7 +496,7 @@ fn test_fixture_all_three_cumulative() {
     // All fixtures share the same image_id
     let image_id = parse_image_id(
         &env,
-        include_str!("../../../../test-fixtures/proof-short-groth16.image_id"),
+        include_str!("../../../../test-fixtures/proof-medium-groth16.image_id"),
     );
 
     let contract_id = env.register(
@@ -459,7 +510,7 @@ fn test_fixture_all_three_cumulative() {
     let client = AsteroidsScoreContractClient::new(&env, &contract_id);
     let token = TokenClient::new(&env, &token_addr);
 
-    // Submit short tape (score 0)
+    // Submit short tape (score 0) — must be rejected and must not mint.
     let seal1 = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
@@ -468,7 +519,10 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
     );
-    assert_eq!(client.submit_score(&player, &seal1, &journal1), 0);
+    assert_eq!(
+        client.try_submit_score(&player, &seal1, &journal1),
+        Err(Ok(ScoreError::ZeroScoreNotAllowed))
+    );
     assert_eq!(token.balance(&player), 0);
 
     // Submit medium tape (score 90)
@@ -483,7 +537,7 @@ fn test_fixture_all_three_cumulative() {
     assert_eq!(client.submit_score(&player, &seal2, &journal2), 90);
     assert_eq!(token.balance(&player), 90);
 
-    // Submit real game tape (score 1880)
+    // Submit real game tape (score 32860)
     let seal3 = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
@@ -492,14 +546,14 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
     );
-    assert_eq!(client.submit_score(&player, &seal3, &journal3), 1880);
-    assert_eq!(token.balance(&player), 90 + 1880);
+    assert_eq!(client.submit_score(&player, &seal3, &journal3), 32860);
+    assert_eq!(token.balance(&player), 90 + 32860);
 
-    // All three should be claimed
+    // Short tape should not be claimed; positive-score tapes should be claimed.
     let d1: BytesN<32> = env.crypto().sha256(&journal1).into();
     let d2: BytesN<32> = env.crypto().sha256(&journal2).into();
     let d3: BytesN<32> = env.crypto().sha256(&journal3).into();
-    assert!(client.is_claimed(&d1));
+    assert!(!client.is_claimed(&d1));
     assert!(client.is_claimed(&d2));
     assert!(client.is_claimed(&d3));
 }

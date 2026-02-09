@@ -24,6 +24,9 @@ If `API_KEY` is set, all `/api/*` routes require either:
 
 `/health` is always open.
 
+`POST /api/jobs/prove-tape/raw` rejects zero-score tapes (`final_score == 0`)
+with `400` and `error_code: "zero_score_not_allowed"`.
+
 ## Quick Local Run
 
 From `risc0-asteroids-verifier/`:

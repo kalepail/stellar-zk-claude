@@ -91,6 +91,10 @@ function App() {
     if (!latestRun) {
       return;
     }
+    if (latestRun.score <= 0) {
+      setProofError("zero-score runs are not accepted for proving or token minting");
+      return;
+    }
 
     setIsSubmitting(true);
     setProofError(null);
@@ -189,7 +193,8 @@ function App() {
   }, []);
 
   const proofBusy = proofJob ? !isTerminalProofStatus(proofJob.status) : false;
-  const canSubmit = Boolean(latestRun) && !isSubmitting && !proofBusy;
+  const hasPositiveScore = (latestRun?.score ?? 0) > 0;
+  const canSubmit = Boolean(latestRun) && hasPositiveScore && !isSubmitting && !proofBusy;
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
@@ -289,6 +294,11 @@ function App() {
         ) : (
           <p className="proof-placeholder">Finish a run to capture a replay tape for proving.</p>
         )}
+        {latestRun && latestRun.score <= 0 ? (
+          <p className="proof-warning">
+            Zero-score runs are not accepted for proving or token minting.
+          </p>
+        ) : null}
 
         <div className="proof-actions">
           <button type="button" onClick={submitLatestRun} disabled={!canSubmit}>

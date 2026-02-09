@@ -17,6 +17,7 @@ use actix_web::{
     middleware, web, App, HttpResponse, HttpServer, Responder,
 };
 use asteroids_verifier_core::constants::{MAX_FRAMES_DEFAULT, RULESET_V2_NAME, RULES_DIGEST_V2};
+use asteroids_verifier_core::tape::parse_tape;
 use host::{
     accelerator, prove_tape, ProveOptions, ReceiptKind, TapeProof, SEGMENT_LIMIT_PO2_DEFAULT,
 };
@@ -292,6 +293,24 @@ fn validate_tape_size(size: usize, max_tape_bytes: usize) -> Result<(), (String,
     Ok(())
 }
 
+/// Returns `(error_message, error_code)` on failure.
+fn validate_non_zero_score_tape(
+    tape_bytes: &[u8],
+    max_frames: u32,
+) -> Result<(), (String, &'static str)> {
+    let tape = parse_tape(tape_bytes, max_frames)
+        .map_err(|err| (format!("invalid tape payload: {err}"), "invalid_tape"))?;
+
+    if tape.footer.final_score == 0 {
+        return Err((
+            "final_score must be greater than zero".to_string(),
+            "zero_score_not_allowed",
+        ));
+    }
+
+    Ok(())
+}
+
 fn options_summary(options: ProveOptions) -> ProveOptionsSummary {
     ProveOptionsSummary {
         max_frames: options.max_frames,
@@ -443,6 +462,17 @@ async fn run_proof_job(state: AppState, job_id: Uuid, tape: Vec<u8>, options: Pr
 
     match prove_result {
         Ok(result) => {
+            if result.proof.journal.final_score == 0 {
+                if let Err(e) = state.jobs.fail(
+                    job_id,
+                    "prover returned final_score=0; zero-score runs are not accepted".to_string(),
+                    "zero_score_not_allowed",
+                ) {
+                    tracing::error!(job_id = %job_id, "failed to mark job failed: {e}");
+                }
+                return;
+            }
+
             if let Err(e) = state.jobs.complete(job_id, result) {
                 tracing::error!(job_id = %job_id, "failed to store proof result: {e}");
                 let failure = format!("failed to persist proof result: {e}");
@@ -537,6 +567,9 @@ async fn create_prove_job_raw(
         Ok(options) => options,
         Err((msg, code)) => return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code)),
     };
+    if let Err((msg, code)) = validate_non_zero_score_tape(body.as_ref(), options.max_frames) {
+        return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code));
+    }
 
     enqueue_proof_job(state, body.to_vec(), options).await
 }
@@ -862,6 +895,22 @@ mod tests {
 
         let (_, code) = validate_tape_size(11, 10).unwrap_err();
         assert_eq!(code, "tape_too_large");
+    }
+
+    #[test]
+    fn validate_non_zero_score_tape_rejects_zero_score() {
+        let zero_score_tape =
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0, 0xAABB_CCDD);
+        let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
+            .expect_err("zero score should be rejected");
+        assert_eq!(code, "zero_score_not_allowed");
+    }
+
+    #[test]
+    fn validate_non_zero_score_tape_accepts_positive_score() {
+        let positive_score_tape =
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10, 0xAABB_CCDD);
+        assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }
 
     #[test]

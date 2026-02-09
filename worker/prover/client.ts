@@ -509,6 +509,9 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   if (!result) {
     throw new Error("prover result payload missing");
   }
+  if (result.proof.journal.final_score >>> 0 === 0) {
+    throw new Error("prover returned final_score=0; zero-score runs are not accepted");
+  }
   const digest = result.proof.journal.rules_digest >>> 0;
   if (digest !== EXPECTED_RULES_DIGEST >>> 0) {
     throw new Error(

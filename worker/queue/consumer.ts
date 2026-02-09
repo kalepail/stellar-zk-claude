@@ -29,6 +29,12 @@ async function processQueueMessage(
     return;
   }
 
+  if (startedJob.tape.metadata.finalScore >>> 0 === 0) {
+    await coordinator.markFailed(jobId, "zero-score runs are not accepted");
+    message.ack();
+    return;
+  }
+
   // If the prover job already exists (re-delivered message after crash),
   // beginQueueAttempt ensured the alarm is running. Just ack.
   if (startedJob.prover.jobId) {

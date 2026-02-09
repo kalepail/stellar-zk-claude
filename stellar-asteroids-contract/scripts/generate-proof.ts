@@ -335,6 +335,11 @@ async function main() {
       `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST2). Update/redeploy prover before generating fixtures.`
     );
   }
+  if ((proof.journal.final_score >>> 0) === 0) {
+    throw new Error(
+      "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures."
+    );
+  }
 
   console.log(`Proof complete in ${result.result.elapsed_ms}ms`);
   console.log(

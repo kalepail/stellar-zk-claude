@@ -317,6 +317,60 @@ test_submit_fixture() {
 }
 
 # ---------------------------------------------------------------------------
+# Test: Reject a zero-score fixture via mock verifier
+# ---------------------------------------------------------------------------
+test_reject_fixture() {
+  local label="$1" fixture_prefix="$2"
+
+  info "--- Test: reject $label (score must be > 0) ---"
+
+  local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
+
+  if [[ ! -f "$journal_file" ]]; then
+    warn "SKIP: fixture file not found: $journal_file"
+    return
+  fi
+
+  local journal_hex
+  journal_hex=$(tr -d '[:space:]' < "$journal_file")
+
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Generating mock seal..."
+  local seal_hex
+  seal_hex=$(mock_seal "$IMAGE_ID_HEX" "$journal_digest_hex")
+
+  info "Submitting proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --player "$PLAYER_ADDR" \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "$label rejected" "$exit_code"
+
+  local claimed
+  claimed=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    is_claimed \
+    --journal_digest "${journal_digest_hex}" \
+    2>&1) || true
+  assert_eq "is_claimed after rejected $label" "false" "$claimed"
+}
+
+# ---------------------------------------------------------------------------
 # Test: Check cumulative token balance
 # ---------------------------------------------------------------------------
 test_cumulative_balance() {
@@ -501,6 +555,59 @@ test_submit_groth16_fixture() {
 }
 
 # ---------------------------------------------------------------------------
+# Test: Reject a zero-score fixture using real Groth16 seal from fixture
+# ---------------------------------------------------------------------------
+test_reject_groth16_fixture() {
+  local label="$1" fixture_prefix="$2"
+
+  info "--- Test: reject Groth16 $label (score must be > 0) ---"
+
+  local seal_file="$FIXTURES_DIR/${fixture_prefix}.seal"
+  local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
+
+  for f in "$seal_file" "$journal_file"; do
+    if [[ ! -f "$f" ]]; then
+      warn "SKIP: fixture file not found: $f"
+      return
+    fi
+  done
+
+  local seal_hex journal_hex
+  seal_hex=$(tr -d '[:space:]' < "$seal_file")
+  journal_hex=$(tr -d '[:space:]' < "$journal_file")
+
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Submitting Groth16 proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$GRF1_SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --player "$PLAYER_ADDR" \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "Groth16 $label rejected" "$exit_code"
+
+  local claimed
+  claimed=$(stellar contract invoke -q \
+    --id "$GRF1_SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    is_claimed \
+    --journal_digest "${journal_digest_hex}" \
+    2>&1) || true
+  assert_eq "Groth16 is_claimed after rejected $label" "false" "$claimed"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "================================================"
@@ -538,18 +645,17 @@ test_unclaimed_digest
 
 echo ""
 
-# 3. Submit all 3 proof fixtures via mock verifier
-#    Scores: short=0, medium=90, real-game=1880
-test_submit_fixture "short tape"     "proof-short-groth16"     0
+# 3. Reject zero-score fixture, then submit positive-score fixtures via mock verifier
+test_reject_fixture "short tape" "proof-short-groth16"
 echo ""
 test_submit_fixture "medium tape"    "proof-medium-groth16"    90
 echo ""
-test_submit_fixture "real game tape" "proof-real-game-groth16" 1880
+test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 4. Check cumulative token balance (0 + 90 + 1880 = 1970)
-test_cumulative_balance "1970"
+# 4. Check cumulative token balance (90 + 32860 = 32950)
+test_cumulative_balance "32950"
 
 # 5. Groth16 tests (if --groth16 flag was passed)
 if [[ "$RUN_GROTH16" == true ]]; then
@@ -561,11 +667,11 @@ if [[ "$RUN_GROTH16" == true ]]; then
 
   deploy_groth16
 
-  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     0
+  test_reject_groth16_fixture "short tape" "proof-short-groth16"
   echo ""
   test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
   echo ""
-  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 1880
+  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 32860
 
   echo ""
 
@@ -581,7 +687,7 @@ if [[ "$RUN_GROTH16" == true ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "1970" "$grf1_balance"
+  assert_eq "Groth16 cumulative token balance" "32950" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

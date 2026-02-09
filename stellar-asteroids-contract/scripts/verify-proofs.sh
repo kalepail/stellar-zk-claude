@@ -93,8 +93,6 @@ echo ""
 ensure_funded_key "$CALLER_NAME"
 echo ""
 
-verify_fixture "short tape"     "proof-short-groth16"
-echo ""
 verify_fixture "medium tape"    "proof-medium-groth16"
 echo ""
 verify_fixture "real game tape" "proof-real-game-groth16"

@@ -269,7 +269,7 @@ measure_operation() {
 }
 
 measure_submit_score_groth16() {
-  local fixture_prefix="proof-short-groth16"
+  local fixture_prefix="proof-medium-groth16"
   local seal_file="$FIXTURES_DIR/${fixture_prefix}.seal"
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 

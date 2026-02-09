@@ -74,6 +74,7 @@ RISC0 host + zkVM guest             │  polls prover  │
 **`POST /api/proofs/jobs`**
 - Request body: raw tape bytes (`application/octet-stream`).
 - Validates tape format before accepting.
+- Rejects zero-score tapes (`final_score == 0`) with `400`.
 - On accept (`202`):
   - Creates job record in DO.
   - Stores tape in R2 at `proof-jobs/{jobId}/input.tape`.

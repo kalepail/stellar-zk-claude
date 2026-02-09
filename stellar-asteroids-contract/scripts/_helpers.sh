@@ -91,7 +91,7 @@ ensure_funded_key() {
 # Read image_id from first available fixture (all fixtures share the same id)
 # Sets global: IMAGE_ID_HEX
 read_image_id() {
-  local id_file="$FIXTURES_DIR/proof-short-groth16.image_id"
+  local id_file="$FIXTURES_DIR/proof-medium-groth16.image_id"
   if [[ ! -f "$id_file" ]]; then
     err "Image ID fixture not found: $id_file"
     err "Run: bun run scripts/generate-proof.ts first"

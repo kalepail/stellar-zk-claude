@@ -27,6 +27,7 @@ pub enum ScoreError {
     InvalidJournalLength = 1,
     InvalidRulesDigest = 2,
     JournalAlreadyClaimed = 3,
+    ZeroScoreNotAllowed = 4,
 }
 
 #[contractevent]
@@ -81,6 +82,12 @@ impl AsteroidsScoreContract {
             return Err(ScoreError::InvalidRulesDigest);
         }
 
+        // Decode final_score from bytes 8..12 and enforce non-zero minting.
+        let final_score = read_u32_le(&journal_raw, 8);
+        if final_score == 0 {
+            return Err(ScoreError::ZeroScoreNotAllowed);
+        }
+
         // Compute journal digest (SHA-256 of raw journal bytes)
         let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
 
@@ -98,9 +105,6 @@ impl AsteroidsScoreContract {
         // Cross-contract call to RISC Zero router to verify the proof
         let router_client = risc0_router::Client::new(&env, &router_id);
         router_client.verify(&seal, &image_id, &journal_digest);
-
-        // Decode final_score from bytes 8..12
-        let final_score = read_u32_le(&journal_raw, 8);
 
         // Mark journal as claimed
         env.storage().persistent().set(&claimed_key, &());

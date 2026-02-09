@@ -37,6 +37,7 @@ enum ScoreError {
     InvalidJournalLength = 1, // journal_raw is not exactly 24 bytes
     InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5432 ("AST2")
     JournalAlreadyClaimed = 3,// journal digest previously claimed
+    ZeroScoreNotAllowed = 4,  // final_score == 0
 }
 ```
 
@@ -57,11 +58,11 @@ Validation and execution in order:
 1. `player.require_auth()`
 2. `journal_raw.len() != 24` → `InvalidJournalLength`
 3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5432` → `InvalidRulesDigest`
-4. `journal_digest = sha256(journal_raw)`
-5. Check `Claimed(journal_digest)` not in persistent storage → `JournalAlreadyClaimed`
-6. Load `router_id`, `image_id`, `token_id` from instance storage
-7. Cross-contract call: `router.verify(seal, image_id, journal_digest)`
-8. Decode `final_score` from bytes `[8..12]` LE
+4. Decode `final_score` from bytes `[8..12]` LE; must be `> 0` → `ZeroScoreNotAllowed`
+5. `journal_digest = sha256(journal_raw)`
+6. Check `Claimed(journal_digest)` not in persistent storage → `JournalAlreadyClaimed`
+7. Load `router_id`, `image_id`, `token_id` from instance storage
+8. Cross-contract call: `router.verify(seal, image_id, journal_digest)`
 9. Store `Claimed(journal_digest)` in persistent storage
 10. Mint `final_score` tokens to `player` via `StellarAssetClient`
 11. Emit `ScoreSubmitted { player, score: final_score, journal_digest }`

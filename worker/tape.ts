@@ -48,6 +48,10 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
   const finalRngState = view.getUint32(footerOffset + 4, true);
   const checksum = view.getUint32(footerOffset + 8, true);
 
+  if (finalScore === 0) {
+    throw new Error("tape final_score must be greater than zero");
+  }
+
   const computedChecksum = crc32(bytes.subarray(0, footerOffset));
   if (checksum >>> 0 !== computedChecksum >>> 0) {
     throw new Error(
