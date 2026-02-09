@@ -276,6 +276,7 @@ bytes needed for on-chain verification.
 | `PROVER_RECEIPT_KIND` | `"groth16"` | On-chain-verifiable proof type |
 | `PROVER_SEGMENT_LIMIT_PO2` | `"21"` | Segment size limit (power of 2) |
 | `PROVER_MAX_FRAMES` | `"18000"` | ~5 minutes at 60fps |
+| `PROVER_VERIFY_RECEIPT` | `"1"` | Verifies receipt server-side before success |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |
 | `PROVER_POLL_TIMEOUT_MS` | `"900000"` | 15 min absolute poll timeout |
 | `PROVER_POLL_BUDGET_MS` | `"45000"` | Max polling time per alarm |
@@ -311,7 +312,7 @@ struct VerificationJournal {
     final_score: u32,
     final_rng_state: u32,
     tape_checksum: u32,
-    rules_digest: u32,  // RULES_DIGEST_V1 = 0x41535431 ("AST1")
+    rules_digest: u32,  // RULES_DIGEST_V2 = 0x41535432 ("AST2")
 }
 ```
 

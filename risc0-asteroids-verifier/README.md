@@ -304,6 +304,7 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
 | `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
+| `PROVER_VERIFY_RECEIPT` | `1` by default; keep enabled so worker only accepts receipts that verify |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
 | `PROVER_POLL_TIMEOUT_MS` | Absolute poll timeout before transition to retry/failure path |
 | `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |

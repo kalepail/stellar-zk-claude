@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST_V1};
+use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST_V2};
 use crate::error::VerifyError;
 use crate::sim::{replay_strict, ReplayResult, ReplayViolation};
 use crate::tape::parse_tape;
@@ -77,7 +77,7 @@ where
         final_score: replay_result.final_score,
         final_rng_state: replay_result.final_rng_state,
         tape_checksum: tape.footer.checksum,
-        rules_digest: RULES_DIGEST_V1,
+        rules_digest: RULES_DIGEST_V2,
     })
 }
 
@@ -165,7 +165,7 @@ mod tests {
 
         let journal = verify_guest_input(&guest_input).unwrap();
         assert_eq!(journal.frame_count, inputs.len() as u32);
-        assert_eq!(journal.rules_digest, RULES_DIGEST_V1);
+        assert_eq!(journal.rules_digest, RULES_DIGEST_V2);
     }
 
     #[test]

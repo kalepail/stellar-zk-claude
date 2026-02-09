@@ -27,6 +27,8 @@ import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { createHash } from "crypto";
 
+const EXPECTED_RULES_DIGEST = 0x41535432; // "AST2"
+
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
@@ -327,12 +329,20 @@ async function main() {
   }
 
   const { proof } = result.result;
+  const rulesDigest = proof.journal.rules_digest >>> 0;
+  if (rulesDigest !== EXPECTED_RULES_DIGEST) {
+    throw new Error(
+      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST2). Update/redeploy prover before generating fixtures.`
+    );
+  }
+
   console.log(`Proof complete in ${result.result.elapsed_ms}ms`);
   console.log(
     `  Receipt kind: ${proof.produced_receipt_kind || proof.requested_receipt_kind}`
   );
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
+  console.log(`  Rules digest: 0x${rulesDigest.toString(16)}`);
   console.log(
     `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
   );

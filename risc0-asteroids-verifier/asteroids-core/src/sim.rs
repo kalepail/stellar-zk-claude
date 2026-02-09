@@ -214,12 +214,14 @@ struct TransitionState {
     ship_angle: i32,
     ship_can_control: bool,
     ship_fire_cooldown: i32,
+    ship_fire_latch: bool,
     ship_respawn_timer: i32,
 }
 
 const SHIP_SPAWN_X_Q12_4: i32 = 7_680;
 const SHIP_SPAWN_Y_Q12_4: i32 = 5_760;
-const SHIP_RESPAWN_CLEAR_RADIUS_Q12_4: i32 = 1_920;
+const SHIP_RESPAWN_EDGE_PADDING_Q12_4: i32 = 1_536; // 96px
+const SHIP_RESPAWN_GRID_STEP_Q12_4: i32 = 1_024; // 64px
 const WAVE_SAFE_DIST_Q12_4: i32 = 2_880;
 const WAVE_SAFE_DIST_SQ_Q24_8: i32 = WAVE_SAFE_DIST_Q12_4 * WAVE_SAFE_DIST_Q12_4;
 
@@ -349,13 +351,22 @@ fn validate_transition(
     if next.ship_fire_cooldown != expected_fire_cooldown {
         return Err(RuleCode::PlayerBulletCooldownBypass);
     }
+    let expected_fire_latch =
+        expected_ship_fire_latch(prev, input, wave_advanced_this_frame, ship_died_this_frame);
+    if next.ship_fire_latch != expected_fire_latch {
+        return Err(RuleCode::PlayerBulletCooldownBypass);
+    }
 
     Ok(())
 }
 
 #[inline]
 fn wave_asteroid_count(wave: i32) -> usize {
-    core::cmp::min(16, 4 + (wave - 1) * 2) as usize
+    if wave <= 4 {
+        (4 + (wave - 1) * 2) as usize
+    } else {
+        core::cmp::min(16, 10 + (wave - 4)) as usize
+    }
 }
 
 #[inline]
@@ -394,6 +405,7 @@ fn expected_ship_fire_cooldown(
     } else {
         prev.ship_fire_cooldown
     };
+    let fire_pressed_this_frame = input.fire && !prev.ship_fire_latch;
 
     if !prev.ship_can_control {
         if next.ship_can_control {
@@ -401,11 +413,29 @@ fn expected_ship_fire_cooldown(
         } else {
             decremented
         }
-    } else if input.fire && decremented <= 0 && prev.bullets < SHIP_BULLET_LIMIT {
+    } else if fire_pressed_this_frame && decremented <= 0 && prev.bullets < SHIP_BULLET_LIMIT {
         SHIP_BULLET_COOLDOWN_FRAMES
     } else {
         decremented
     }
+}
+
+#[inline]
+fn expected_ship_fire_latch(
+    _prev: &TransitionState,
+    input: FrameInput,
+    wave_advanced_this_frame: bool,
+    ship_died_this_frame: bool,
+) -> bool {
+    if wave_advanced_this_frame || ship_died_this_frame {
+        return false;
+    }
+
+    if !input.fire {
+        return false;
+    }
+
+    true
 }
 
 fn is_legal_score_delta(delta: u32) -> bool {
@@ -551,6 +581,56 @@ fn saucer_spawn_range_for_wave(wave: i32) -> (i32, i32) {
 }
 
 #[inline]
+fn saucer_wave_pressure_pct(wave: i32) -> i32 {
+    clamp_i32((wave - 1) * 8, 0, 100)
+}
+
+#[inline]
+fn saucer_lurk_pressure_pct(time_since_last_kill: i32) -> i32 {
+    let over = core::cmp::max(0, time_since_last_kill - LURK_TIME_THRESHOLD_FRAMES);
+    clamp_i32((over * 100) / (LURK_TIME_THRESHOLD_FRAMES * 2), 0, 100)
+}
+
+#[inline]
+fn saucer_pressure_pct(wave: i32, time_since_last_kill: i32) -> i32 {
+    let wave_pressure = saucer_wave_pressure_pct(wave);
+    let lurk_pressure = saucer_lurk_pressure_pct(time_since_last_kill);
+    core::cmp::min(100, wave_pressure + ((lurk_pressure * 50) / 100))
+}
+
+#[inline]
+fn saucer_fire_cooldown_range(small: bool, wave: i32, time_since_last_kill: i32) -> (i32, i32) {
+    let pressure = saucer_pressure_pct(wave, time_since_last_kill);
+
+    let (base_min, base_max, floor_min, floor_max) = if small {
+        (42, 68, 22, 40)
+    } else {
+        (66, 96, 36, 56)
+    };
+
+    let min = base_min - (((base_min - floor_min) * pressure) / 100);
+    let max = base_max - (((base_max - floor_max) * pressure) / 100);
+    if max > min {
+        (min, max)
+    } else {
+        (min, min + 1)
+    }
+}
+
+#[inline]
+fn small_saucer_aim_error_bam(wave: i32, time_since_last_kill: i32) -> i32 {
+    let pressure = saucer_pressure_pct(wave, time_since_last_kill);
+    let base_error = 22;
+    let min_error = 3;
+    let range = base_error - min_error;
+    clamp_i32(
+        base_error - ((range * pressure) / 100),
+        min_error,
+        base_error,
+    )
+}
+
+#[inline]
 fn in_world_bounds_q12_4(x: i32, y: i32) -> bool {
     (0..WORLD_WIDTH_Q12_4).contains(&x) && (0..WORLD_HEIGHT_Q12_4).contains(&y)
 }
@@ -568,6 +648,7 @@ struct Game {
     saucers: Vec<Saucer>,
     saucer_bullets: Vec<Bullet>,
     saucer_spawn_timer: i32,
+    ship_fire_latch: bool,
     time_since_last_kill: i32,
     frame_count: u32,
     rng: SeededRng,
@@ -598,6 +679,7 @@ impl Game {
             saucers: Vec::with_capacity(SAUCER_VEC_CAPACITY),
             saucer_bullets: Vec::with_capacity(SAUCER_BULLET_VEC_CAPACITY),
             saucer_spawn_timer: 0,
+            ship_fire_latch: false,
             time_since_last_kill: 0,
             frame_count: 0,
             rng: SeededRng::new(seed),
@@ -750,6 +832,7 @@ impl Game {
             ship_angle: self.ship.angle,
             ship_can_control: self.ship.can_control,
             ship_fire_cooldown: self.ship.fire_cooldown,
+            ship_fire_latch: self.ship_fire_latch,
             ship_respawn_timer: self.ship.respawn_timer,
         }
     }
@@ -895,50 +978,88 @@ impl Game {
         self.ship.vy = 0;
         self.ship.fire_cooldown = 0;
         self.ship.invulnerable_timer = 0;
+        self.ship_fire_latch = false;
     }
 
-    fn is_ship_spawn_area_clear(
-        &self,
-        spawn_x: i32,
-        spawn_y: i32,
-        clear_radius_q12_4: i32,
-    ) -> bool {
-        let blocked_by_asteroid = self.asteroids.iter().any(|asteroid| {
-            let hit_dist = (asteroid.radius << 4) + clear_radius_q12_4;
-            collision_dist_sq_q12_4(asteroid.x, asteroid.y, spawn_x, spawn_y) < hit_dist * hit_dist
-        });
+    fn spawn_safety_score(&self, spawn_x: i32, spawn_y: i32) -> i64 {
+        let mut min_clearance_sq = i64::MAX;
 
-        if blocked_by_asteroid {
-            return false;
+        let mut update_clearance = |hx: i32, hy: i32, hr: i32| {
+            let hit_dist_q12_4 = ((hr + self.ship.radius) << 4) as i64;
+            let dist_sq = collision_dist_sq_q12_4(hx, hy, spawn_x, spawn_y) as i64;
+            let clearance_sq = dist_sq - (hit_dist_q12_4 * hit_dist_q12_4);
+            if clearance_sq < min_clearance_sq {
+                min_clearance_sq = clearance_sq;
+            }
+        };
+
+        for asteroid in &self.asteroids {
+            if !asteroid.alive {
+                continue;
+            }
+            update_clearance(asteroid.x, asteroid.y, asteroid.radius);
         }
 
-        let blocked_by_saucer = self.saucers.iter().any(|saucer| {
+        for saucer in &self.saucers {
             if !saucer.alive {
-                return false;
+                continue;
             }
-            let hit_dist = (saucer.radius << 4) + clear_radius_q12_4;
-            collision_dist_sq_q12_4(saucer.x, saucer.y, spawn_x, spawn_y) < hit_dist * hit_dist
-        });
-
-        if blocked_by_saucer {
-            return false;
+            update_clearance(saucer.x, saucer.y, saucer.radius);
         }
 
-        !self.saucer_bullets.iter().any(|bullet| {
+        for bullet in &self.bullets {
             if !bullet.alive {
-                return false;
+                continue;
             }
-            let hit_dist = (bullet.radius << 4) + clear_radius_q12_4;
-            collision_dist_sq_q12_4(bullet.x, bullet.y, spawn_x, spawn_y) < hit_dist * hit_dist
-        })
+            update_clearance(bullet.x, bullet.y, bullet.radius);
+        }
+
+        for bullet in &self.saucer_bullets {
+            if !bullet.alive {
+                continue;
+            }
+            update_clearance(bullet.x, bullet.y, bullet.radius);
+        }
+
+        min_clearance_sq
     }
 
-    fn try_spawn_ship_at_center(&mut self) -> bool {
-        let (spawn_x, spawn_y) = self.get_ship_spawn_point();
+    fn find_best_ship_spawn_point(&self) -> (i32, i32) {
+        let min_x = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+        let max_x = WORLD_WIDTH_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+        let min_y = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+        let max_y = WORLD_HEIGHT_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+        let (center_x, center_y) = self.get_ship_spawn_point();
 
-        if !self.is_ship_spawn_area_clear(spawn_x, spawn_y, SHIP_RESPAWN_CLEAR_RADIUS_Q12_4) {
-            return false;
+        let mut best_x = center_x;
+        let mut best_y = center_y;
+        let mut best_safety_score = i64::MIN;
+        let mut best_center_distance = i64::MAX;
+        let mut y = min_y;
+
+        while y <= max_y {
+            let mut x = min_x;
+            while x <= max_x {
+                let safety_score = self.spawn_safety_score(x, y);
+                let center_distance = collision_dist_sq_q12_4(x, y, center_x, center_y) as i64;
+                if safety_score > best_safety_score
+                    || (safety_score == best_safety_score && center_distance < best_center_distance)
+                {
+                    best_x = x;
+                    best_y = y;
+                    best_safety_score = safety_score;
+                    best_center_distance = center_distance;
+                }
+                x += SHIP_RESPAWN_GRID_STEP_Q12_4;
+            }
+            y += SHIP_RESPAWN_GRID_STEP_Q12_4;
         }
+
+        (best_x, best_y)
+    }
+
+    fn spawn_ship_at_best_open_point(&mut self) {
+        let (spawn_x, spawn_y) = self.find_best_ship_spawn_point();
 
         self.ship.x = spawn_x;
         self.ship.y = spawn_y;
@@ -947,15 +1068,13 @@ impl Game {
         self.ship.angle = 192;
         self.ship.can_control = true;
         self.ship.invulnerable_timer = SHIP_SPAWN_INVULNERABLE_FRAMES;
-
-        true
     }
 
     fn spawn_wave(&mut self) {
         self.wave += 1;
         self.time_since_last_kill = 0;
 
-        let large_count = core::cmp::min(16, 4 + (self.wave - 1) * 2);
+        let large_count = wave_asteroid_count(self.wave);
         let (avoid_x, avoid_y) = self.get_ship_spawn_point();
 
         for _ in 0..large_count {
@@ -976,7 +1095,7 @@ impl Game {
         }
 
         self.queue_ship_respawn(0);
-        self.try_spawn_ship_at_center();
+        self.spawn_ship_at_best_open_point();
     }
 
     fn create_asteroid(&mut self, size: AsteroidSize, x: i32, y: i32) -> Asteroid {
@@ -1017,13 +1136,21 @@ impl Game {
             self.ship.fire_cooldown -= 1;
         }
 
+        if !fire {
+            self.ship_fire_latch = false;
+        }
+
         if !self.ship.can_control {
             if self.ship.respawn_timer > 0 {
                 self.ship.respawn_timer -= 1;
             }
 
             if self.ship.respawn_timer <= 0 {
-                self.try_spawn_ship_at_center();
+                self.spawn_ship_at_best_open_point();
+            }
+
+            if fire {
+                self.ship_fire_latch = true;
             }
 
             return;
@@ -1053,9 +1180,16 @@ impl Game {
         (self.ship.vx, self.ship.vy) =
             clamp_speed_q8_8(self.ship.vx, self.ship.vy, SHIP_MAX_SPEED_SQ_Q16_16);
 
-        if fire && self.ship.fire_cooldown <= 0 && self.bullets.len() < SHIP_BULLET_LIMIT {
+        let fire_pressed_this_frame = fire && !self.ship_fire_latch;
+        if fire_pressed_this_frame
+            && self.ship.fire_cooldown <= 0
+            && self.bullets.len() < SHIP_BULLET_LIMIT
+        {
             self.spawn_ship_bullet();
             self.ship.fire_cooldown = SHIP_BULLET_COOLDOWN_FRAMES;
+        }
+        if fire {
+            self.ship_fire_latch = true;
         }
 
         self.ship.x = wrap_x_q12_4(self.ship.x + (self.ship.vx >> 4));
@@ -1181,17 +1315,9 @@ impl Game {
             if self.saucers[index].fire_cooldown <= 0 {
                 let saucer = self.saucers[index];
                 self.spawn_saucer_bullet(saucer);
-                self.saucers[index].fire_cooldown = if saucer.small {
-                    if is_lurking {
-                        self.random_int(27, 46)
-                    } else {
-                        self.random_int(39, 66)
-                    }
-                } else if is_lurking {
-                    self.random_int(46, 67)
-                } else {
-                    self.random_int(66, 96)
-                };
+                let (min_cooldown, max_cooldown) =
+                    saucer_fire_cooldown_range(saucer.small, self.wave, self.time_since_last_kill);
+                self.saucers[index].fire_cooldown = self.random_int(min_cooldown, max_cooldown + 1);
             }
         }
     }
@@ -1220,7 +1346,9 @@ impl Game {
         };
         let start_y = self.random_int(SAUCER_START_Y_MIN_Q12_4, SAUCER_START_Y_MAX_Q12_4);
         let vy = self.random_int(-94, 95);
-        let fire_cooldown = self.random_int(18, 48);
+        let (cooldown_min, cooldown_max) =
+            saucer_fire_cooldown_range(small, self.wave, self.time_since_last_kill);
+        let fire_cooldown = self.random_int(cooldown_min, cooldown_max + 1);
         let drift_timer = self.random_int(48, 120);
 
         self.saucers.push(Saucer {
@@ -1249,11 +1377,7 @@ impl Game {
             let dx = shortest_delta_q12_4(saucer.x, self.ship.x, WORLD_WIDTH_Q12_4);
             let dy = shortest_delta_q12_4(saucer.y, self.ship.y, WORLD_HEIGHT_Q12_4);
             let target_angle = atan2_bam(dy, dx);
-            let is_lurking = self.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES;
-            let base_error_bam = if is_lurking { 11 } else { 21 };
-            let score_bonus = (self.score / 2_500) as i32;
-            let wave_bonus = core::cmp::min(11, self.wave);
-            let error_bam = clamp_i32(base_error_bam - score_bonus - wave_bonus, 3, base_error_bam);
+            let error_bam = small_saucer_aim_error_bam(self.wave, self.time_since_last_kill);
             (target_angle + self.random_int(-error_bam, error_bam + 1)) & 0xff
         } else {
             self.random_int(0, 256)
@@ -1362,6 +1486,27 @@ impl Game {
             }
         }
 
+        for saucer_index in 0..self.saucers.len() {
+            if !self.saucers[saucer_index].alive {
+                continue;
+            }
+
+            let saucer = self.saucers[saucer_index];
+            for asteroid in &self.asteroids {
+                if !asteroid.alive {
+                    continue;
+                }
+
+                let hit_dist_q12_4 = (saucer.radius + asteroid.radius) << 4;
+                if collision_dist_sq_q12_4(saucer.x, saucer.y, asteroid.x, asteroid.y)
+                    <= hit_dist_q12_4 * hit_dist_q12_4
+                {
+                    self.saucers[saucer_index].alive = false;
+                    break;
+                }
+            }
+        }
+
         if !self.ship.can_control || self.ship.invulnerable_timer > 0 {
             return;
         }
@@ -1451,8 +1596,9 @@ impl Game {
             AsteroidSize::Small
         };
 
-        let total_objects = self.asteroids.iter().filter(|entry| entry.alive).count();
-        let split_count = if total_objects >= ASTEROID_CAP { 1 } else { 2 };
+        let alive_after_destroy = self.asteroids.iter().filter(|entry| entry.alive).count();
+        let free_slots = ASTEROID_CAP.saturating_sub(alive_after_destroy);
+        let split_count = core::cmp::min(2, free_slots);
 
         for _ in 0..split_count {
             let mut child = self.create_asteroid(child_size, x, y);
@@ -1896,7 +2042,152 @@ mod tests {
     }
 
     #[test]
-    fn asteroid_cap_limits_split_to_one() {
+    fn wave_large_asteroid_ramp_matches_locked_table() {
+        let expected = [4usize, 6, 8, 10, 11, 12, 13, 14, 15, 16, 16, 16];
+        for (index, count) in expected.iter().enumerate() {
+            let wave = (index + 1) as i32;
+            assert_eq!(wave_asteroid_count(wave), *count, "wave={wave}");
+        }
+    }
+
+    #[test]
+    fn anti_autofire_requires_release_between_shots() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        game.mode = GameMode::GameOver;
+        game.lives = 0;
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.ship.fire_cooldown = 0;
+
+        for _ in 0..40 {
+            game.step(0x08);
+        }
+        assert_eq!(
+            game.bullets.len(),
+            1,
+            "hold-fire should only create one bullet"
+        );
+
+        game.step(0x00);
+        game.step(0x08);
+        assert_eq!(
+            game.bullets.len(),
+            2,
+            "release+press should allow the next shot"
+        );
+    }
+
+    #[test]
+    fn respawn_uses_open_area_not_center_wait() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        let (center_x, center_y) = game.get_ship_spawn_point();
+
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+        game.bullets.clear();
+        game.asteroids.push(Asteroid {
+            x: center_x,
+            y: center_y,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+
+        game.queue_ship_respawn(0);
+        game.update_ship(false, false, false, false);
+
+        assert!(game.ship.can_control);
+        assert_eq!(game.ship.invulnerable_timer, SHIP_SPAWN_INVULNERABLE_FRAMES);
+        assert_ne!((game.ship.x, game.ship.y), (center_x, center_y));
+        assert!((SHIP_RESPAWN_EDGE_PADDING_Q12_4
+            ..=WORLD_WIDTH_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4)
+            .contains(&game.ship.x));
+        assert!((SHIP_RESPAWN_EDGE_PADDING_Q12_4
+            ..=WORLD_HEIGHT_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4)
+            .contains(&game.ship.y));
+    }
+
+    #[test]
+    fn spawn_point_solver_is_deterministic_for_same_state() {
+        let mut a = Game::new(0xBEEF_FACE);
+        let mut b = a.clone();
+
+        a.queue_ship_respawn(0);
+        b.queue_ship_respawn(0);
+        a.spawn_ship_at_best_open_point();
+        b.spawn_ship_at_best_open_point();
+
+        assert_eq!(a.ship.x, b.ship.x);
+        assert_eq!(a.ship.y, b.ship.y);
+    }
+
+    #[test]
+    fn saucer_asteroid_collision_destroys_saucer() {
+        let mut game = Game::new(0xDEAD_BEEF);
+        game.asteroids.clear();
+        game.saucers.clear();
+        game.saucer_bullets.clear();
+
+        game.asteroids.push(Asteroid {
+            x: 4_000,
+            y: 4_000,
+            vx: 0,
+            vy: 0,
+            angle: 0,
+            alive: true,
+            radius: ASTEROID_RADIUS_LARGE,
+            size: AsteroidSize::Large,
+            spin: 0,
+        });
+        game.saucers.push(Saucer {
+            x: 4_000,
+            y: 4_000,
+            vx: 0,
+            vy: 0,
+            alive: true,
+            radius: SAUCER_RADIUS_LARGE,
+            small: false,
+            fire_cooldown: 0,
+            drift_timer: 0,
+        });
+
+        game.handle_collisions();
+        assert!(!game.saucers[0].alive);
+    }
+
+    #[test]
+    fn saucer_accuracy_tightens_with_pressure() {
+        let low = small_saucer_aim_error_bam(1, 0);
+        let mid = small_saucer_aim_error_bam(8, LURK_TIME_THRESHOLD_FRAMES);
+        let high = small_saucer_aim_error_bam(20, LURK_TIME_THRESHOLD_FRAMES * 3);
+        assert!(low >= mid);
+        assert!(mid >= high);
+        assert!(high >= 3);
+    }
+
+    #[test]
+    fn saucer_fire_cadence_accelerates_with_pressure() {
+        let (small_low_min, small_low_max) = saucer_fire_cooldown_range(true, 1, 0);
+        let (small_high_min, small_high_max) =
+            saucer_fire_cooldown_range(true, 20, LURK_TIME_THRESHOLD_FRAMES * 3);
+        assert!(small_high_min <= small_low_min);
+        assert!(small_high_max <= small_low_max);
+
+        let (large_low_min, large_low_max) = saucer_fire_cooldown_range(false, 1, 0);
+        let (large_high_min, large_high_max) =
+            saucer_fire_cooldown_range(false, 20, LURK_TIME_THRESHOLD_FRAMES * 3);
+        assert!(large_high_min <= large_low_min);
+        assert!(large_high_max <= large_low_max);
+    }
+
+    #[test]
+    fn asteroid_cap_is_never_exceeded_after_split() {
         let mut game = Game::new(0xDEAD_BEEF);
         game.asteroids.clear();
         game.saucers.clear();
@@ -1952,7 +2243,7 @@ mod tests {
             .filter(|entry| entry.alive && matches!(entry.size, AsteroidSize::Medium))
             .count();
 
-        assert_eq!(medium_count, 1);
-        assert_eq!(alive_count, ASTEROID_CAP + 1);
+        assert_eq!(medium_count, 0);
+        assert_eq!(alive_count, ASTEROID_CAP);
     }
 }

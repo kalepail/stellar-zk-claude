@@ -15,7 +15,7 @@ fn verifies_short_fixture() {
     assert_eq!(journal.seed, 0xDEAD_BEEF);
     assert_eq!(journal.frame_count, 500);
     assert_eq!(journal.final_score, 0);
-    assert_eq!(journal.final_rng_state, 0xCF8B_815B);
+    assert_eq!(journal.final_rng_state, 0xDDEC_443F);
 }
 
 #[test]
@@ -25,8 +25,8 @@ fn verifies_medium_fixture() {
 
     assert_eq!(journal.seed, 0xDEAD_BEEF);
     assert_eq!(journal.frame_count, 3980);
-    assert_eq!(journal.final_score, 2040);
-    assert_eq!(journal.final_rng_state, 0x213D_D5CC);
+    assert_eq!(journal.final_score, 90);
+    assert_eq!(journal.final_rng_state, 0xEB07_19CE);
 }
 
 #[test]

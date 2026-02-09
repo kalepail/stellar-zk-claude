@@ -35,7 +35,7 @@ Claimed entries are stored in **persistent** storage.
 ```rust
 enum ScoreError {
     InvalidJournalLength = 1, // journal_raw is not exactly 24 bytes
-    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5431 ("AST1")
+    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5432 ("AST2")
     JournalAlreadyClaimed = 3,// journal digest previously claimed
 }
 ```
@@ -56,7 +56,7 @@ Validation and execution in order:
 
 1. `player.require_auth()`
 2. `journal_raw.len() != 24` → `InvalidJournalLength`
-3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5431` → `InvalidRulesDigest`
+3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5432` → `InvalidRulesDigest`
 4. `journal_digest = sha256(journal_raw)`
 5. Check `Claimed(journal_digest)` not in persistent storage → `JournalAlreadyClaimed`
 6. Load `router_id`, `image_id`, `token_id` from instance storage
@@ -93,7 +93,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 | 8..12 | `final_score` | Score minted as tokens |
 | 12..16 | `final_rng_state` | RNG state at game end |
 | 16..20 | `tape_checksum` | CRC-32 of tape (unused by contract) |
-| 20..24 | `rules_digest` | Must be `0x4153_5431` ("AST1") |
+| 20..24 | `rules_digest` | Must be `0x4153_5432` ("AST2") |
 
 ## Event
 

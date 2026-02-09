@@ -30,7 +30,7 @@ mod mock_router_ok {
 // ---------------------------------------------------------------------------
 
 /// Build a valid 24-byte journal: seed=1, frame_count=100, final_score=42,
-/// final_rng_state=99, tape_checksum=0xDEAD, rules_digest=0x41535431 ("AST1")
+/// final_rng_state=99, tape_checksum=0xDEAD, rules_digest=0x41535432 ("AST2")
 fn make_journal(env: &Env, final_score: u32) -> Bytes {
     let mut buf = [0u8; 24];
     // seed (0..4)
@@ -44,7 +44,7 @@ fn make_journal(env: &Env, final_score: u32) -> Bytes {
     // tape_checksum (16..20)
     buf[16..20].copy_from_slice(&0xDEADu32.to_le_bytes());
     // rules_digest (20..24)
-    buf[20..24].copy_from_slice(&0x4153_5431u32.to_le_bytes());
+    buf[20..24].copy_from_slice(&0x4153_5432u32.to_le_bytes());
     Bytes::from_slice(env, &buf)
 }
 
@@ -304,7 +304,7 @@ fn test_submit_score_different_journals() {
     buf[8..12].copy_from_slice(&20u32.to_le_bytes());
     buf[12..16].copy_from_slice(&99u32.to_le_bytes());
     buf[16..20].copy_from_slice(&0xDEADu32.to_le_bytes());
-    buf[20..24].copy_from_slice(&0x4153_5431u32.to_le_bytes());
+    buf[20..24].copy_from_slice(&0x4153_5432u32.to_le_bytes());
     let journal2 = Bytes::from_slice(&env, &buf);
     let score2 = client.submit_score(&player, &seal, &journal2);
     assert_eq!(score2, 20);
@@ -408,22 +408,22 @@ fn test_fixture_short_tape_score_0() {
 }
 
 #[test]
-fn test_fixture_medium_tape_score_2040() {
+fn test_fixture_medium_tape_score_90() {
     run_fixture_test(
         include_str!("../../../../test-fixtures/proof-medium-groth16.seal"),
         include_str!("../../../../test-fixtures/proof-medium-groth16.journal_raw"),
         include_str!("../../../../test-fixtures/proof-medium-groth16.image_id"),
-        2040, // 3980 frames
+        90, // 3980 frames
     );
 }
 
 #[test]
-fn test_fixture_real_game_score_16270() {
+fn test_fixture_real_game_score_1880() {
     run_fixture_test(
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
         include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
         include_str!("../../../../test-fixtures/proof-real-game-groth16.image_id"),
-        16270, // 6894 frames, real gameplay
+        1880, // 6894 frames, real gameplay
     );
 }
 
@@ -470,7 +470,7 @@ fn test_fixture_all_three_cumulative() {
     assert_eq!(client.submit_score(&player, &seal1, &journal1), 0);
     assert_eq!(token.balance(&player), 0);
 
-    // Submit medium tape (score 2040)
+    // Submit medium tape (score 90)
     let seal2 = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-medium-groth16.seal"),
@@ -479,10 +479,10 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-medium-groth16.journal_raw"),
     );
-    assert_eq!(client.submit_score(&player, &seal2, &journal2), 2040);
-    assert_eq!(token.balance(&player), 2040);
+    assert_eq!(client.submit_score(&player, &seal2, &journal2), 90);
+    assert_eq!(token.balance(&player), 90);
 
-    // Submit real game tape (score 16270)
+    // Submit real game tape (score 1880)
     let seal3 = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
@@ -491,8 +491,8 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
     );
-    assert_eq!(client.submit_score(&player, &seal3, &journal3), 16270);
-    assert_eq!(token.balance(&player), 2040 + 16270);
+    assert_eq!(client.submit_score(&player, &seal3, &journal3), 1880);
+    assert_eq!(token.balance(&player), 90 + 1880);
 
     // All three should be claimed
     let d1: BytesN<32> = env.crypto().sha256(&journal1).into();

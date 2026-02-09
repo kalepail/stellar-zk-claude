@@ -530,17 +530,17 @@ test_unclaimed_digest
 echo ""
 
 # 3. Submit all 3 proof fixtures via mock verifier
-#    Scores: short=0, medium=2040, real-game=16270
+#    Scores: short=0, medium=90, real-game=1880
 test_submit_fixture "short tape"     "proof-short-groth16"     0
 echo ""
-test_submit_fixture "medium tape"    "proof-medium-groth16"    2040
+test_submit_fixture "medium tape"    "proof-medium-groth16"    90
 echo ""
-test_submit_fixture "real game tape" "proof-real-game-groth16" 16270
+test_submit_fixture "real game tape" "proof-real-game-groth16" 1880
 
 echo ""
 
-# 4. Check cumulative token balance (0 + 2040 + 16270 = 18310)
-test_cumulative_balance "18310"
+# 4. Check cumulative token balance (0 + 90 + 1880 = 1970)
+test_cumulative_balance "1970"
 
 # 5. Groth16 tests (if --groth16 flag was passed)
 if [[ "$RUN_GROTH16" == true ]]; then
@@ -554,9 +554,9 @@ if [[ "$RUN_GROTH16" == true ]]; then
 
   test_submit_groth16_fixture "short tape"     "proof-short-groth16"     0
   echo ""
-  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    2040
+  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
   echo ""
-  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 16270
+  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 1880
 
   echo ""
 
@@ -572,7 +572,7 @@ if [[ "$RUN_GROTH16" == true ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "18310" "$grf1_balance"
+  assert_eq "Groth16 cumulative token balance" "1970" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

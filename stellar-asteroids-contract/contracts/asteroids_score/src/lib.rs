@@ -18,7 +18,7 @@ enum DataKey {
     Claimed(BytesN<32>),
 }
 
-const RULES_DIGEST_V1: u32 = 0x4153_5431; // "AST1"
+const RULES_DIGEST_V2: u32 = 0x4153_5432; // "AST2"
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -77,7 +77,7 @@ impl AsteroidsScoreContract {
 
         // Decode rules_digest from bytes 20..24 and validate
         let rules_digest = read_u32_le(&journal_raw, 20);
-        if rules_digest != RULES_DIGEST_V1 {
+        if rules_digest != RULES_DIGEST_V2 {
             return Err(ScoreError::InvalidRulesDigest);
         }
 

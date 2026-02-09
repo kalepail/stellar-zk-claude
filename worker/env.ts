@@ -13,6 +13,7 @@ export interface WorkerEnv {
   PROVER_RECEIPT_KIND?: string;
   PROVER_SEGMENT_LIMIT_PO2?: string;
   PROVER_MAX_FRAMES?: string;
+  PROVER_VERIFY_RECEIPT?: string;
   PROVER_POLL_INTERVAL_MS?: string;
   PROVER_POLL_TIMEOUT_MS?: string;
   PROVER_REQUEST_TIMEOUT_MS?: string;

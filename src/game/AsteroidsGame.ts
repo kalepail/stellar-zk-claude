@@ -94,6 +94,15 @@ const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
 
 const SAUCER_RADIUS_LARGE = 22;
 const SAUCER_RADIUS_SMALL = 16;
+const SHIP_RESPAWN_EDGE_PADDING_Q12_4 = 1536; // 96px
+const SHIP_RESPAWN_GRID_STEP_Q12_4 = 1024; // 64px
+
+function waveLargeAsteroidCount(wave: number): number {
+  if (wave <= 4) {
+    return 4 + (wave - 1) * 2;
+  }
+  return Math.min(16, 10 + (wave - 4));
+}
 
 function shortestDeltaQ12_4(from: number, to: number, size: number): number {
   let delta = to - from;
@@ -239,6 +248,8 @@ export class AsteroidsGame {
     thrust: false,
     fire: false,
   };
+
+  private shipFireLatch = false;
 
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyDown(event);
@@ -520,6 +531,7 @@ export class AsteroidsGame {
       this.particles = [];
       this.debris = [];
       this.ship = this.createShip();
+      this.shipFireLatch = false;
       this.shakeIntensity = 0;
       this.shakeX = 0;
       this.shakeY = 0;
@@ -549,6 +561,7 @@ export class AsteroidsGame {
     this.timeSinceLastKill = 0;
     this.frameCount = 0;
     this.ship = this.createShip();
+    this.shipFireLatch = false;
     this.shakeIntensity = 0;
     this.autopilot.setEnabled(false);
 
@@ -683,42 +696,77 @@ export class AsteroidsGame {
     this.ship.vy = 0;
     this.ship.fireCooldown = 0;
     this.ship.invulnerableTimer = 0;
+    this.shipFireLatch = false;
   }
 
-  private isShipSpawnAreaClear(spawnX: number, spawnY: number, clearRadiusQ12_4 = 1920): boolean {
-    const blockedByAsteroid = this.asteroids.some((asteroid) => {
-      const hitDist = (asteroid.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(asteroid.x, asteroid.y, spawnX, spawnY) < hitDist * hitDist;
-    });
+  private spawnSafetyScore(spawnX: number, spawnY: number): number {
+    let minClearanceSq = Number.MAX_SAFE_INTEGER;
 
-    if (blockedByAsteroid) {
-      return false;
+    const updateClearance = (hazardX: number, hazardY: number, hazardRadius: number): void => {
+      const hitDistQ12_4 = (hazardRadius + this.ship.radius) << 4;
+      const distSq = collisionDistSqQ12_4(hazardX, hazardY, spawnX, spawnY);
+      const clearanceSq = distSq - hitDistQ12_4 * hitDistQ12_4;
+      if (clearanceSq < minClearanceSq) {
+        minClearanceSq = clearanceSq;
+      }
+    };
+
+    for (const asteroid of this.asteroids) {
+      if (!asteroid.alive) continue;
+      updateClearance(asteroid.x, asteroid.y, asteroid.radius);
     }
 
-    const blockedBySaucer = this.saucers.some((saucer) => {
-      if (!saucer.alive) return false;
-      const hitDist = (saucer.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(saucer.x, saucer.y, spawnX, spawnY) < hitDist * hitDist;
-    });
-
-    if (blockedBySaucer) {
-      return false;
+    for (const saucer of this.saucers) {
+      if (!saucer.alive) continue;
+      updateClearance(saucer.x, saucer.y, saucer.radius);
     }
 
-    return !this.saucerBullets.some((bullet) => {
-      if (!bullet.alive) return false;
-      const hitDist = (bullet.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(bullet.x, bullet.y, spawnX, spawnY) < hitDist * hitDist;
-    });
+    for (const bullet of this.bullets) {
+      if (!bullet.alive) continue;
+      updateClearance(bullet.x, bullet.y, bullet.radius);
+    }
+
+    for (const bullet of this.saucerBullets) {
+      if (!bullet.alive) continue;
+      updateClearance(bullet.x, bullet.y, bullet.radius);
+    }
+
+    return minClearanceSq;
   }
 
-  private trySpawnShipAtCenter(): boolean {
-    const { x: spawnX, y: spawnY } = this.getShipSpawnPoint();
+  private findBestShipSpawnPoint(): { x: number; y: number } {
+    const { x: centerX, y: centerY } = this.getShipSpawnPoint();
+    const minX = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const maxX = WORLD_WIDTH_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const minY = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const maxY = WORLD_HEIGHT_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
 
-    if (!this.isShipSpawnAreaClear(spawnX, spawnY)) {
-      return false;
+    let bestX = centerX;
+    let bestY = centerY;
+    let bestSafetyScore = Number.NEGATIVE_INFINITY;
+    let bestCenterDistance = Number.MAX_SAFE_INTEGER;
+
+    for (let y = minY; y <= maxY; y += SHIP_RESPAWN_GRID_STEP_Q12_4) {
+      for (let x = minX; x <= maxX; x += SHIP_RESPAWN_GRID_STEP_Q12_4) {
+        const safetyScore = this.spawnSafetyScore(x, y);
+        const centerDistance = collisionDistSqQ12_4(x, y, centerX, centerY);
+        if (
+          safetyScore > bestSafetyScore ||
+          (safetyScore === bestSafetyScore && centerDistance < bestCenterDistance)
+        ) {
+          bestX = x;
+          bestY = y;
+          bestSafetyScore = safetyScore;
+          bestCenterDistance = centerDistance;
+        }
+      }
     }
 
+    return { x: bestX, y: bestY };
+  }
+
+  private spawnShipAtBestOpenPoint(): void {
+    const { x: spawnX, y: spawnY } = this.findBestShipSpawnPoint();
     this.ship.x = spawnX;
     this.ship.y = spawnY;
     this.ship.prevX = spawnX;
@@ -729,14 +777,13 @@ export class AsteroidsGame {
     this.ship.prevAngle = SHIP_FACING_UP_BAM;
     this.ship.canControl = true;
     this.ship.invulnerableTimer = SHIP_SPAWN_INVULNERABLE_FRAMES;
-    return true;
   }
 
   private spawnWave(): void {
     this.wave += 1;
     this.timeSinceLastKill = 0;
 
-    const largeCount = Math.min(16, 4 + (this.wave - 1) * 2);
+    const largeCount = waveLargeAsteroidCount(this.wave);
     const { x: avoidX, y: avoidY } = this.getShipSpawnPoint();
     // 180px in Q12.4 = 2880; squared = 8,294,400
     const safeDistSq = 2880 * 2880;
@@ -756,9 +803,9 @@ export class AsteroidsGame {
       this.asteroids.push(this.createAsteroid("large", x, y));
     }
 
-    // Use the same spawn policy as death-respawn: ship enters only when center is safe.
+    // Ship always respawns after delay using deterministic "most-open-area" selection.
     this.queueShipRespawn(0);
-    this.trySpawnShipAtCenter();
+    this.spawnShipAtBestOpenPoint();
   }
 
   private createAsteroid(size: AsteroidSize, x: number, y: number): Asteroid {
@@ -806,14 +853,24 @@ export class AsteroidsGame {
 
   private updateShip(_dt: number): void {
     const ship = this.ship;
+    const frameInput = this.currentFrameInput;
+    const fire = frameInput.fire;
 
     if (ship.fireCooldown > 0) ship.fireCooldown--;
+
+    if (!fire) {
+      this.shipFireLatch = false;
+    }
 
     if (!ship.canControl) {
       if (ship.respawnTimer > 0) ship.respawnTimer--;
 
       if (ship.respawnTimer <= 0) {
-        this.trySpawnShipAtCenter();
+        this.spawnShipAtBestOpenPoint();
+      }
+
+      if (fire) {
+        this.shipFireLatch = true;
       }
 
       return;
@@ -822,11 +879,9 @@ export class AsteroidsGame {
     if (ship.invulnerableTimer > 0) ship.invulnerableTimer--;
 
     // Get input from the current frame input (already read+recorded in updateSimulation)
-    const frameInput = this.currentFrameInput;
     const turnLeft = frameInput.left;
     const turnRight = frameInput.right;
     const thrust = frameInput.thrust;
-    const fire = frameInput.fire;
 
     if (turnLeft) {
       ship.angle = (ship.angle - SHIP_TURN_SPEED_BAM) & 0xff;
@@ -856,9 +911,13 @@ export class AsteroidsGame {
 
     ({ vx: ship.vx, vy: ship.vy } = clampSpeedQ8_8(ship.vx, ship.vy, SHIP_MAX_SPEED_SQ_Q16_16));
 
-    if (fire && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
+    const firePressedThisFrame = fire && !this.shipFireLatch;
+    if (firePressedThisFrame && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
       this.spawnShipBullet();
       ship.fireCooldown = SHIP_BULLET_COOLDOWN_FRAMES;
+    }
+    if (fire) {
+      this.shipFireLatch = true;
     }
 
     // Q8.8 velocity >> 4 -> Q12.4 displacement
@@ -986,6 +1045,48 @@ export class AsteroidsGame {
     }
   }
 
+  private saucerWavePressurePct(): number {
+    return clamp((this.wave - 1) * 8, 0, 100);
+  }
+
+  private saucerLurkPressurePct(): number {
+    const over = Math.max(0, this.timeSinceLastKill - LURK_TIME_THRESHOLD_FRAMES);
+    return clamp(((over * 100) / (LURK_TIME_THRESHOLD_FRAMES * 2)) | 0, 0, 100);
+  }
+
+  private saucerPressurePct(): number {
+    const wavePressure = this.saucerWavePressurePct();
+    const lurkPressure = this.saucerLurkPressurePct();
+    return Math.min(100, (wavePressure + (lurkPressure * 50) / 100) | 0);
+  }
+
+  private getSaucerFireCooldownRange(small: boolean): { min: number; max: number } {
+    const pressurePct = this.saucerPressurePct();
+
+    const baseMin = small ? 42 : 66;
+    const baseMax = small ? 68 : 96;
+    const floorMin = small ? 22 : 36;
+    const floorMax = small ? 40 : 56;
+
+    const minReduction = (((baseMin - floorMin) * pressurePct) / 100) | 0;
+    const maxReduction = (((baseMax - floorMax) * pressurePct) / 100) | 0;
+    const min = baseMin - minReduction;
+    const max = baseMax - maxReduction;
+    return max > min ? { min, max } : { min, max: min + 1 };
+  }
+
+  private getSmallSaucerAimErrorBAM(): number {
+    const pressurePct = this.saucerPressurePct();
+    const baseErrorBAM = 22;
+    const minErrorBAM = 3;
+    const errorRange = baseErrorBAM - minErrorBAM;
+    return clamp(
+      baseErrorBAM - (((errorRange * pressurePct) / 100) | 0),
+      minErrorBAM,
+      baseErrorBAM,
+    );
+  }
+
   private updateSaucers(): void {
     if (this.saucerSpawnTimer > 0) this.saucerSpawnTimer--;
 
@@ -1031,13 +1132,8 @@ export class AsteroidsGame {
 
       if (saucer.fireCooldown <= 0) {
         this.spawnSaucerBullet(saucer);
-        saucer.fireCooldown = saucer.small
-          ? isLurking
-            ? randomInt(27, 46)
-            : randomInt(39, 66)
-          : isLurking
-            ? randomInt(46, 67)
-            : randomInt(66, 96);
+        const { min, max } = this.getSaucerFireCooldownRange(saucer.small);
+        saucer.fireCooldown = randomInt(min, max + 1);
       }
     }
   }
@@ -1052,14 +1148,17 @@ export class AsteroidsGame {
 
     const startX = toQ12_4(enterFromLeft ? -30 : WORLD_WIDTH + 30);
     const startY = randomInt(toQ12_4(72), toQ12_4(WORLD_HEIGHT - 72));
+    const vy = randomInt(-94, 95);
+    const { min, max } = this.getSaucerFireCooldownRange(small);
+    const fireCooldown = randomInt(min, max + 1);
+    const driftTimer = randomInt(48, 120);
 
     const saucer: Saucer = {
       id: this.nextId++,
       x: startX,
       y: startY,
       vx: enterFromLeft ? speedQ8_8 : -speedQ8_8,
-      // +-22 px/s -> +-22/60*256 ~ +-94 Q8.8
-      vy: randomInt(-94, 95),
+      vy,
       angle: 0,
       alive: true,
       radius: small ? SAUCER_RADIUS_SMALL : SAUCER_RADIUS_LARGE,
@@ -1067,8 +1166,8 @@ export class AsteroidsGame {
       prevY: startY,
       prevAngle: 0,
       small,
-      fireCooldown: randomInt(18, 48),
-      driftTimer: randomInt(48, 120),
+      fireCooldown,
+      driftTimer,
     };
 
     this.saucers.push(saucer);
@@ -1083,12 +1182,7 @@ export class AsteroidsGame {
       const dx = shortestDeltaQ12_4(saucer.x, this.ship.x, WORLD_WIDTH_Q12_4);
       const dy = shortestDeltaQ12_4(saucer.y, this.ship.y, WORLD_HEIGHT_Q12_4);
       const targetAngle = atan2BAM(dy, dx);
-      // Error in BAM: 30deg ~ 21 BAM, 15deg ~ 11 BAM, 4deg ~ 3 BAM
-      const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
-      const baseErrorBAM = isLurking ? 11 : 21;
-      const scoreBonus = (this.score / 2500) | 0; // integer division
-      const waveBonus = Math.min(11, this.wave * 1); // ~ wave*2 deg -> wave*1.4 BAM ~ wave*1
-      const errorBAM = clamp(baseErrorBAM - scoreBonus - waveBonus, 3, baseErrorBAM);
+      const errorBAM = this.getSmallSaucerAimErrorBAM();
       shotAngle = (targetAngle + randomInt(-errorBAM, errorBAM + 1)) & 0xff;
     } else {
       // Random shot
@@ -1185,6 +1279,31 @@ export class AsteroidsGame {
       }
     }
 
+    // Saucer-asteroid collisions (arcade-faithful: saucer is destroyed)
+    for (const saucer of this.saucers) {
+      if (!saucer.alive) continue;
+
+      for (const asteroid of this.asteroids) {
+        if (!asteroid.alive) continue;
+
+        const hitDistQ12_4 = (saucer.radius + asteroid.radius) << 4;
+        if (
+          collisionDistSqQ12_4(saucer.x, saucer.y, asteroid.x, asteroid.y) <=
+          hitDistQ12_4 * hitDistQ12_4
+        ) {
+          saucer.alive = false;
+          this.spawnExplosion(
+            fromQ12_4(saucer.x),
+            fromQ12_4(saucer.y),
+            saucer.small ? "medium" : "large",
+          );
+          this.addScreenShake(saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE);
+          this.audio.playExplosion(saucer.small ? "medium" : "large");
+          break;
+        }
+      }
+    }
+
     if (!this.ship.canControl || this.ship.invulnerableTimer > 0) {
       return;
     }
@@ -1265,8 +1384,9 @@ export class AsteroidsGame {
     }
 
     const childSize: AsteroidSize = asteroid.size === "large" ? "medium" : "small";
-    const totalObjects = this.asteroids.filter((entry) => entry.alive).length;
-    const splitCount = totalObjects >= ASTEROID_CAP ? 1 : 2;
+    const aliveAfterDestroy = this.asteroids.filter((entry) => entry.alive).length;
+    const freeSlots = Math.max(0, ASTEROID_CAP - aliveAfterDestroy);
+    const splitCount = Math.min(2, freeSlots);
 
     for (let i = 0; i < splitCount; i += 1) {
       const child = this.createAsteroid(childSize, asteroid.x, asteroid.y);

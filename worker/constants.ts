@@ -20,6 +20,7 @@ export const MAX_RETRY_DELAY_SECONDS = 300;
 // After this many delivery attempts (attempts >= MAX_QUEUE_RETRIES), the job is marked
 // as permanently failed rather than retried again.
 export const MAX_QUEUE_RETRIES = 10;
+export const EXPECTED_RULES_DIGEST = 0x41535432; // "AST2"
 
 export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "server_restarted",

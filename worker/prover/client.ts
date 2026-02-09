@@ -3,6 +3,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_POLL_TIMEOUT_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+  EXPECTED_RULES_DIGEST,
   RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
@@ -41,6 +42,8 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
 
   const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
   url.searchParams.set("max_frames", String(maxFrames));
+  const verifyReceipt = parseBoolean(env.PROVER_VERIFY_RECEIPT, true);
+  url.searchParams.set("verify_receipt", verifyReceipt ? "true" : "false");
 
   return url;
 }
@@ -325,6 +328,12 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   const result = response.result;
   if (!result) {
     throw new Error("prover result payload missing");
+  }
+  const digest = result.proof.journal.rules_digest >>> 0;
+  if (digest !== EXPECTED_RULES_DIGEST >>> 0) {
+    throw new Error(
+      `unexpected rules digest 0x${digest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
+    );
   }
 
   return {

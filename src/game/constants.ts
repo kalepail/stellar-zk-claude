@@ -17,12 +17,12 @@ export const SHIP_RESPAWN_DELAY = 1.25; // deprecated: use SHIP_RESPAWN_FRAMES
 export const SHIP_SPAWN_INVULNERABLE = 2; // deprecated: use SHIP_SPAWN_INVULNERABLE_FRAMES
 
 export const SHIP_BULLET_SPEED = 520;
-export const SHIP_BULLET_LIFETIME = 0.85; // deprecated: use SHIP_BULLET_LIFETIME_FRAMES
+export const SHIP_BULLET_LIFETIME = 1.2; // deprecated: use SHIP_BULLET_LIFETIME_FRAMES
 export const SHIP_BULLET_COOLDOWN = 0.16; // deprecated: use SHIP_BULLET_COOLDOWN_FRAMES
 export const SHIP_BULLET_LIMIT = 4;
 
 export const SAUCER_BULLET_SPEED = 280;
-export const SAUCER_BULLET_LIFETIME = 1.4; // deprecated: use SAUCER_BULLET_LIFETIME_FRAMES
+export const SAUCER_BULLET_LIFETIME = 1.2; // deprecated: use SAUCER_BULLET_LIFETIME_FRAMES
 
 export const SAUCER_SPAWN_MIN = 7; // deprecated: use SAUCER_SPAWN_MIN_FRAMES
 export const SAUCER_SPAWN_MAX = 14; // deprecated: use SAUCER_SPAWN_MAX_FRAMES
@@ -30,14 +30,14 @@ export const SAUCER_SPAWN_MAX = 14; // deprecated: use SAUCER_SPAWN_MAX_FRAMES
 // Frame-count timer constants (integer, ZK-friendly)
 export const SHIP_RESPAWN_FRAMES = 75; // 1.25s * 60fps
 export const SHIP_SPAWN_INVULNERABLE_FRAMES = 120; // 2s * 60fps
-export const SHIP_BULLET_LIFETIME_FRAMES = 51; // 0.85s * 60fps
+export const SHIP_BULLET_LIFETIME_FRAMES = 72; // 1.2s * 60fps
 export const SHIP_BULLET_COOLDOWN_FRAMES = 10; // 0.16s * 60fps ≈ 9.6 → 10
-export const SAUCER_BULLET_LIFETIME_FRAMES = 84; // 1.4s * 60fps
+export const SAUCER_BULLET_LIFETIME_FRAMES = 72; // 1.2s * 60fps
 export const SAUCER_SPAWN_MIN_FRAMES = 420; // 7s * 60fps
 export const SAUCER_SPAWN_MAX_FRAMES = 840; // 14s * 60fps
 
 // Derived constant for autopilot bullet range (pixels)
-export const SHIP_BULLET_RANGE = 442; // SHIP_BULLET_SPEED/60 * SHIP_BULLET_LIFETIME_FRAMES ≈ 442
+export const SHIP_BULLET_RANGE = 624; // SHIP_BULLET_SPEED/60 * SHIP_BULLET_LIFETIME_FRAMES ≈ 624
 
 export const ASTEROID_CAP = 27;
 
@@ -45,7 +45,7 @@ export const SCORE_LARGE_ASTEROID = 20;
 export const SCORE_MEDIUM_ASTEROID = 50;
 export const SCORE_SMALL_ASTEROID = 100;
 export const SCORE_LARGE_SAUCER = 200;
-export const SCORE_SMALL_SAUCER = 1000;
+export const SCORE_SMALL_SAUCER = 990;
 
 export const STORAGE_HIGH_SCORE_KEY = "asteroids.highScore";
 
