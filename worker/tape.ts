@@ -5,13 +5,21 @@ import {
   TAPE_MAGIC,
   TAPE_VERSION,
 } from "./constants";
+import { validateClaimantStrKey } from "../shared/stellar/strkey";
 import type { TapeMetadata } from "./types";
 
-function crc32(data: Uint8Array): number {
+function crc32AndValidateInputs(data: Uint8Array, inputsStart: number, inputsEnd: number): number {
   let crc = 0xffffffff;
 
-  for (let index = 0; index < data.length; index += 1) {
-    crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
+  for (let index = 0; index < inputsEnd; index += 1) {
+    const byte = data[index];
+    if (index >= inputsStart && (byte & 0xf0) !== 0) {
+      const frame = index - inputsStart;
+      throw new Error(
+        `tape input reserved bits set at frame ${frame}: 0x${byte.toString(16).padStart(2, "0")}`,
+      );
+    }
+    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   }
 
   return (crc ^ 0xffffffff) >>> 0;
@@ -57,6 +65,29 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
     throw new Error(`tape size mismatch: expected ${expectedLength} bytes, got ${bytes.length}`);
   }
 
+  // Claimant address: 56 bytes at offset 16 (ASCII Stellar strkey, no padding).
+  const claimantRaw = bytes.subarray(16, 72);
+  let claimantEnd = claimantRaw.length;
+  while (claimantEnd > 0 && claimantRaw[claimantEnd - 1] === 0) {
+    claimantEnd -= 1;
+  }
+  if (claimantEnd === 0) {
+    throw new Error("tape claimantAddress must be non-empty");
+  }
+  if (claimantEnd !== claimantRaw.length) {
+    throw new Error("tape claimantAddress must be a 56-char stellar strkey (no padding)");
+  }
+  for (let i = 0; i < claimantRaw.length; i += 1) {
+    if (claimantRaw[i] === 0) {
+      throw new Error("tape claimantAddress contains embedded NUL bytes");
+    }
+  }
+  let claimantAddress = "";
+  for (let i = 0; i < claimantRaw.length; i += 1) {
+    claimantAddress += String.fromCharCode(claimantRaw[i]);
+  }
+  validateClaimantStrKey(claimantAddress);
+
   const footerOffset = TAPE_HEADER_SIZE + frameCount;
   const finalScore = view.getUint32(footerOffset, true);
   const finalRngState = view.getUint32(footerOffset + 4, true);
@@ -66,7 +97,7 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
     throw new Error("tape final_score must be greater than zero");
   }
 
-  const computedChecksum = crc32(bytes.subarray(0, footerOffset));
+  const computedChecksum = crc32AndValidateInputs(bytes, TAPE_HEADER_SIZE, footerOffset);
   if (checksum >>> 0 !== computedChecksum >>> 0) {
     throw new Error(
       `tape checksum mismatch: expected 0x${checksum.toString(16)}, computed 0x${computedChecksum.toString(16)}`,

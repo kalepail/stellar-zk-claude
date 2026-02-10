@@ -10,7 +10,7 @@
  *   [6..7]   u8[2]  reserved        = 0
  *   [8..11]  u32    seed
  *   [12..15] u32    frameCount
- *   [16..71] u8[56] claimantAddress (ASCII Stellar strkey, zero-padded)
+ *   [16..71] u8[56] claimantAddress (ASCII Stellar strkey, no padding)
  *
  * BODY (frameCount bytes):
  *   [72 .. 72+N-1]  u8[]  One byte per frame
@@ -27,6 +27,10 @@
  */
 
 import { RULES_TAG } from "./constants";
+import {
+  validateClaimantStrKey,
+  validateClaimantStrKeyFromUserInput,
+} from "../../shared/stellar/strkey";
 
 export const TAPE_MAGIC = 0x5a4b5450;
 export const TAPE_VERSION = 1;
@@ -114,8 +118,10 @@ export function serializeTape(
   inputs: Uint8Array,
   finalScore: number,
   finalRngState: number,
-  claimantAddress = "",
+  claimantAddress: string,
 ): Uint8Array {
+  const normalizedClaimant = validateClaimantStrKeyFromUserInput(claimantAddress);
+
   const frameCount = inputs.length;
   const totalSize = HEADER_SIZE + frameCount + FOOTER_SIZE;
   const data = new Uint8Array(totalSize);
@@ -129,11 +135,15 @@ export function serializeTape(
   view.setUint32(8, seed >>> 0, true);
   view.setUint32(12, frameCount, true);
 
-  // Claimant address: 56 bytes ASCII, zero-padded
+  // Claimant address: 56 bytes ASCII (no padding).
   const encoder = new TextEncoder();
-  const claimantBytes = encoder.encode(claimantAddress);
-  const claimantLen = Math.min(claimantBytes.length, CLAIMANT_ADDRESS_SIZE);
-  data.set(claimantBytes.subarray(0, claimantLen), 16);
+  const claimantBytes = encoder.encode(normalizedClaimant);
+  if (claimantBytes.length !== CLAIMANT_ADDRESS_SIZE) {
+    throw new Error(
+      `claimantAddress must be exactly ${CLAIMANT_ADDRESS_SIZE} bytes when encoded (got ${claimantBytes.length})`,
+    );
+  }
+  data.set(claimantBytes, 16);
 
   // Body
   data.set(inputs, HEADER_SIZE);
@@ -190,13 +200,18 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
     throw new Error(`Tape length mismatch: expected ${expectedLength} bytes, got ${data.length}`);
   }
 
-  // Read claimant address: 56 bytes at offset 16, trim trailing zeros
+  // Read claimant address: 56 bytes at offset 16 (no padding allowed)
   const claimantRaw = data.subarray(16, 16 + CLAIMANT_ADDRESS_SIZE);
-  let claimantEnd = claimantRaw.length;
-  while (claimantEnd > 0 && claimantRaw[claimantEnd - 1] === 0) {
-    claimantEnd--;
+  for (let i = 0; i < claimantRaw.length; i += 1) {
+    if (claimantRaw[i] === 0) {
+      throw new Error("Tape claimantAddress contains NUL bytes (padding is not allowed)");
+    }
   }
-  const claimantAddress = new TextDecoder().decode(claimantRaw.subarray(0, claimantEnd));
+  let claimantAddress = "";
+  for (let i = 0; i < claimantRaw.length; i += 1) {
+    claimantAddress += String.fromCharCode(claimantRaw[i]);
+  }
+  validateClaimantStrKey(claimantAddress);
 
   const inputs = data.subarray(HEADER_SIZE, HEADER_SIZE + frameCount);
 

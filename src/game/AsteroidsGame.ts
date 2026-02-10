@@ -69,14 +69,7 @@ import {
   wrapYQ12_4,
 } from "./math";
 import { deserializeTape, serializeTape, TapeRecorder } from "./tape";
-import type {
-  Asteroid,
-  AsteroidSize,
-  Bullet,
-  GameMode,
-  Saucer,
-  Ship,
-} from "./types";
+import type { Asteroid, AsteroidSize, Bullet, GameMode, Saucer, Ship } from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
   large: 48,
@@ -1225,9 +1218,11 @@ export class AsteroidsGame {
           saucer.alive = false;
           this.addScore(saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER);
           if (this.renderer) {
-            const sSize = saucer.small ? "medium" as const : "large" as const;
+            const sSize = saucer.small ? ("medium" as const) : ("large" as const);
             this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
-            this.renderer.addScreenShake(saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE);
+            this.renderer.addScreenShake(
+              saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
+            );
             this.audio.playExplosion(sSize);
           }
           break;
@@ -1254,9 +1249,11 @@ export class AsteroidsGame {
           ) {
             saucer.alive = false;
             if (this.renderer) {
-              const sSize = saucer.small ? "medium" as const : "large" as const;
+              const sSize = saucer.small ? ("medium" as const) : ("large" as const);
               this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
-              this.renderer.addScreenShake(saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE);
+              this.renderer.addScreenShake(
+                saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
+              );
               this.audio.playExplosion(sSize);
             }
             break;
@@ -1480,7 +1477,14 @@ export class AsteroidsGame {
   /** Build a serialized tape from the current recording. */
   getTape(claimantAddress = ""): Uint8Array | null {
     if (!this.recorder) return null;
-    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score, getGameRngState(), claimantAddress);
+    if (claimantAddress.trim().length === 0) return null;
+    return serializeTape(
+      this.gameSeed,
+      this.recorder.getInputs(),
+      this.score,
+      getGameRngState(),
+      claimantAddress,
+    );
   }
 
   // =========================================================================
