@@ -169,7 +169,7 @@ impl Game {
             vx: bullet.vx,
             vy: bullet.vy,
             alive: bullet.alive,
-            radius: bullet.radius,
+            radius: BULLET_RADIUS,
             life: bullet.life,
         }
     }
@@ -395,7 +395,7 @@ impl Game {
                 clearance_sq_q12_4(
                     bullet.x,
                     bullet.y,
-                    bullet.radius,
+                    BULLET_RADIUS,
                     spawn_x,
                     spawn_y,
                     self.ship.radius,
@@ -412,7 +412,7 @@ impl Game {
                 clearance_sq_q12_4(
                     bullet.x,
                     bullet.y,
-                    bullet.radius,
+                    BULLET_RADIUS,
                     spawn_x,
                     spawn_y,
                     self.ship.radius,
@@ -613,7 +613,6 @@ impl Game {
             vx: self.ship.vx + bvx,
             vy: self.ship.vy + bvy,
             alive: true,
-            radius: 2,
             life: SHIP_BULLET_LIFETIME_FRAMES,
         });
     }
@@ -812,7 +811,6 @@ impl Game {
             vx,
             vy,
             alive: true,
-            radius: 2,
             life: SAUCER_BULLET_LIFETIME_FRAMES,
         });
     }
@@ -831,7 +829,7 @@ impl Game {
 
             let (bx, by, br) = {
                 let bullet = self.bullets[bullet_index];
-                (bullet.x, bullet.y, bullet.radius)
+                (bullet.x, bullet.y, BULLET_RADIUS)
             };
 
             for asteroid_index in 0..self.asteroids.len() {
@@ -862,7 +860,7 @@ impl Game {
 
             let (bx, by, br) = {
                 let bullet = self.saucer_bullets[bullet_index];
-                (bullet.x, bullet.y, bullet.radius)
+                (bullet.x, bullet.y, BULLET_RADIUS)
             };
 
             for asteroid_index in 0..self.asteroids.len() {
@@ -890,7 +888,7 @@ impl Game {
 
             let (bx, by, br) = {
                 let bullet = self.bullets[bullet_index];
-                (bullet.x, bullet.y, bullet.radius)
+                (bullet.x, bullet.y, BULLET_RADIUS)
             };
 
             for saucer_index in 0..self.saucers.len() {
@@ -983,7 +981,7 @@ impl Game {
                 self.ship.radius,
                 bullet.x,
                 bullet.y,
-                bullet.radius,
+                BULLET_RADIUS,
             ) {
                 bullet.alive = false;
                 self.prune_mask |= PRUNE_SAUCER_BULLETS;

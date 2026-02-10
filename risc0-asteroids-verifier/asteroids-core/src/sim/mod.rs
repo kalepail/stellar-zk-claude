@@ -71,7 +71,6 @@ struct Bullet {
     vx: i32,
     vy: i32,
     alive: bool,
-    radius: i32,
     life: i32,
 }
 
@@ -235,6 +234,8 @@ const SAUCER_START_Y_MIN_Q12_4: i32 = 1_152;
 const SAUCER_START_Y_MAX_Q12_4: i32 = 10_368;
 const SAUCER_CULL_MIN_X_Q12_4: i32 = -1_280;
 const SAUCER_CULL_MAX_X_Q12_4: i32 = 16_640;
+
+const BULLET_RADIUS: i32 = 2;
 
 const ASTEROID_VEC_CAPACITY: usize = ASTEROID_CAP + 16;
 const SHIP_BULLET_VEC_CAPACITY: usize = SHIP_BULLET_LIMIT;

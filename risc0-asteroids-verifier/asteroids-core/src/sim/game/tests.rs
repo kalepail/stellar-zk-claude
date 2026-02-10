@@ -51,7 +51,6 @@ fn valid_bullet() -> Bullet {
         vx: 0,
         vy: 0,
         alive: true,
-        radius: 2,
         life: 1,
     }
 }
@@ -614,7 +613,6 @@ fn asteroid_cap_is_never_exceeded_after_split() {
         vx: 0,
         vy: 0,
         alive: true,
-        radius: 2,
         life: SHIP_BULLET_LIFETIME_FRAMES,
     });
 
