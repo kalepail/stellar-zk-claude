@@ -163,7 +163,7 @@ if [[ "$running" != "0" ]]; then
 fi
 
 # Submit.
-query=$(with_claimant_query "segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_mode=policy")
+query="segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_mode=policy"
 resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
   --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream") || {
   echo "ERROR: failed to connect to prover at $PROVER_URL" >&2

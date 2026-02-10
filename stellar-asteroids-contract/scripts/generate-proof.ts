@@ -10,7 +10,6 @@
  *   bun run scripts/generate-proof.ts \
  *     --tape ../test-fixtures/test-short.tape \
  *     --prover http://127.0.0.1:8080 \
- *     --claimant-address C... \
  *     --out ../test-fixtures/proof-short.json
  *
  * Output fixture format:
@@ -43,7 +42,6 @@ function parseArgs() {
   let segmentLimitPo2 = "21";
   let maxFrames = "18000";
   let imageId = "";
-  let claimantAddress = "";
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -68,9 +66,6 @@ function parseArgs() {
       case "--image-id":
         imageId = args[++i];
         break;
-      case "--claimant-address":
-        claimantAddress = args[++i];
-        break;
       default:
         console.error(`Unknown arg: ${args[i]}`);
         process.exit(1);
@@ -79,12 +74,8 @@ function parseArgs() {
 
   if (!tape) {
     console.error(
-      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--claimant-address <strkey>] [--out <file.json>]"
+      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--out <file.json>]"
     );
-    process.exit(1);
-  }
-  if (!claimantAddress || claimantAddress.trim().length === 0) {
-    console.error("--claimant-address is required");
     process.exit(1);
   }
 
@@ -103,7 +94,6 @@ function parseArgs() {
     segmentLimitPo2,
     maxFrames,
     imageId,
-    claimantAddress,
   };
 }
 
@@ -154,15 +144,13 @@ async function submitTape(
   tapeBytes: Uint8Array,
   receiptKind: string,
   segmentLimitPo2: string,
-  maxFrames: string,
-  claimantAddress: string
+  maxFrames: string
 ): Promise<string> {
   const params = new URLSearchParams({
     receipt_kind: receiptKind,
     segment_limit_po2: segmentLimitPo2,
     max_frames: maxFrames,
     verify_mode: "policy",
-    claimant_address: claimantAddress.trim(),
   });
   const url = `${proverUrl}/api/jobs/prove-tape/raw?${params.toString()}`;
 
@@ -344,8 +332,7 @@ async function main() {
     tapeBytes,
     config.receiptKind,
     config.segmentLimitPo2,
-    config.maxFrames,
-    config.claimantAddress
+    config.maxFrames
   );
 
   // Poll for result

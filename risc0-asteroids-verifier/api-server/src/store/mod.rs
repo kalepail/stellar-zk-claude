@@ -74,7 +74,6 @@ impl JobStore {
                 opt_segment_limit_po2 INTEGER NOT NULL,
                 opt_proof_mode        TEXT NOT NULL,
                 opt_verify_mode       TEXT NOT NULL,
-                opt_claimant_address  TEXT NOT NULL,
                 opt_accelerator       TEXT NOT NULL,
                 result_path         TEXT,
                 error               TEXT
@@ -100,12 +99,6 @@ impl JobStore {
             [],
         )
         .ok();
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN opt_claimant_address TEXT NOT NULL DEFAULT ''",
-            [],
-        )
-        .ok();
-
         let store = Self {
             conn: Mutex::new(conn),
             results_dir,

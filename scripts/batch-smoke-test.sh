@@ -214,7 +214,7 @@ run_stage() {
 
   # Submit
   local query
-  query=$(with_claimant_query "receipt_kind=${receipt}&verify_mode=policy")
+  query="receipt_kind=${receipt}&verify_mode=policy"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${tape}" -H "content-type: application/octet-stream")

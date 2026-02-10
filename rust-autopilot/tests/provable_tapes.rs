@@ -9,7 +9,7 @@ fn all_bots_generate_provable_tapes_on_smoke_seed() -> Result<()> {
         let artifact = run_bot(bot, seed, 900)?;
         assert!(artifact.metrics.frame_count > 0, "bot={bot}");
         assert_eq!(artifact.metrics.bot_id, bot, "bot id mismatch for {bot}");
-        assert!(artifact.tape.len() > 16 + 12, "tape too small for {bot}");
+        assert!(artifact.tape.len() > 72 + 12, "tape too small for {bot}");
     }
     Ok(())
 }
@@ -26,7 +26,7 @@ fn all_bots_generate_provable_tapes_on_multiple_seeds() -> Result<()> {
                 "bot id mismatch for {bot} seed={seed:#x}"
             );
             assert!(
-                artifact.tape.len() > 16 + 12,
+                artifact.tape.len() > 72 + 12,
                 "tape too small for {bot} seed={seed:#x}"
             );
         }

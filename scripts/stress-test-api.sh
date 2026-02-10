@@ -165,7 +165,7 @@ submit_garbage_and_wait() {
   dd if=/dev/urandom of="$gfile" bs=128 count=1 2>/dev/null
 
   local query
-  query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy")
+  query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@$gfile" -H "content-type: application/octet-stream")
@@ -301,7 +301,7 @@ info "response: $body"
 # Test 2b: Submit empty body → 400
 echo ""
 echo "[2b] POST empty body"
-empty_query=$(with_claimant_query "")
+empty_query=""
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${empty_query}" \
   -H "content-type: application/octet-stream" -d '')
 http_code=$(echo "$resp_raw" | tail -1)
@@ -375,7 +375,7 @@ fi
 # Test 2f: Out-of-range segment_limit_po2 → 400
 echo ""
 echo "[2f] POST with out-of-range segment_limit_po2"
-bad_segment_query=$(with_claimant_query "segment_limit_po2=99&verify_mode=policy")
+bad_segment_query="segment_limit_po2=99&verify_mode=policy"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${bad_segment_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
@@ -451,7 +451,7 @@ echo "[4a] Submit medium tape for proving"
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 info "tape: $(basename "$TAPE_FILE") ($tape_size bytes)"
 
-submit_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy")
+submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy"
 resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${submit_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream" 2>&1)
 
@@ -490,7 +490,7 @@ for attempt in $(seq 1 10); do
 done
 
 # Now try to submit a second job while the prover is busy
-busy_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy")
+busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${busy_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
@@ -625,7 +625,7 @@ if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
   long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
   info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
 
-  long_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy")
+  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy"
   resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${long_query}" \
     --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
 

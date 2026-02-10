@@ -6,13 +6,6 @@
 #   POLL_INTERVAL — seconds between poll iterations (default: 5)
 
 POLL_INTERVAL="${POLL_INTERVAL:-5}"
-DEFAULT_PROVER_CLAIMANT_ADDRESS="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-PROVER_CLAIMANT_ADDRESS="${PROVER_CLAIMANT_ADDRESS:-$DEFAULT_PROVER_CLAIMANT_ADDRESS}"
-
-if [[ ! "$PROVER_CLAIMANT_ADDRESS" =~ ^[GC][A-Z2-7]{55}$ ]]; then
-  echo "ERROR: invalid PROVER_CLAIMANT_ADDRESS '$PROVER_CLAIMANT_ADDRESS' (expected 56-char G... or C... strkey)" >&2
-  return 1
-fi
 
 # ── JSON helpers ─────────────────────────────────────────────────────
 
@@ -84,20 +77,8 @@ if magic != 0x5A4B5450:
     sys.exit(1)
 seed    = struct.unpack_from('<I', data, 8)[0]
 frames  = struct.unpack_from('<I', data, 12)[0]
-score   = struct.unpack_from('<I', data, 16 + frames)[0]
+score   = struct.unpack_from('<I', data, 72 + frames)[0]
 print(f'{frames} {score} {seed} {len(data)}')
 PYEOF
 }
 
-# Append claimant_address query parameter to a query-string fragment.
-# Examples:
-#   with_claimant_query "receipt_kind=composite&verify_mode=policy"
-#   with_claimant_query ""
-with_claimant_query() {
-  local query="${1:-}"
-  if [[ -n "$query" ]]; then
-    printf '%s&claimant_address=%s' "$query" "$PROVER_CLAIMANT_ADDRESS"
-  else
-    printf 'claimant_address=%s' "$PROVER_CLAIMANT_ADDRESS"
-  fi
-}

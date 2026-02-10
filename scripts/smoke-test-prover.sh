@@ -93,7 +93,7 @@ run_proof() {
   wait_for_idle
 
   local query
-  query=$(with_claimant_query "receipt_kind=${receipt}&verify_mode=policy")
+  query="receipt_kind=${receipt}&verify_mode=policy"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream")

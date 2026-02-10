@@ -20,9 +20,9 @@ impl JobStore {
                 job_id, status, created_at, started_at, finished_at,
                 tape_size_bytes,
                 opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
-                opt_proof_mode, opt_verify_mode, opt_claimant_address, opt_accelerator,
+                opt_proof_mode, opt_verify_mode, opt_accelerator,
                 result_path, error, error_code
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 job.job_id.to_string(),
                 status_to_str(job.status),
@@ -35,7 +35,6 @@ impl JobStore {
                 job.options.segment_limit_po2 as i64,
                 job.options.proof_mode.as_str(),
                 job.options.verify_mode.as_str(),
-                "", // claimant_address now lives in tape, not options
                 job.options.accelerator,
                 Option::<String>::None,
                 job.error.as_deref(),
@@ -55,7 +54,7 @@ impl JobStore {
                 "SELECT job_id, status, created_at, started_at, finished_at,
                         tape_size_bytes,
                         opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
-                        opt_proof_mode, opt_verify_mode, opt_claimant_address, opt_accelerator,
+                        opt_proof_mode, opt_verify_mode, opt_accelerator,
                         result_path, error, error_code
                  FROM jobs WHERE job_id = ?1",
                 params![job_id.to_string()],
@@ -72,11 +71,10 @@ impl JobStore {
                         opt_segment_limit_po2: row.get(8)?,
                         opt_proof_mode: row.get(9)?,
                         opt_verify_mode: row.get(10)?,
-                        opt_claimant_address: row.get(11)?,
-                        _opt_accelerator: row.get(12)?,
-                        result_path: row.get(13)?,
-                        error: row.get(14)?,
-                        error_code: row.get(15)?,
+                        _opt_accelerator: row.get(11)?,
+                        result_path: row.get(12)?,
+                        error: row.get(13)?,
+                        error_code: row.get(14)?,
                     })
                 },
             )
@@ -173,7 +171,6 @@ struct RawJobRow {
     opt_segment_limit_po2: i64,
     opt_proof_mode: String,
     opt_verify_mode: String,
-    _opt_claimant_address: String,
     _opt_accelerator: String,
     result_path: Option<String>,
     error: Option<String>,

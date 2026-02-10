@@ -12,7 +12,6 @@ THRESHOLD_MODE="off" # off|check
 OUT_DIR=""
 THRESHOLDS_FILE="$DEFAULT_THRESHOLDS_FILE"
 SEGMENT_LIMIT_PO2="19"
-CLAIMANT_ADDRESS="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 declare -a HOST_EXTRA_ARGS=()
 HOST_BUILD_ARGS=(--no-default-features)
 
@@ -246,7 +245,6 @@ run_case() {
   local -a host_cmd=(
     target/release/host
     --receipt-kind composite
-    --claimant-address "$CLAIMANT_ADDRESS"
     --proof-mode dev
   )
   if [[ ${#HOST_EXTRA_ARGS[@]} -gt 0 ]]; then
@@ -408,7 +406,6 @@ write_summary() {
       echo "- Segment limit po2 override: \`$SEGMENT_LIMIT_PO2\`"
     fi
     echo "- Host build mode: \`cpu (no-default-features)\`"
-    echo "- Claimant address: \`$CLAIMANT_ADDRESS\`"
     echo "- Proof mode: \`dev\`"
     echo "- Coverage mode: \`$COVERAGE_MODE\`"
     echo "- Dev runs: yes"

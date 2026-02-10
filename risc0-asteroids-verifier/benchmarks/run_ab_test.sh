@@ -7,8 +7,6 @@ TAPE="${1:-../test-fixtures/test-short.tape}"
 RESULTS="benchmarks/benchmark_results.txt"
 CARGO_TOML="Cargo.toml"
 CARGO_TOML_BAK="Cargo.toml.bak"
-CLAIMANT_ADDRESS="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-
 # Save original
 cp "$CARGO_TOML" "$CARGO_TOML_BAK"
 
@@ -48,7 +46,7 @@ TOML
   # Run with dev mode for cycle counts
   echo "  Running..."
   output=$(RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release -p host --no-default-features -- \
-    --tape "$TAPE" --proof-mode dev --claimant-address "$CLAIMANT_ADDRESS" 2>&1)
+    --tape "$TAPE" --proof-mode dev 2>&1)
 
   total=$(echo "$output" | grep "Total cycles:" | awk '{print $NF}')
   user=$(echo "$output" | grep "User cycles:" | awk '{print $NF}')

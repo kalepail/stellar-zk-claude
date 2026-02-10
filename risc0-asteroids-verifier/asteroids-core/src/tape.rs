@@ -419,6 +419,68 @@ mod tests {
     }
 
     #[test]
+    fn claimant_g_address_roundtrips() {
+        let g_addr = b"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(g_addr.len(), 56);
+        let inputs = [0x00u8, 0x01];
+        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, g_addr);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.header.claimant_address, g_addr.to_vec());
+    }
+
+    #[test]
+    fn claimant_c_address_roundtrips() {
+        let c_addr = b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(c_addr.len(), 56);
+        let inputs = [0x00u8, 0x01];
+        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, c_addr);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.header.claimant_address, c_addr.to_vec());
+    }
+
+    #[test]
+    fn claimant_empty_roundtrips_as_empty() {
+        let inputs = [0x00u8, 0x01];
+        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, b"");
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert!(tape.header.claimant_address.is_empty());
+    }
+
+    #[test]
+    fn claimant_shorter_than_56_bytes_is_zero_padded() {
+        let short = b"GSHORT";
+        let inputs = [0x00u8];
+        let bytes = serialize_tape(0x1111, &inputs, 0, 0x2222, short);
+        // Verify the raw bytes: 6 bytes of "GSHORT" then 50 zeros
+        assert_eq!(&bytes[16..22], b"GSHORT");
+        assert!(bytes[22..72].iter().all(|&b| b == 0));
+        // Parse trims trailing zeros
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.header.claimant_address, b"GSHORT".to_vec());
+    }
+
+    #[test]
+    fn claimant_exactly_56_bytes_no_padding() {
+        let full = b"GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW";
+        assert_eq!(full.len(), 56);
+        let inputs = [0x00u8];
+        let bytes = serialize_tape(0x1111, &inputs, 0, 0x2222, full);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.header.claimant_address, full.to_vec());
+    }
+
+    #[test]
+    fn claimant_longer_than_56_bytes_is_truncated() {
+        let long = b"GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWXYZ_EXTRA";
+        assert!(long.len() > 56);
+        let inputs = [0x00u8];
+        let bytes = serialize_tape(0x1111, &inputs, 0, 0x2222, long);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.header.claimant_address.len(), 56);
+        assert_eq!(tape.header.claimant_address, long[..56].to_vec());
+    }
+
+    #[test]
     fn serialize_tape_writes_crc_over_header_and_body() {
         let inputs = [0x01u8, 0x02u8, 0x04u8, 0x08u8];
         let bytes = serialize_tape(0xABCD_1234, &inputs, 77, 0xCAFEBABE, b"");

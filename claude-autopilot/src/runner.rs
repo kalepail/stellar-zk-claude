@@ -61,7 +61,7 @@ pub fn run(bot: &mut Bot, seed: u32, max_frames: u32) -> Result<RunArtifact> {
     }
 
     let result = game.result();
-    let tape = serialize_tape(seed, &inputs, result.final_score, result.final_rng_state);
+    let tape = serialize_tape(seed, &inputs, result.final_score, result.final_rng_state, b"");
     let journal = verify_tape(&tape, max_frames.max(result.frame_count).max(1))
         .map_err(|err| anyhow!("generated tape failed verification: {err}"))?;
 

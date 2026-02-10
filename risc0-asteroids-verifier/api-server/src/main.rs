@@ -212,15 +212,6 @@ mod tests {
             receipt_kind: ReceiptKind::default(),
             proof_mode: ProofMode::Secure,
             verify_mode: VerifyMode::Verify,
-            claimant_address: "GCLAIMANTADDRESS".to_string(),
-        }
-    }
-
-    fn query_with_claimant() -> ProveTapeQuery {
-        ProveTapeQuery {
-            claimant_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-                .to_string(),
-            ..Default::default()
         }
     }
 
@@ -238,7 +229,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_rejects_zero_score() {
         let zero_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0, 0xAABB_CCDD);
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0, 0xAABB_CCDD, b"");
         let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
             .expect_err("zero score should be rejected");
         assert_eq!(code, "zero_score_not_allowed");
@@ -247,7 +238,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_accepts_positive_score() {
         let positive_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10, 0xAABB_CCDD);
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10, 0xAABB_CCDD, b"");
         assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }
 
@@ -257,7 +248,7 @@ mod tests {
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 proof_mode: Some(ProofMode::Dev),
-                ..query_with_claimant()
+                ..Default::default()
             })
             .unwrap_err();
         assert!(msg.contains("proof_mode"));
@@ -270,7 +261,7 @@ mod tests {
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 segment_limit_po2: Some(DEFAULT_MAX_SEGMENT_LIMIT_PO2 + 1),
-                ..query_with_claimant()
+                ..Default::default()
             })
             .unwrap_err();
         assert!(msg.contains("segment_limit_po2"));
@@ -283,7 +274,7 @@ mod tests {
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 max_frames: Some(MAX_FRAMES_DEFAULT + 1),
-                ..query_with_claimant()
+                ..Default::default()
             })
             .unwrap_err();
         assert!(msg.contains("max_frames"));
@@ -372,18 +363,11 @@ mod tests {
     #[test]
     fn policy_accepts_valid_defaults() {
         let policy = strict_policy();
-        let options = policy.to_options(&query_with_claimant()).unwrap();
+        let options = policy.to_options(&ProveTapeQuery::default()).unwrap();
         assert_eq!(options.max_frames, MAX_FRAMES_DEFAULT);
         assert_eq!(options.segment_limit_po2, SEGMENT_LIMIT_PO2_DEFAULT);
         assert_eq!(options.proof_mode, ProofMode::Secure);
         assert_eq!(options.verify_mode, VerifyMode::Policy);
-    }
-
-    #[test]
-    fn policy_rejects_missing_claimant_address() {
-        let policy = strict_policy();
-        let (_, code) = policy.to_options(&ProveTapeQuery::default()).unwrap_err();
-        assert_eq!(code, "missing_claimant_address");
     }
 
     #[test]
@@ -392,7 +376,7 @@ mod tests {
         let (_, code) = policy
             .to_options(&ProveTapeQuery {
                 max_frames: Some(0),
-                ..query_with_claimant()
+                ..Default::default()
             })
             .unwrap_err();
         assert_eq!(code, "invalid_max_frames");
@@ -404,7 +388,7 @@ mod tests {
         let (_, code) = policy
             .to_options(&ProveTapeQuery {
                 segment_limit_po2: Some(DEFAULT_MIN_SEGMENT_LIMIT_PO2 - 1),
-                ..query_with_claimant()
+                ..Default::default()
             })
             .unwrap_err();
         assert_eq!(code, "invalid_segment_limit");

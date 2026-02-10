@@ -2,7 +2,7 @@
  * RISC0 tape verification bridge.
  *
  * Usage:
- *   bun run scripts/verify-tape-risc0.ts --tape <path> [--max-frames <n>] [--segment-limit-po2 <n>] [--receipt-kind <kind>] [--claimant-address <strkey>] [--journal-out <path>]
+ *   bun run scripts/verify-tape-risc0.ts --tape <path> [--max-frames <n>] [--segment-limit-po2 <n>] [--receipt-kind <kind>] [--journal-out <path>]
  *
  * Local policy is enforced: dev proof mode only (RISC0_DEV_MODE=1, --proof-mode dev).
  */
@@ -10,16 +10,13 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
-const DEFAULT_CLAIMANT_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-
 let tapePath = "";
 let maxFrames = 18_000;
 let journalOut = "";
 let segmentLimitPo2 = 19;
 let receiptKind = "composite";
-let claimantAddress = DEFAULT_CLAIMANT_ADDRESS;
 const usage =
-  "Usage: bun run scripts/verify-tape-risc0.ts --tape <path> [--max-frames <n>] [--segment-limit-po2 <n>] [--receipt-kind <kind>] [--claimant-address <strkey>] [--journal-out <path>] (dev mode only; default --segment-limit-po2 19)";
+  "Usage: bun run scripts/verify-tape-risc0.ts --tape <path> [--max-frames <n>] [--segment-limit-po2 <n>] [--receipt-kind <kind>] [--journal-out <path>] (dev mode only; default --segment-limit-po2 19)";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
@@ -57,14 +54,6 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     receiptKind = value;
-  } else if (arg === "--claimant-address") {
-    const value = args[++i];
-    if (!value) {
-      console.error("Missing value for --claimant-address");
-      console.error(usage);
-      process.exit(1);
-    }
-    claimantAddress = value;
   } else if (arg === "--journal-out") {
     const value = args[++i];
     if (!value) {
@@ -102,11 +91,6 @@ if (!Number.isInteger(segmentLimitPo2) || segmentLimitPo2 < 1) {
   console.error("Invalid --segment-limit-po2. Expected integer >= 1.");
   process.exit(1);
 }
-if (!claimantAddress.trim()) {
-  console.error("Invalid --claimant-address. Expected non-empty strkey.");
-  process.exit(1);
-}
-
 const resolvedTape = resolve(process.cwd(), tapePath);
 const resolvedJournal = journalOut ? resolve(process.cwd(), journalOut) : "";
 
@@ -123,8 +107,6 @@ const hostArgs = [
   String(maxFrames),
   "--receipt-kind",
   receiptKind,
-  "--claimant-address",
-  claimantAddress.trim(),
 ];
 
 if (resolvedJournal) {

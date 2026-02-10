@@ -276,6 +276,53 @@ mod tests {
     }
 
     #[test]
+    fn verifies_g_address_claimant_roundtrip() {
+        let g_addr = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let inputs = [0x00u8; 4];
+        let replay_result = replay(0xAAAA_BBBB, &inputs);
+        let tape = serialize_tape(
+            0xAAAA_BBBB,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+            g_addr.as_bytes(),
+        );
+        let journal = verify_tape(&tape, 10_000).unwrap();
+        assert_eq!(journal.claimant_address, g_addr);
+    }
+
+    #[test]
+    fn verifies_c_address_claimant_roundtrip() {
+        let c_addr = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let inputs = [0x00u8; 4];
+        let replay_result = replay(0xCCCC_DDDD, &inputs);
+        let tape = serialize_tape(
+            0xCCCC_DDDD,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+            c_addr.as_bytes(),
+        );
+        let journal = verify_tape(&tape, 10_000).unwrap();
+        assert_eq!(journal.claimant_address, c_addr);
+    }
+
+    #[test]
+    fn verifies_empty_claimant_roundtrip() {
+        let inputs = [0x00u8; 4];
+        let replay_result = replay(0xEEEE_FFFF, &inputs);
+        let tape = serialize_tape(
+            0xEEEE_FFFF,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+            b"",
+        );
+        let journal = verify_tape(&tape, 10_000).unwrap();
+        assert_eq!(journal.claimant_address, "");
+    }
+
+    #[test]
     fn rejects_non_utf8_claimant_address() {
         let inputs = [0x00u8; 4];
         let replay_result = replay(0x1234_5678, &inputs);

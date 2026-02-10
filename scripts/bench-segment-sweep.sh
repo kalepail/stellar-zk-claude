@@ -321,7 +321,6 @@ submit_and_wait() {
   if [[ -n "$MAX_FRAMES" ]]; then
     query="${query}&max_frames=${MAX_FRAMES}"
   fi
-  query=$(with_claimant_query "$query")
 
   wait_for_idle
 
