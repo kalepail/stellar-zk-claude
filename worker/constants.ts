@@ -30,6 +30,7 @@ export const MAX_RETRY_DELAY_SECONDS = 60;
 // After this many delivery attempts (attempts >= MAX_QUEUE_RETRIES), the job is marked
 // as permanently failed rather than retried again.
 export const MAX_QUEUE_RETRIES = 10;
+export const EXPECTED_RULES_TAG = 3; // "AST3"
 export const EXPECTED_RULES_DIGEST = 0x41535433; // "AST3"
 export const EXPECTED_RULESET = "AST3";
 

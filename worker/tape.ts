@@ -1,4 +1,10 @@
-import { TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION } from "./constants";
+import {
+  EXPECTED_RULES_TAG,
+  TAPE_FOOTER_SIZE,
+  TAPE_HEADER_SIZE,
+  TAPE_MAGIC,
+  TAPE_VERSION,
+} from "./constants";
 import type { TapeMetadata } from "./types";
 
 function crc32(data: Uint8Array): number {
@@ -33,6 +39,14 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
   const version = view.getUint8(4);
   if (version !== TAPE_VERSION) {
     throw new Error(`unsupported tape version: ${version}`);
+  }
+
+  const rulesTag = view.getUint8(5);
+  if (rulesTag !== EXPECTED_RULES_TAG) {
+    throw new Error(`unknown rules tag: ${rulesTag} (expected ${EXPECTED_RULES_TAG})`);
+  }
+  if (view.getUint8(6) !== 0 || view.getUint8(7) !== 0) {
+    throw new Error("tape header reserved bytes [6..7] are non-zero");
   }
 
   const seed = view.getUint32(8, true);
