@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST};
-use crate::error::VerifyError;
+use crate::error::{ClaimantAddressError, VerifyError};
 use crate::sim::{replay_strict, ReplayResult, ReplayViolation};
 use crate::tape::parse_tape;
 
@@ -74,7 +74,9 @@ where
 
     // Claimant address is now embedded in the tape header
     let claimant_address = String::from_utf8(tape.header.claimant_address)
-        .map_err(|_| VerifyError::InvalidClaimantAddressUtf8)?;
+        .map_err(|_| VerifyError::InvalidClaimantAddress {
+            error: ClaimantAddressError::NotUtf8,
+        })?;
 
     Ok(VerificationJournal {
         seed: tape.header.seed,
@@ -95,6 +97,10 @@ mod tests {
     use crate::sim::replay;
     use crate::tape::{crc32, serialize_tape};
 
+    const CANONICAL_C: &[u8] = b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+    const CANONICAL_G: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V";
+    const CANONICAL_C_STR: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
     fn footer_offset(frame_count: usize) -> usize {
         TAPE_HEADER_SIZE + frame_count
     }
@@ -114,13 +120,13 @@ mod tests {
             inputs,
             replay_result.final_score,
             replay_result.final_rng_state,
-            b"",
+            CANONICAL_C,
         )
     }
 
     #[test]
     fn rejects_reserved_input_bits() {
-        let mut tape = serialize_tape(0xAABB_CCDD, &[0x10], 0, 0xAABB_CCDD, b"");
+        let mut tape = serialize_tape(0xAABB_CCDD, &[0x10], 0, 0xAABB_CCDD, CANONICAL_C);
         write_footer(&mut tape, 1, 0, 0xAABB_CCDD);
 
         let err = verify_tape(&tape, 10).unwrap_err();
@@ -170,7 +176,7 @@ mod tests {
             &inputs,
             replay_result.final_score,
             replay_result.final_rng_state,
-            b"CANONICALCLAIMANT",
+            CANONICAL_C,
         );
         let guest_input = GuestInput {
             tape,
@@ -180,7 +186,7 @@ mod tests {
         let journal = verify_guest_input(&guest_input).unwrap();
         assert_eq!(journal.frame_count, inputs.len() as u32);
         assert_eq!(journal.rules_digest, RULES_DIGEST);
-        assert_eq!(journal.claimant_address, "CANONICALCLAIMANT");
+        assert_eq!(journal.claimant_address, CANONICAL_C_STR);
     }
 
     #[test]
@@ -277,7 +283,7 @@ mod tests {
 
     #[test]
     fn verifies_g_address_claimant_roundtrip() {
-        let g_addr = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let g_addr = CANONICAL_G;
         let inputs = [0x00u8; 4];
         let replay_result = replay(0xAAAA_BBBB, &inputs);
         let tape = serialize_tape(
@@ -293,7 +299,7 @@ mod tests {
 
     #[test]
     fn verifies_c_address_claimant_roundtrip() {
-        let c_addr = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let c_addr = CANONICAL_C_STR;
         let inputs = [0x00u8; 4];
         let replay_result = replay(0xCCCC_DDDD, &inputs);
         let tape = serialize_tape(
@@ -308,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_empty_claimant_roundtrip() {
+    fn rejects_empty_claimant() {
         let inputs = [0x00u8; 4];
         let replay_result = replay(0xEEEE_FFFF, &inputs);
         let tape = serialize_tape(
@@ -318,12 +324,17 @@ mod tests {
             replay_result.final_rng_state,
             b"",
         );
-        let journal = verify_tape(&tape, 10_000).unwrap();
-        assert_eq!(journal.claimant_address, "");
+        let err = verify_tape(&tape, 10_000).unwrap_err();
+        assert!(matches!(
+            err,
+            VerifyError::InvalidClaimantAddress {
+                error: ClaimantAddressError::Empty
+            }
+        ));
     }
 
     #[test]
-    fn rejects_non_utf8_claimant_address() {
+    fn rejects_claimant_with_invalid_base32_bytes() {
         let inputs = [0x00u8; 4];
         let replay_result = replay(0x1234_5678, &inputs);
         let mut tape = serialize_tape(
@@ -338,6 +349,13 @@ mod tests {
         let checksum = crc32(&tape[..footer_off]);
         tape[footer_off + 8..footer_off + 12].copy_from_slice(&checksum.to_le_bytes());
         let err = verify_tape(&tape, 10_000).unwrap_err();
-        assert!(matches!(err, VerifyError::InvalidClaimantAddressUtf8));
+        assert!(matches!(
+            err,
+            VerifyError::InvalidClaimantAddress {
+                error: ClaimantAddressError::NotFullLength { .. }
+                    | ClaimantAddressError::InvalidBase32Char { .. }
+                    | ClaimantAddressError::InvalidPrefix { .. }
+            }
+        ));
     }
 }
