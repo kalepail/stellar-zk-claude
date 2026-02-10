@@ -76,7 +76,7 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
     }
 
     let rules_tag = bytes[5];
-    if rules_tag != 0 && rules_tag != RULES_TAG {
+    if rules_tag != RULES_TAG {
         return Err(VerifyError::UnknownRulesTag { found: rules_tag });
     }
     if bytes[6] != 0 || bytes[7] != 0 {
@@ -329,14 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn accepts_legacy_zero_rules_tag() {
+    fn rejects_legacy_zero_rules_tag() {
         let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, b"");
         bytes[5] = 0; // legacy tape
-        // Must recompute CRC since we changed the header
-        let footer_off = TAPE_HEADER_SIZE + 1;
-        let checksum = crc32(&bytes[..footer_off]);
-        write_u32_le(&mut bytes, footer_off + 8, checksum);
-        assert!(parse_tape(&bytes, 100).is_ok());
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::UnknownRulesTag { found: 0 })
+        ));
     }
 
     #[test]

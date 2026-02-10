@@ -168,8 +168,10 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
   }
 
   const rulesTag = view.getUint8(5);
-  if (rulesTag !== 0 && rulesTag !== RULES_TAG) {
-    throw new Error(`Unknown rules tag: ${rulesTag}`);
+  if (rulesTag !== RULES_TAG) {
+    throw new Error(
+      `Unknown rules tag: ${rulesTag} (expected ${RULES_TAG}). Regenerate the tape with the current AST3 client.`,
+    );
   }
   if (view.getUint8(6) !== 0 || view.getUint8(7) !== 0) {
     throw new Error("Header reserved bytes [6..7] are non-zero");
