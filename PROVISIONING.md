@@ -1,6 +1,6 @@
 # Provisioning & Timeout Audit
 
-Comprehensive inventory of every timeout, timing gate, and retry setting across the prover API server and Cloudflare Worker proof gateway. Proposed changes reduce the proof timeout from **30 minutes to 5 minutes** while keeping the rest of the pipeline consistent.
+Comprehensive inventory of every timeout, timing gate, and retry setting across the prover API server and Cloudflare Worker proof gateway. Recommended settings target **~5 minute typical proofs** while accepting up to **10 minutes** end-to-end in production.
 
 ---
 
@@ -25,8 +25,8 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 | Setting | Current Value | Env Var | File | Purpose |
 |---------|--------------|---------|------|---------|
-| Running job timeout | **30 min** (1800 s) | `RUNNING_JOB_TIMEOUT_SECS` | `api-server/src/main.rs:33` | `tokio::select!` deadline around `prove_tape()`. When exceeded, the proof task is detached and the job is marked failed with `error_code=proof_timeout`. |
-| Timed-out proof kill | **120 s** | `TIMED_OUT_PROOF_KILL_SECS` | `api-server/src/main.rs:38` | After a timeout, a background task waits this long for the detached proof to finish. If it doesn't, calls `std::process::abort()` so the supervisor (supervisord) restarts the process. Set to `0` to wait forever (not recommended). |
+| Running job timeout | **10 min** (600 s) | `RUNNING_JOB_TIMEOUT_SECS` | `api-server/src/main.rs:33` | `tokio::select!` deadline around `prove_tape()`. When exceeded, the proof task is detached and the job is marked failed with `error_code=proof_timeout`. |
+| Timed-out proof kill | **60 s** | `TIMED_OUT_PROOF_KILL_SECS` | `api-server/src/main.rs:38` | After a timeout, a background task waits this long for the detached proof to finish. If it doesn't, calls `std::process::abort()` so the supervisor (supervisord) restarts the process. Set to `0` to wait forever (not recommended). |
 | Job TTL | **24 h** (86400 s) | `JOB_TTL_SECS` | `api-server/src/main.rs:30` | Completed/failed jobs are swept from SQLite after this duration. |
 | Job sweep interval | **60 s** | `JOB_SWEEP_SECS` | `api-server/src/main.rs:31` | How often the background cleanup task runs `store.sweep()`. |
 | Max jobs | **64** | `MAX_JOBS` | `api-server/src/main.rs:32` | Maximum stored jobs before oldest is evicted on new submission. |
@@ -46,13 +46,13 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 | Setting | Current Value | Env Var | File | Purpose |
 |---------|--------------|---------|------|---------|
-| Poll timeout (absolute) | **15 min** (900,000 ms) | `PROVER_POLL_TIMEOUT_MS` | `constants.ts:10`, `wrangler.jsonc:15` | Absolute deadline for `pollProver()` loop. If the proof hasn't completed by this time, the poll returns `"running"` and the alarm reschedules. |
+| Poll timeout (absolute) | **11 min** (660,000 ms) | `PROVER_POLL_TIMEOUT_MS` | `constants.ts:10`, `wrangler.jsonc:15` | Safety bound for a single `pollProver()` loop. In practice the DO alarm cadence is governed by `PROVER_POLL_BUDGET_MS` + `PROVER_POLL_INTERVAL_MS`. |
 | Poll interval | **3 s** (3,000 ms) | `PROVER_POLL_INTERVAL_MS` | `constants.ts:9`, `wrangler.jsonc:14` | Sleep between GET status calls inside `pollProver()`. |
 | Poll budget | **45 s** (45,000 ms) | `PROVER_POLL_BUDGET_MS` | `constants.ts:12`, `wrangler.jsonc:16` | Per-alarm-invocation budget. The DO alarm fires, polls for up to 45 s, then yields and reschedules. Keeps each alarm invocation under the CF CPU limit. |
 | HTTP request timeout | **30 s** (30,000 ms) | `PROVER_REQUEST_TIMEOUT_MS` | `constants.ts:11`, `wrangler.jsonc:17` | `fetchWithTimeout` deadline for each individual GET/POST to the prover API. |
-| Wall-time cap | **60 min** (3,600,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
+| Wall-time cap | **12 min** (720,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
 | Max queue retries | **10** | `MAX_QUEUE_RETRIES` / `max_retries` | `constants.ts:22`, `wrangler.jsonc:42` | Queue delivery attempts before the message goes to the DLQ. Must match in both places. |
-| Retry delay cap | **300 s** | `MAX_RETRY_DELAY_SECONDS` | `constants.ts:17` | Ceiling for exponential backoff: `min(2^(attempt-1), 300)`, floored at 2 s. |
+| Retry delay cap | **60 s** | `MAX_RETRY_DELAY_SECONDS` | `constants.ts:17` | Ceiling for exponential backoff: `min(2^(attempt-1), 60)`, floored at 2 s. |
 | Max completed jobs | **200** | `MAX_COMPLETED_JOBS` | `constants.ts:14`, `wrangler.jsonc:20` | DO evicts oldest completed jobs beyond this count. |
 | Completed job retention | **24 h** (86,400,000 ms) | `COMPLETED_JOB_RETENTION_MS` | `constants.ts:15`, `wrangler.jsonc:21` | TTL for completed job records in DO storage. |
 | Max tape bytes | **2 MiB** | `MAX_TAPE_BYTES` | `constants.ts:8`, `wrangler.jsonc:18` | Must match prover-side limit. |
@@ -69,27 +69,30 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 | Gate | Current Value | File | Purpose |
 |------|--------------|------|---------|
-| Dev short (CPU) | **2.0 s** | `benchmarks/thresholds.env:7` | CI gate for dev-mode short tape |
-| Dev medium (CPU) | **2.0 s** | `benchmarks/thresholds.env:8` | CI gate for dev-mode medium tape |
-| Secure short (GPU) | **35.0 s** | `benchmarks/thresholds.env:11` | CI gate for secure-mode short tape |
-| Secure medium (GPU) | **500.0 s** (~8.3 min | `benchmarks/thresholds.env:12` | CI gate for secure-mode medium tape |
+| Dev short (CPU) | **2.0 s** | `benchmarks/thresholds.env:7` | CI regression gate for dev-mode short tape |
+| Dev medium (CPU) | **2.0 s** | `benchmarks/thresholds.env:8` | CI regression gate for dev-mode medium tape |
+| Dev short cycles | **700,000** | `benchmarks/thresholds.env:11` | CI regression gate for execute-only cycle counts |
+| Dev medium cycles | **7,000,000** | `benchmarks/thresholds.env:12` | CI regression gate for execute-only cycle counts |
 
-These are CI quality gates, not runtime settings. They are relevant because the **secure medium gate (500 s)** represents the longest observed proof time on GPU hardware and informs what the runtime timeout should be.
+These are CI quality gates, not runtime settings. Secure proving latency should be
+measured on the actual prover host (CUDA vs CPU) with `scripts/bench-segment-sweep.sh`
+and used to set the 10-minute acceptance window (`RUNNING_JOB_TIMEOUT_SECS`) plus
+the gateway overhead (`MAX_JOB_WALL_TIME_MS`).
 
 ---
 
 ## Proposed Changes
 
-Seven changes to cut the proof timeout from 30 min to 5 min. All values are environment-variable overridable — no code changes required.
+Configuration changes to tighten the pipeline around a 10-minute acceptance window. Values are environment-variable overridable unless noted.
 
-### 1. Prover: `RUNNING_JOB_TIMEOUT_SECS` — 1800 → 300
+### 1. Prover: `RUNNING_JOB_TIMEOUT_SECS` — 1800 → 600
 
 | | |
 |---|---|
 | **File** | `api-server/.env.example:23` (and deployed `.env`) |
 | **Old** | `1800` (30 min) |
-| **New** | `300` (5 min) |
-| **Rationale** | The benchmark timing gate for secure-medium (worst case) is ~500 s on the current GPU. A 5-min (300 s) timeout covers all realistic Groth16 proofs with margin. The 30-min value was an initial safety buffer that is no longer needed. If a proof hasn't finished in 5 min on CUDA, it's stuck. |
+| **New** | `600` (10 min) |
+| **Rationale** | Typical Groth16 proofs are ~5 minutes on CUDA. A 10-minute timeout provides ~2x headroom for variance while keeping single-flight capacity from being blocked indefinitely. If a proof can't complete in 10 minutes on your production GPU, treat it as stuck and fail fast. |
 
 ### 2. Prover: `TIMED_OUT_PROOF_KILL_SECS` — 120 → 60
 
@@ -98,25 +101,25 @@ Seven changes to cut the proof timeout from 30 min to 5 min. All values are envi
 | **File** | `api-server/.env.example:26` (and deployed `.env`) |
 | **Old** | `120` (2 min) |
 | **New** | `60` (1 min) |
-| **Rationale** | Grace period for the detached proof to finish after timeout. With a 5-min timeout, an additional 2-min wait before `abort()` is excessive. 60 s is enough for orderly cleanup. Total time from proof start to forced restart: 5 min + 1 min = 6 min. |
+| **Rationale** | Grace period for the detached proof to finish after timeout. With a 10-minute timeout, an additional 2-minute wait before `abort()` is excessive. 60 s is enough for orderly cleanup. Total time from proof start to forced restart: 10 min + 1 min = 11 min. |
 
-### 3. Worker: `PROVER_POLL_TIMEOUT_MS` — 900000 → 360000
+### 3. Worker: `PROVER_POLL_TIMEOUT_MS` — 900000 → 660000
 
 | | |
 |---|---|
 | **File** | `wrangler.jsonc:15` |
 | **Old** | `900000` (15 min) |
-| **New** | `360000` (6 min) |
-| **Rationale** | The absolute poll deadline must exceed the prover timeout (5 min) to give the worker time to observe the final status. Set to 6 min = prover timeout (5 min) + 1 min buffer for network latency and the final poll cycle. |
+| **New** | `660000` (11 min) |
+| **Rationale** | Keep this above the prover timeout (10 min) to give the worker time to observe the terminal status. 11 minutes provides a small buffer for network jitter and a final poll cycle. |
 
-### 4. Worker: `MAX_JOB_WALL_TIME_MS` — 3600000 → 600000
+### 4. Worker: `MAX_JOB_WALL_TIME_MS` — 3600000 → 720000
 
 | | |
 |---|---|
 | **File** | `wrangler.jsonc:19` |
 | **Old** | `3600000` (60 min) |
-| **New** | `600000` (10 min) |
-| **Rationale** | The wall-time cap is the ultimate safety net — it kills jobs that survive past the poll timeout (e.g., due to repeated transient errors and retries). Set to 10 min = prover timeout (5 min) + poll overhead (1 min) + retry headroom (4 min). |
+| **New** | `720000` (12 min) |
+| **Rationale** | End-to-end safety net. Set to ~12 minutes = prover timeout (10 min) + poll/R2 overhead + short retry headroom for transient network/prover issues. |
 
 ### 5. Worker: `PROVER_POLL_BUDGET_MS` — 45000 → 45000 (consider 30000)
 
@@ -127,14 +130,14 @@ Seven changes to cut the proof timeout from 30 min to 5 min. All values are envi
 | **New** | `45000` (45 s) — **optional reduction to 30000** |
 | **Rationale** | The per-alarm poll budget is already well-tuned. 45 s allows ~15 poll cycles at the 3 s interval, which is a good balance between responsiveness and alarm overhead. A reduction to 30 s (~10 cycles) is safe but offers marginal benefit. **Keep at 45 s unless you observe alarm CPU limits being hit.** |
 
-### 6. Benchmark: `SECURE_MEDIUM_MAX_REAL_S` — 500 → 300
+### 6. Worker: `MAX_RETRY_DELAY_SECONDS` — 300 → 60
 
 | | |
 |---|---|
-| **File** | `benchmarks/thresholds.env:12` |
-| **Old** | `500.0` |
-| **New** | `300.0` |
-| **Rationale** | Align the CI timing gate with the new runtime timeout. If a proof takes >300 s in CI, it should be investigated rather than silently passing. This also ensures the invariant: `CI gate <= runtime timeout`. |
+| **File** | `worker/constants.ts` |
+| **Old** | `300` (5 min) |
+| **New** | `60` (1 min) |
+| **Rationale** | With a 10-minute proving SLA, a 5-minute retry backoff just burns the acceptance window. Cap backoff at 60s so transient failures recover quickly (or fail fast) without hammering the prover. |
 
 ### 7. (No change needed) `DEFAULT_POLL_INTERVAL_MS` stays at 3000
 
@@ -154,7 +157,7 @@ These settings are correct at their current values and should **not** be changed
 | `JOB_SWEEP_SECS` | 60 s | Sweep frequency. Already minimal. |
 | `MAX_JOBS` | 64 | Queue depth. Independent of timing. |
 | `MAX_QUEUE_RETRIES` | 10 | Delivery attempts. The wall-time cap now provides a tighter bound, but retries are still useful for transient failures. |
-| `MAX_RETRY_DELAY_SECONDS` | 300 s | Backoff ceiling. With a 10-min wall-time cap, the worst-case backoff sequence (2, 2, 4, 8, 16, 32, 64, 128, 256, 300) sums to ~812 s, but the wall-time cap will kill the job at 600 s regardless. This is fine — retries won't outlive the wall-time cap. |
+| `MAX_RETRY_DELAY_SECONDS` | 60 s | Backoff ceiling. With a 12-min wall-time cap, the worst-case backoff sequence (2, 2, 4, 8, 16, 32, 60, 60, 60, 60) sums to ~304 s, leaving enough headroom for transient retries without consuming the full acceptance window. |
 | `COMPLETED_JOB_RETENTION_MS` | 86,400,000 ms (24 h) | DO storage retention. Independent of proof duration. |
 | `MAX_COMPLETED_JOBS` | 200 | DO storage cap. Independent of timing. |
 | `HTTP_KEEP_ALIVE_SECS` | 75 s | Actix-web idle connection timeout. Independent of proof duration. |
@@ -168,11 +171,11 @@ These settings are correct at their current values and should **not** be changed
 
 ```
 t=0s     Queue consumer receives message
-         ├── Wall-time check: age < 600,000 ms? ✓
+         ├── Wall-time check: age < 720,000 ms? ✓
          ├── POST tape to prover API
          └── Prover accepts → markProverAccepted() → schedule alarm
 
-t=0s     Prover: tokio::select! { prove_tape() vs sleep(300s) }
+t=0s     Prover: tokio::select! { prove_tape() vs sleep(600s) }
          └── prove_tape() starts on GPU
 
 t=3s     DO alarm fires → pollProver() budget=45s
@@ -198,31 +201,30 @@ t=93s    DO alarm fires → pollProver()
 
 ```
 t=0s     Queue consumer → POST tape → prover accepts
-         Prover: tokio::select! { prove_tape() vs sleep(300s) }
+         Prover: tokio::select! { prove_tape() vs sleep(600s) }
 
 t=3s     DO alarm → poll → "running" → reschedule
 t=48s    DO alarm → poll → "running" → reschedule
          ...
-t=300s   Prover: sleep(300s) fires → proof_timeout error
+t=600s   Prover: sleep(600s) fires → proof_timeout error
          ├── Job marked "failed" with error_code="proof_timeout"
          ├── Detached proof task continues in background
          └── Kill timer starts: 60s until abort()
 
-t=303s   DO alarm → poll → GET returns "failed" (proof_timeout)
-         ├── error_code in RETRYABLE_JOB_ERROR_CODES? YES
-         └── clearProverJob=true → re-read tape → re-submit
-             (or: wall-time check kills job if age > 600s)
+t=603s   DO alarm → poll → GET returns "failed" (proof_timeout)
+         ├── error_code in RETRYABLE_JOB_ERROR_CODES? NO
+         └── Mark job failed and release the active slot
 
-t=360s   Prover: if proof still running after 60s grace →
+t=660s   Prover: if proof still running after 60s grace →
          └── std::process::abort() → supervisord restarts process
 
-t=600s   Worker: wall-time cap (MAX_JOB_WALL_TIME_MS)
+t=720s   Worker: wall-time cap (MAX_JOB_WALL_TIME_MS)
          └── Hard kill regardless of retry state
 ```
 
 ### Retry backoff sequence
 
-The worker uses exponential backoff with a 300 s ceiling:
+The worker uses exponential backoff with a 60 s ceiling:
 
 | Attempt | Delay (s) | Cumulative (s) |
 |---------|-----------|-----------------|
@@ -232,12 +234,12 @@ The worker uses exponential backoff with a 300 s ceiling:
 | 4 | 8 | 16 |
 | 5 | 16 | 32 |
 | 6 | 32 | 64 |
-| 7 | 64 | 128 |
-| 8 | 128 | 256 |
-| 9 | 256 | 512 |
-| 10 | 300 | 812 |
+| 7 | 60 | 124 |
+| 8 | 60 | 184 |
+| 9 | 60 | 244 |
+| 10 | 60 | 304 |
 
-With a 10-min (600 s) wall-time cap, the job will be killed after attempt ~9. This is fine — if 9 retries haven't worked, the job should fail.
+With a 12-min (720 s) wall-time cap, retries stay bounded and responsive; the wall-time cap remains the ultimate guardrail.
 
 ---
 
@@ -248,7 +250,7 @@ With a 10-min (600 s) wall-time cap, the job will be killed after attempt ~9. Th
 Update `.env` on the Vast.ai instance:
 
 ```env
-RUNNING_JOB_TIMEOUT_SECS=300
+RUNNING_JOB_TIMEOUT_SECS=600
 TIMED_OUT_PROOF_KILL_SECS=60
 ```
 
@@ -258,24 +260,15 @@ Restart via supervisord:
 supervisorctl restart prover
 ```
 
-**Why prover first:** The worker polling is tolerant of a shorter prover timeout. If the prover starts timing out at 5 min while the worker still has a 15-min poll timeout, the worker simply observes the `proof_timeout` failure earlier and retries or fails — no breakage. The reverse (worker first) would mean the worker has a 6-min poll timeout while the prover still allows 30-min proofs, which is harmless but wasteful.
+**Why prover first:** The worker gateway can tolerate a tighter prover timeout. If the prover times out at 10 minutes while the worker still has looser settings, the worker simply observes `proof_timeout` and fails the job — no breakage. The reverse (worker first) risks the worker failing jobs while the prover is still willing to run much longer proofs, which is harmless but wastes prover capacity.
 
-### Step 2: Update CI benchmark gate
-
-```env
-# benchmarks/thresholds.env
-SECURE_MEDIUM_MAX_REAL_S=300.0
-```
-
-Commit and push. This can happen in parallel with step 1 since it only affects CI, not production.
-
-### Step 3: Deploy Worker (Cloudflare)
+### Step 2: Deploy Worker (Cloudflare)
 
 Update `wrangler.jsonc`:
 
 ```jsonc
-"PROVER_POLL_TIMEOUT_MS": "360000",
-"MAX_JOB_WALL_TIME_MS": "600000"
+"PROVER_POLL_TIMEOUT_MS": "660000",
+"MAX_JOB_WALL_TIME_MS": "720000"
 ```
 
 Deploy:
@@ -284,7 +277,7 @@ Deploy:
 npx wrangler deploy
 ```
 
-**Why worker second:** By now the prover is already enforcing the 5-min timeout. The worker update just tightens its own safety nets to match.
+**Why worker second:** By now the prover is already enforcing the 10-minute timeout. The worker update tightens its own safety nets to match.
 
 ---
 
@@ -298,16 +291,16 @@ npx wrangler deploy
    ```
    Expected: timeout configured correctly and `ruleset` / `rules_digest_hex` match the deployed contract + worker expectations.
 
-2. **Submit a known-good tape** — verify it completes well under 5 min:
+2. **Submit a known-good tape** — verify it completes well under 10 min:
    ```bash
-   curl -X POST https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw \
+   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw' \
      -H "x-api-key: $API_KEY" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @test-fixtures/short.tape
+     --data-binary @test-fixtures/test-short.tape
    ```
-   Poll the returned `status_url` and confirm `"status": "succeeded"` with `elapsed_ms < 300000`.
+   Poll the returned `status_url` and confirm `"status": "succeeded"` with `elapsed_ms < 600000`.
 
-3. **Check logs for sweep behavior** — the sweep should now reap running jobs older than 300 s:
+3. **Check logs for sweep behavior** — the sweep should now reap running jobs older than 600 s:
    ```bash
    journalctl -u prover --since "5 min ago" | grep sweep
    ```
@@ -318,7 +311,7 @@ npx wrangler deploy
    ```bash
    curl -X POST https://your-worker.example.com/api/proofs/jobs \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @test-fixtures/short.tape
+     --data-binary @test-fixtures/test-short.tape
    ```
 
 5. **Verify wrangler vars** — confirm the deployed values:
@@ -334,7 +327,7 @@ npx wrangler deploy
 
 ### 1. CPU fallback (no CUDA)
 
-**Risk:** If the Vast.ai instance loses GPU access (driver failure, wrong instance type), proofs fall back to CPU. The secure-medium benchmark gate is 500 s on CPU, which exceeds the 300 s timeout.
+**Risk:** If the prover loses GPU access (driver failure, wrong instance type), proofs fall back to CPU. CPU proving can exceed the 10-minute acceptance window and will start hitting `proof_timeout`.
 
 **Mitigation:** The prover health endpoint reports `"accelerator": "cuda"` or `"cpu"`. The worker (or a monitoring script) should check this and alert if the accelerator is not `cuda`. CPU proving is not viable for production — a GPU failure should block new proof submissions, not silently time out.
 
@@ -342,26 +335,20 @@ npx wrangler deploy
 
 ### 2. Max-frame games (18,000 frames)
 
-**Risk:** A full 18,000-frame game produces the largest tapes and longest proof times. The secure-medium benchmark (which uses a medium-length tape, not max-length) takes ~500 s on CPU. On GPU, max-frame proofs typically complete in 2–3 min.
+**Risk:** A full 18,000-frame game produces the largest tapes and longest proof times. If your workload includes many max-length tapes, you should benchmark worst-case prove latency on the production GPU and size the timeout accordingly.
 
-**Mitigation:** The 5-min timeout provides ~2x headroom over typical max-frame GPU proof times. If a specific tape consistently times out, the issue is likely the tape itself (e.g., triggering a pathological guest execution path) rather than the timeout being too tight.
+**Mitigation:** The 10-minute timeout provides headroom for variance while keeping single-flight capacity from being pinned indefinitely. If specific tapes consistently time out, investigate guest execution cost and/or segment limits instead of blindly raising timeouts.
 
-**Action:** Monitor `elapsed_ms` on succeeded proofs. If any approach 250 s (83% of timeout), investigate before they start timing out.
+**Action:** Monitor `elapsed_ms` on succeeded proofs. If any approach 540 s (90% of timeout), investigate before they start timing out.
 
 ### 3. Deploy ordering mismatch
 
-**Risk:** If the worker is deployed first with the tighter wall-time cap (10 min) while the prover still has a 30-min timeout, a slow proof could be killed by the worker's wall-time cap before the prover times it out. The prover would continue working on a proof that nobody is waiting for.
+**Risk:** If the worker is deployed first with a tight wall-time cap (~12 min) while the prover still allows much longer proofs, a slow proof could be killed by the worker before the prover times it out. The prover would continue working on a proof that nobody is waiting for.
 
 **Mitigation:** Deploy prover first (see [Deploy Order](#deploy-order)). Even if the ordering is reversed, the impact is limited: the worker kills its job tracking, but the prover eventually times out and sweeps the orphaned job. No data loss occurs.
 
 ### 4. Retry storm after prover restart
 
-**Risk:** If the prover `abort()`s due to a stuck proof (after 5 min + 1 min grace), supervisord restarts it. During restart (~10 s), the worker's poll gets a connection refused or 404, triggering a retry with backoff. Multiple retries in quick succession could re-submit the same tape before the prover is ready.
+**Risk:** If the prover `abort()`s due to a stuck proof (after 10 min + 1 min grace), supervisord restarts it. During restart (~10 s), the worker may see connection errors or 404s, triggering retries with backoff.
 
-**Mitigation:** The prover has single-flight semantics (concurrency semaphore = 1). Even if the worker re-submits during restart, the prover queues it behind any in-flight job. The worker's exponential backoff (starting at 2 s, then 2, 4, 8...) naturally spaces out re-submissions.
-
-### 5. Benchmark gate too tight
-
-**Risk:** Reducing `SECURE_MEDIUM_MAX_REAL_S` from 500 to 300 may cause CI failures if the benchmark runs on slower GPU hardware or under load.
-
-**Mitigation:** The benchmark gate is for a *medium* tape, not a max-length tape. If medium tapes take >300 s on the CI GPU, that's a signal the CI GPU is underprovisioned — the gate is doing its job. Keep the gate at 300 s and fix the CI hardware if it fails.
+**Mitigation:** The prover is single-flight (concurrency = 1). The worker's retry backoff is capped and the gateway wall-time cap is the ultimate guardrail, preventing infinite re-submission loops.

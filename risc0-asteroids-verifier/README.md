@@ -286,8 +286,8 @@ See `api-server/.env.example` for all options. Key variables:
 | `MAX_SEGMENT_LIMIT_PO2` | `21` | Max allowed segment limit |
 | `JOB_TTL_SECS` | `86400` | Finished job retention (24h) |
 | `JOB_SWEEP_SECS` | `60` | Cleanup interval |
-| `RUNNING_JOB_TIMEOUT_SECS` | `1800` | Timeout for active proofs before marking failed |
-| `TIMED_OUT_PROOF_KILL_SECS` | `120` | Grace window after timeout before forced process abort (`0` disables) |
+| `RUNNING_JOB_TIMEOUT_SECS` | `600` | Timeout for active proofs before marking failed |
+| `TIMED_OUT_PROOF_KILL_SECS` | `60` | Grace window after timeout before forced process abort (`0` disables) |
 | `HTTP_MAX_CONNECTIONS` | `25000` | Max inbound connections |
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
@@ -313,10 +313,10 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
 | `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
-| `PROVER_POLL_TIMEOUT_MS` | Absolute poll timeout before transition to retry/failure path |
+| `PROVER_POLL_TIMEOUT_MS` | Poll-loop safety bound (default `660000` / 11 min) |
 | `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |
 | `PROVER_REQUEST_TIMEOUT_MS` | Timeout for each outbound prover request |
-| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime |
+| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime (default `720000` / 12 min) |
 | `MAX_COMPLETED_JOBS` | Retention cap for terminal jobs in the coordinator DO |
 | `COMPLETED_JOB_RETENTION_MS` | Time-based retention cutoff for terminal jobs in the coordinator DO |
 | `ALLOW_INSECURE_PROVER_URL` | Keep `0` in production; only allow non-HTTPS for local/dev endpoints |

@@ -16,12 +16,15 @@ ALLOW_INSECURE_PROVER_URL=0
 # Health + request tuning
 PROVER_HEALTH_CACHE_MS=30000
 PROVER_POLL_INTERVAL_MS=3000
-PROVER_POLL_TIMEOUT_MS=900000
+# Target: ~5 min typical proofs, accept up to 10 min.
+# Keep this above the prover timeout so the gateway can observe final status.
+PROVER_POLL_TIMEOUT_MS=660000
 PROVER_POLL_BUDGET_MS=45000
 PROVER_REQUEST_TIMEOUT_MS=30000
 
 # Gateway limits + retention
 MAX_TAPE_BYTES=2097152
-MAX_JOB_WALL_TIME_MS=3600000
+# End-to-end cap (includes queue + polling + R2 writes). Slightly above 10 min.
+MAX_JOB_WALL_TIME_MS=720000
 MAX_COMPLETED_JOBS=200
 COMPLETED_JOB_RETENTION_MS=86400000

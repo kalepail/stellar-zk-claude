@@ -271,8 +271,8 @@ Production readiness for the Vast.ai prover server.
       - `MAX_JOBS=64` (or higher for mainnet traffic)
       - `MAX_TAPE_BYTES=2097152` (2 MB, verify this covers max game length)
       - `MAX_FRAMES=18000` (5 minutes at 60 fps — confirm this is sufficient)
-      - `RUNNING_JOB_TIMEOUT_SECS=1800` (30 min per proof — adjust per actual
-        proving times)
+      - `RUNNING_JOB_TIMEOUT_SECS=600` (accept up to 10 min per proof; typical
+        proves should be ~5 min on CUDA)
 - [ ] **Benchmark proving times** with real game tapes of various lengths.
       Document expected latency for short, medium, and long games.
 - [ ] **Set up health monitoring** with automated alerts if `/health` returns

@@ -78,8 +78,8 @@ Most relevant:
 - `HTTP_KEEP_ALIVE_SECS`: keep-alive window
 - `HTTP_WORKERS` (optional): explicit Actix worker count
 - `CORS_ALLOWED_ORIGIN` (optional): allow browser access from one explicit origin (disabled by default)
-- `RUNNING_JOB_TIMEOUT_SECS`: mark long-running proofs as timed out
-- `TIMED_OUT_PROOF_KILL_SECS`: after timeout, abort process if proof task still has not returned (set `0` to disable)
+- `RUNNING_JOB_TIMEOUT_SECS`: mark long-running proofs as timed out (default: 600s / 10 min)
+- `TIMED_OUT_PROOF_KILL_SECS`: after timeout, abort process if proof task still has not returned (default: 60s; set `0` to disable)
 
 Prover concurrency is fixed at `1` in code.
 

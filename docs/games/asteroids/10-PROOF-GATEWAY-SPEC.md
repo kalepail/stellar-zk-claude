@@ -195,7 +195,7 @@ After `markProverAccepted()` schedules the first alarm, the DO's `alarm()`
 method drives all subsequent prover polling:
 
 1. Load active job. If terminal or missing, stop.
-2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 1 hour). Fail if exceeded.
+2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 12 minutes). Fail if exceeded.
 3. Call `pollProver()` (budget-limited polling loop within a single alarm invocation).
 4. **Running**: save updated prover status, schedule next alarm at `PROVER_POLL_INTERVAL_MS`.
 5. **Success**: call `summarizeProof()`, store full prover response in R2 as `result.json`,
@@ -293,11 +293,11 @@ bytes needed for on-chain verification.
 | `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
 | `PROVER_HEALTH_CACHE_MS` | `"30000"` | Prover health cache TTL in Worker isolate |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |
-| `PROVER_POLL_TIMEOUT_MS` | `"900000"` | 15 min absolute poll timeout |
+| `PROVER_POLL_TIMEOUT_MS` | `"660000"` | 11 min poll-loop safety bound |
 | `PROVER_POLL_BUDGET_MS` | `"45000"` | Max polling time per alarm |
 | `PROVER_REQUEST_TIMEOUT_MS` | `"30000"` | HTTP request timeout |
 | `MAX_TAPE_BYTES` | `"2097152"` | 2 MiB tape size limit |
-| `MAX_JOB_WALL_TIME_MS` | `"3600000"` | 1 hour total job lifetime |
+| `MAX_JOB_WALL_TIME_MS` | `"720000"` | 12 min total job lifetime |
 | `ALLOW_INSECURE_PROVER_URL` | `"0"` | Enforce HTTPS |
 
 Bindings:
