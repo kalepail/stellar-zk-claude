@@ -293,7 +293,7 @@ npx wrangler deploy
 
 2. **Submit a known-good tape** — verify it completes well under 10 min:
    ```bash
-   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw' \
+   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw?claimant_address=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
      -H "x-api-key: $API_KEY" \
      -H "Content-Type: application/octet-stream" \
      --data-binary @test-fixtures/test-short.tape
