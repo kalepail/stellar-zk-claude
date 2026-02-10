@@ -72,8 +72,9 @@ impl JobStore {
                 opt_max_frames        INTEGER NOT NULL,
                 opt_receipt_kind      TEXT NOT NULL,
                 opt_segment_limit_po2 INTEGER NOT NULL,
-                opt_allow_dev_mode    INTEGER NOT NULL,
-                opt_verify_receipt    INTEGER NOT NULL,
+                opt_proof_mode        TEXT NOT NULL,
+                opt_verify_mode       TEXT NOT NULL,
+                opt_claimant_address  TEXT NOT NULL,
                 opt_accelerator       TEXT NOT NULL,
                 result_path         TEXT,
                 error               TEXT
@@ -86,6 +87,24 @@ impl JobStore {
         // Idempotent migration: add error_code column if it doesn't exist.
         conn.execute("ALTER TABLE jobs ADD COLUMN error_code TEXT", [])
             .ok();
+
+        // Forward migration: ensure explicit mode columns exist on older DBs.
+        // Old rows default to secure/policy; no boolean-column backfill is retained.
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN opt_proof_mode TEXT NOT NULL DEFAULT 'secure'",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN opt_verify_mode TEXT NOT NULL DEFAULT 'policy'",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE jobs ADD COLUMN opt_claimant_address TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .ok();
 
         let store = Self {
             conn: Mutex::new(conn),

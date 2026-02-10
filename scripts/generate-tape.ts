@@ -1,7 +1,7 @@
 /**
  * Headless tape generator using autopilot.
  *
- * Usage: bun run scripts/generate-tape.ts [--seed <hex>] [--max-frames <n>] [--output <path>]
+ * Usage: bun run scripts/generate-tape.ts [--seed <hex>] [--max-frames <n>] [--claimant <strkey>] [--output <path>]
  *
  * Runs an autopilot game in headless mode, records inputs to a tape,
  * writes the tape to a file, then verifies it inline.
@@ -13,10 +13,13 @@ import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
 
+const DEFAULT_MAX_FRAMES = 18_000;
+
 // Parse arguments
 let seed = Date.now();
-let maxFrames = 18000; // ~5 minutes
+let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
 let outputPath = "";
+let claimant = "";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
@@ -26,6 +29,8 @@ for (let i = 0; i < args.length; i++) {
     maxFrames = parseInt(args[++i], 10);
   } else if (args[i] === "--output" && args[i + 1]) {
     outputPath = args[++i];
+  } else if (args[i] === "--claimant" && args[i + 1]) {
+    claimant = args[++i];
   }
 }
 
@@ -37,6 +42,7 @@ if (!outputPath) {
 console.log(`Generating tape:`);
 console.log(`  Seed:       0x${seed.toString(16).padStart(8, "0")}`);
 console.log(`  Max frames: ${maxFrames}`);
+console.log(`  Claimant:   ${claimant || "(none)"}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();
 
@@ -76,7 +82,7 @@ console.log(`  Wave:   ${game.getWave()}`);
 console.log(`  Lives:  ${game.getLives()}`);
 console.log(`  Time:   ${elapsed.toFixed(1)}ms (${(frame / (elapsed / 1000)).toFixed(0)} fps)`);
 
-const tapeData = game.getTape();
+const tapeData = game.getTape(claimant);
 if (!tapeData) {
   console.error("Failed to get tape data");
   process.exit(1);
@@ -90,7 +96,7 @@ console.log();
 console.log("Verifying tape...");
 
 const verifyData = new Uint8Array(readFileSync(outputPath));
-const tape = deserializeTape(verifyData);
+const tape = deserializeTape(verifyData, DEFAULT_MAX_FRAMES);
 
 const verifyGame = new AsteroidsGame({ headless: true, seed: tape.header.seed });
 verifyGame.startNewGame(tape.header.seed);

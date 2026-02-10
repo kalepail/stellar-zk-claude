@@ -8,6 +8,11 @@ dist
 .wrangler
 .dev.vars
 
+# Local env files
+.env
+.env.local
+.env.*.local
+
 # IDE (keep .vscode for shared OXC/project settings)
 .idea
 .claude

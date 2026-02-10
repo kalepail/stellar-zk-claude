@@ -8,15 +8,37 @@ set -euo pipefail
 #   bash scripts/smoke-test-prover.sh [prover-url] [tape-file]
 #
 # Defaults:
-#   prover-url  https://risc0-kalien.stellar.buzz
+#   prover-url  http://127.0.0.1:8080
 #   tape-file   test-fixtures/test-real-game.tape
 #
 # Examples:
 #   bash scripts/smoke-test-prover.sh
-#   bash scripts/smoke-test-prover.sh https://risc0-kalien.stellar.buzz test-fixtures/test-short.tape
+#   bash scripts/smoke-test-prover.sh http://127.0.0.1:8080 test-fixtures/test-short.tape
+#   bash scripts/smoke-test-prover.sh https://<vast-host>:<port> test-fixtures/test-short.tape
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROVER_URL="${1:-https://risc0-kalien.stellar.buzz}"
+
+usage() {
+  cat <<'USAGE_EOF'
+Usage: scripts/smoke-test-prover.sh [prover-url] [tape-file]
+
+Defaults:
+  prover-url  http://127.0.0.1:8080
+  tape-file   test-fixtures/test-real-game.tape
+
+Examples:
+  bash scripts/smoke-test-prover.sh
+  bash scripts/smoke-test-prover.sh http://127.0.0.1:8080 test-fixtures/test-short.tape
+  bash scripts/smoke-test-prover.sh https://<vast-host>:<port> test-fixtures/test-short.tape
+USAGE_EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+PROVER_URL="${1:-http://127.0.0.1:8080}"
 PROVER_URL="${PROVER_URL%/}"
 TAPE_FILE="${2:-$ROOT_DIR/test-fixtures/test-real-game.tape}"
 POLL_INTERVAL=5
@@ -70,7 +92,8 @@ run_proof() {
 
   wait_for_idle
 
-  local query="receipt_kind=${receipt}&verify_receipt=false"
+  local query
+  query=$(with_claimant_query "receipt_kind=${receipt}&verify_mode=policy")
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream")

@@ -7,8 +7,9 @@
 # Each generated proof is verified on-chain via the router.
 #
 # Usage:
-#   ./scripts/regenerate-proofs.sh <prover-url>
-#   ./scripts/regenerate-proofs.sh https://risc0-kalien.stellar.buzz
+#   ./scripts/regenerate-proofs.sh [prover-url]
+#   ./scripts/regenerate-proofs.sh
+#   ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
 #
 # Prerequisites:
 #   - `bun` installed
@@ -34,13 +35,26 @@ TOTAL=0
 # ---------------------------------------------------------------------------
 # Parse args
 # ---------------------------------------------------------------------------
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <prover-url>"
-  echo "  e.g. $0 https://risc0-kalien.stellar.buzz"
-  exit 1
+usage() {
+  cat <<'USAGE_EOF'
+Usage: stellar-asteroids-contract/scripts/regenerate-proofs.sh [prover-url]
+
+Defaults:
+  prover-url  http://127.0.0.1:8080
+
+Examples:
+  ./scripts/regenerate-proofs.sh
+  ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
+USAGE_EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
 fi
 
-PROVER_URL="$1"
+PROVER_URL="${1:-http://127.0.0.1:8080}"
+CLAIMANT_ADDRESS="${CLAIMANT_ADDRESS:-}"
 
 # ---------------------------------------------------------------------------
 # Regenerate + verify a single fixture
@@ -63,6 +77,7 @@ regenerate_fixture() {
   if ! bun run "$GENERATE_SCRIPT" \
     --tape "$tape_path" \
     --prover "$PROVER_URL" \
+    --claimant-address "$CLAIMANT_ADDRESS" \
     --out "$FIXTURES_DIR/${out_prefix}.json"; then
     err "Proof generation failed for $label"
     FAILED=$((FAILED + 1))
@@ -115,8 +130,9 @@ assert_reject_zero_score_tape() {
 
   info "Checking zero-score rejection for short tape..."
   local resp http_code body error_code
+  local query="receipt_kind=groth16&verify_mode=policy&claimant_address=${CLAIMANT_ADDRESS}"
   resp=$(curl -sS -X POST \
-    "${PROVER_URL}/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_receipt=false" \
+    "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     -H "content-type: application/octet-stream" \
     --data-binary "@${tape_file}" \
     -w $'\n%{http_code}')
@@ -153,6 +169,14 @@ echo "  $health"
 echo ""
 
 ensure_funded_key "$CALLER_NAME"
+if [[ -z "$CLAIMANT_ADDRESS" ]]; then
+  CLAIMANT_ADDRESS=$(stellar keys address "$CALLER_NAME")
+fi
+if [[ ! "$CLAIMANT_ADDRESS" =~ ^[GC][A-Z2-7]{55}$ ]]; then
+  err "CLAIMANT_ADDRESS must be a valid 56-char G... or C... strkey"
+  exit 1
+fi
+info "Using claimant address: $CLAIMANT_ADDRESS"
 echo ""
 
 assert_reject_zero_score_tape

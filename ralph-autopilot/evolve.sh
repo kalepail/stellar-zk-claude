@@ -5,8 +5,9 @@
 # Usage:
 #   ./ralph-autopilot/evolve.sh --harness claude              # Run 100 iterations with Claude Code
 #   ./ralph-autopilot/evolve.sh --harness codex --iterations 50
-#   ./ralph-autopilot/evolve.sh --harness goose --resume       # Resume from current state
+#   ./ralph-autopilot/evolve.sh --harness goose                # Resume from current state (default behavior)
 #   ./ralph-autopilot/evolve.sh --harness aider --iterations 20
+#   ./ralph-autopilot/evolve.sh --harness codex --build-mode skip
 #
 # Supported harnesses: claude, codex, opencode, gemini, aider, cline, goose
 #
@@ -16,25 +17,22 @@ set -euo pipefail
 
 HARNESS=""
 MAX_ITERATIONS=100
-RESUME=false
-SKIP_BUILD=false
+BUILD_MODE="full"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --harness|-h)   HARNESS="$2"; shift 2 ;;
     --iterations|-n) MAX_ITERATIONS="$2"; shift 2 ;;
-    --resume|-r)    RESUME=true; shift ;;
-    --skip-build)   SKIP_BUILD=true; shift ;;
+    --build-mode)   BUILD_MODE="$2"; shift 2 ;;
     --help)
-      echo "Usage: evolve.sh --harness <name> [--iterations N] [--resume] [--skip-build]"
+      echo "Usage: evolve.sh --harness <name> [--iterations N] [--build-mode full|skip]"
       echo ""
       echo "Harnesses: claude, codex, opencode, gemini, aider, cline, goose"
       echo ""
       echo "Options:"
       echo "  --harness, -h     AI coding tool to use (required)"
       echo "  --iterations, -n  Number of iterations to run (default: 100)"
-      echo "  --resume, -r      Resume from current state"
-      echo "  --skip-build      Skip initial cargo build"
+      echo "  --build-mode      full|skip (default: full)"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -43,6 +41,16 @@ done
 
 if [ -z "$HARNESS" ]; then
   echo "ERROR: --harness is required. Use --help for usage."
+  exit 1
+fi
+
+if ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]] || [ "$MAX_ITERATIONS" -lt 1 ]; then
+  echo "ERROR: --iterations must be an integer >= 1"
+  exit 1
+fi
+
+if [ "$BUILD_MODE" != "full" ] && [ "$BUILD_MODE" != "skip" ]; then
+  echo "ERROR: --build-mode must be full or skip"
   exit 1
 fi
 
@@ -177,7 +185,7 @@ update_state_field harness "\"$HARNESS\""
 
 # ── Initial build ──────────────────────────────────────────────────
 
-if [ "$SKIP_BUILD" = false ]; then
+if [ "$BUILD_MODE" = "full" ]; then
   log "Building release binary..."
   (cd "$RUST_DIR" && cargo build --release 2>&1 | tail -5)
   log "Build OK"

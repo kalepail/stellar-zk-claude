@@ -33,6 +33,7 @@ export interface ProofJournal {
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
+  claimant_address: string;
 }
 
 export interface ProofStats {
@@ -154,8 +155,8 @@ export interface ProverGetJobResponse {
     max_frames: number;
     receipt_kind: string;
     segment_limit_po2: number;
-    allow_dev_mode: boolean;
-    verify_receipt: boolean;
+    proof_mode: "secure" | "dev";
+    verify_mode: "policy" | "verify";
     accelerator: string;
   };
   result?: ProverJobResultEnvelope;

@@ -3,7 +3,7 @@
 //! Exploits the anti-lurk mechanic for high scoring:
 //! - Track time_since_last_kill relative to 360-frame lurk threshold
 //! - When close to threshold, make one safe kill to reset timer
-//! - When saucers spawn, aggressively pursue small saucers (1000 pts each)
+//! - When saucers spawn, aggressively pursue small saucers (990 pts each)
 //! - Deliberately avoid clearing all asteroids to delay wave transitions when farming
 
 use crate::bots::AutopilotBot;

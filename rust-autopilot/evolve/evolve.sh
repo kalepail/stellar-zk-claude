@@ -3,22 +3,64 @@
 # evolve.sh — Progressive learning loop for autopilot bot evolution
 #
 # Usage:
-#   ./evolve/evolve.sh              # Run 100 iterations (default)
-#   ./evolve/evolve.sh 50           # Run 50 iterations
-#   ./evolve/evolve.sh 10 --resume  # Resume from current state, run 10 more
+#   ./evolve/evolve.sh                                # Run 100 iterations (default)
+#   ./evolve/evolve.sh --iterations 50               # Run 50 iterations
+#   ./evolve/evolve.sh --iterations 10 --build-mode skip
 #
 set -euo pipefail
 
 EVOLVE_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$EVOLVE_DIR")"
-MAX_ITERATIONS="${1:-100}"
-RESUME_FLAG="${2:-}"
+MAX_ITERATIONS=100
+BUILD_MODE="full" # full|skip
 
 STATE_FILE="$EVOLVE_DIR/state.json"
 LESSONS_FILE="$EVOLVE_DIR/journal/lessons.md"
 GUIDE_FILE="$EVOLVE_DIR/GUIDE.md"
 SEEDS_FILE="$EVOLVE_DIR/seeds.txt"
 ROSTER_FILE="$PROJECT_DIR/src/bots/roster.rs"
+
+usage() {
+  cat <<'USAGE_EOF'
+Usage: evolve/evolve.sh [options]
+
+Options:
+  --iterations, -n <N>     Number of iterations to run (default: 100)
+  --build-mode <mode>      full|skip (default: full)
+  -h, --help               Show this help
+USAGE_EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --iterations|-n)
+      MAX_ITERATIONS="${2:-}"
+      shift 2
+      ;;
+    --build-mode)
+      BUILD_MODE="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]] || [ "$MAX_ITERATIONS" -lt 1 ]; then
+  echo "ERROR: --iterations must be an integer >= 1" >&2
+  exit 1
+fi
+if [ "$BUILD_MODE" != "full" ] && [ "$BUILD_MODE" != "skip" ]; then
+  echo "ERROR: --build-mode must be full or skip" >&2
+  exit 1
+fi
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -50,20 +92,21 @@ fi
 
 # ── Initial build ────────────────────────────────────────────────────
 
-log "Building release binary..."
-cd "$PROJECT_DIR"
-cargo build --release 2>&1 | tail -3
-log "Build OK"
+if [ "$BUILD_MODE" = "full" ]; then
+  log "Building release binary..."
+  cd "$PROJECT_DIR"
+  cargo build --release 2>&1 | tail -3
+  log "Build OK"
+else
+  log "Skipping initial build (build-mode=skip)"
+  cd "$PROJECT_DIR"
+fi
 
 # ── Determine starting iteration ─────────────────────────────────────
 
 CURRENT_ITER=$(read_state_field iteration)
-if [ "$RESUME_FLAG" = "--resume" ]; then
-  START_ITER=$((CURRENT_ITER + 1))
-  log "Resuming from iteration $START_ITER"
-else
-  START_ITER=$((CURRENT_ITER + 1))
-fi
+START_ITER=$((CURRENT_ITER + 1))
+log "Continuing from iteration $START_ITER"
 
 END_ITER=$((START_ITER + MAX_ITERATIONS - 1))
 log "Will run iterations $START_ITER through $END_ITER"

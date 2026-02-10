@@ -63,7 +63,7 @@ async function processQueueMessage(
   const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
   let submitResult: Awaited<ReturnType<typeof submitToProver>>;
   try {
-    submitResult = await submitToProver(env, tapeBytes);
+    submitResult = await submitToProver(env, tapeBytes, {});
   } catch (error) {
     const reason = `submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {

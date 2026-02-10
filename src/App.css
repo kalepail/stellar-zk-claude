@@ -207,6 +207,25 @@
   text-decoration: underline;
 }
 
+.cancel-job-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 154, 154, 0.5);
+  border-radius: 6px;
+  background: rgba(125, 32, 32, 0.35);
+  color: #ff9a9a;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  margin-left: 0.5rem;
+  cursor: pointer;
+}
+
+.cancel-job-btn:hover {
+  background: rgba(160, 40, 40, 0.5);
+}
+
 .proof-job-box {
   display: grid;
   gap: 0.38rem;
@@ -228,6 +247,166 @@
 
 .proof-warning {
   color: #ffd79f;
+}
+
+.wallet-panel {
+  display: grid;
+  gap: 0.6rem;
+  border: 1px solid rgba(108, 159, 230, 0.28);
+  border-radius: 10px;
+  padding: 0.62rem 0.72rem;
+  background: rgba(9, 18, 33, 0.6);
+}
+
+.wallet-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.wallet-panel__copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.wallet-panel__copy h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wallet-panel__copy p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(181, 208, 241, 0.92);
+}
+
+.wallet-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.6rem;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.wallet-chip--connected {
+  color: #90f6c8;
+  border-color: rgba(144, 246, 200, 0.45);
+  background: rgba(26, 108, 71, 0.3);
+}
+
+.wallet-chip--disconnected {
+  color: #9db0c9;
+  border-color: rgba(157, 176, 201, 0.4);
+  background: rgba(157, 176, 201, 0.14);
+}
+
+.wallet-chip--busy {
+  color: #66c7ff;
+  border-color: rgba(102, 199, 255, 0.45);
+  background: rgba(20, 92, 136, 0.32);
+}
+
+.wallet-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.wallet-panel__actions input {
+  flex: 1 1 220px;
+  min-width: 0;
+  border: 1px solid rgba(108, 159, 230, 0.4);
+  border-radius: 8px;
+  background: rgba(13, 22, 40, 0.55);
+  color: #d9f4ff;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  padding: 0.5rem 0.62rem;
+}
+
+.wallet-panel__actions input:focus {
+  outline: 2px solid rgba(102, 199, 255, 0.5);
+  outline-offset: 1px;
+}
+
+.wallet-panel__actions button {
+  appearance: none;
+  border: 1px solid rgba(102, 199, 255, 0.58);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(23, 72, 105, 0.8), rgba(13, 45, 73, 0.92));
+  color: #dff4ff;
+  font-family: var(--font-display);
+  font-size: 0.76rem;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+.wallet-panel__actions button:hover:enabled {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(18, 71, 112, 0.35);
+}
+
+.wallet-panel__actions button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.wallet-panel__meta {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: rgba(171, 196, 232, 0.9);
+}
+
+.wallet-panel__credential {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(171, 196, 232, 0.9);
+}
+
+.wallet-panel__credential code {
+  color: #d9f4ff;
+}
+
+.claimant-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.claimant-field label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(146, 182, 233, 0.9);
+}
+
+.claimant-field input {
+  border: 1px solid rgba(108, 159, 230, 0.4);
+  border-radius: 8px;
+  background: rgba(13, 22, 40, 0.55);
+  color: #d9f4ff;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  padding: 0.5rem 0.62rem;
+}
+
+.claimant-field input:focus {
+  outline: 2px solid rgba(102, 199, 255, 0.5);
+  outline-offset: 1px;
 }
 
 .gateway-health {
@@ -295,6 +474,19 @@
   }
 
   .proof-actions button {
+    width: 100%;
+  }
+
+  .wallet-panel__header {
+    flex-direction: column;
+  }
+
+  .wallet-panel__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wallet-panel__actions button {
     width: 100%;
   }
 }

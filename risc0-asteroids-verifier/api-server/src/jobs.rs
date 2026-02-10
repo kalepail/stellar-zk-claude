@@ -17,13 +17,13 @@ pub(crate) fn now_unix_s() -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn options_summary(options: ProveOptions) -> ProveOptionsSummary {
+pub(crate) fn options_summary(options: &ProveOptions) -> ProveOptionsSummary {
     ProveOptionsSummary {
         max_frames: options.max_frames,
         receipt_kind: options.receipt_kind,
         segment_limit_po2: options.segment_limit_po2,
-        allow_dev_mode: options.allow_dev_mode,
-        verify_receipt: options.verify_receipt,
+        proof_mode: options.proof_mode,
+        verify_mode: options.verify_mode,
         accelerator: accelerator(),
     }
 }
@@ -203,7 +203,7 @@ pub(crate) async fn enqueue_proof_job(
         started_at_unix_s: None,
         finished_at_unix_s: None,
         tape_size_bytes: tape.len(),
-        options: options_summary(options),
+        options: options_summary(&options),
         result: None,
         error: None,
         error_code: None,

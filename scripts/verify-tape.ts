@@ -13,6 +13,8 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { deserializeTape } from "../src/game/tape";
 
+const DEFAULT_MAX_FRAMES = 18_000;
+
 const tapePath = process.argv[2];
 
 if (!tapePath) {
@@ -21,11 +23,12 @@ if (!tapePath) {
 }
 
 const data = new Uint8Array(readFileSync(tapePath));
-const tape = deserializeTape(data);
+const tape = deserializeTape(data, DEFAULT_MAX_FRAMES);
 
 console.log(`Tape: ${tapePath}`);
 console.log(`  Seed:       0x${tape.header.seed.toString(16).padStart(8, "0")}`);
 console.log(`  Frames:     ${tape.header.frameCount}`);
+console.log(`  Claimant:   ${tape.header.claimantAddress || "(none)"}`);
 console.log(`  Exp. Score:  ${tape.footer.finalScore}`);
 console.log(`  Exp. RNG:   0x${tape.footer.finalRngState.toString(16).padStart(8, "0")}`);
 console.log();

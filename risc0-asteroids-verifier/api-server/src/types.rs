@@ -1,4 +1,4 @@
-use host::{ReceiptKind, TapeProof};
+pub(crate) use host::{ProofMode, ReceiptKind, TapeProof, VerifyMode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -11,9 +11,9 @@ pub(crate) struct ProveTapeQuery {
     #[serde(default)]
     pub(crate) segment_limit_po2: Option<u32>,
     #[serde(default)]
-    pub(crate) allow_dev_mode: Option<bool>,
+    pub(crate) proof_mode: Option<ProofMode>,
     #[serde(default)]
-    pub(crate) verify_receipt: Option<bool>,
+    pub(crate) verify_mode: Option<VerifyMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,8 +44,8 @@ pub(crate) struct ProveOptionsSummary {
     pub(crate) max_frames: u32,
     pub(crate) receipt_kind: ReceiptKind,
     pub(crate) segment_limit_po2: u32,
-    pub(crate) allow_dev_mode: bool,
-    pub(crate) verify_receipt: bool,
+    pub(crate) proof_mode: ProofMode,
+    pub(crate) verify_mode: VerifyMode,
     pub(crate) accelerator: &'static str,
 }
 

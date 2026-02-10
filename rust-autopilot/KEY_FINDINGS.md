@@ -284,8 +284,8 @@ Implementation added:
   - `precision-harvester`
   - `precision-centrist`
 - New scripts:
-  - `scripts/run-precision-intel-suite.sh`
-  - `scripts/run-precision-top3-deep.sh`
+  - `scripts/run-efficiency-elite-suite.sh`
+  - `scripts/run-omega-top3-deep.sh`
 
 Completed runs:
 
@@ -1172,4 +1172,4 @@ Checkpoint promotions from this v3 check:
   - keep-list alignment
 - New scripts:
   - `scripts/sync-records.sh`
-  - `scripts/prune-artifacts.sh` (dry-run default, `--apply` to execute)
+  - `scripts/prune-artifacts.sh` (dry-run default, `--mode apply` to execute)

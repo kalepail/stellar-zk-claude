@@ -33,6 +33,8 @@ Defaults:
 - max frames: `108000` (30 minutes at 60 FPS)
 - jobs: `8`
 - selection metric: `score` (`objective`, `score`, or `insane`)
+- install mode: `champion` (`champion` or `restore`)
+- anchor mode: `all` (`all` or `core`)
 
 Custom run:
 
@@ -42,6 +44,8 @@ Custom run:
   --candidates 8 \
   --max-frames 108000 \
   --selection-metric insane \
+  --anchor-mode all \
+  --install-mode champion \
   --jobs 8
 ```
 
@@ -49,3 +53,4 @@ Notes:
 
 - The tuner uses the proven sim + verifier in `rust-autopilot`.
 - It writes the active profile into `rust-autopilot/codex-/state/adaptive-profile.json` during evaluation.
+- Profiles in `codex-autopilot/profiles/` use the full adaptive schema (all scale keys), so anchors and blends behave consistently across runs.

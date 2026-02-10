@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_utc": "2026-02-08T00:00:00Z",
+  "updated_utc": "2026-02-09T00:00:00Z",
   "record_lock_bot": {
     "bot_id": "record-lock-endurancex-6046c93d",
     "bot_fingerprint": "crc32:4eef4faa:len:380",
@@ -109,7 +109,7 @@
       "checkpoint_tape": "checkpoints/rank11-omega-lurk-breaker-seed3d9b1f5c-score125130-frames35133.tape",
       "checkpoint_meta": "checkpoints/rank11-omega-lurk-breaker-seed3d9b1f5c-score125130-frames35133.json",
       "bot_id": "omega-lurk-breaker",
-      "bot_fingerprint": "crc32:a0a76b8a:len:539",
+      "bot_fingerprint": "crc32:10251857:len:539",
       "seed_hex": "0x3d9b1f5c",
       "score": 125130,
       "frames": 35133,

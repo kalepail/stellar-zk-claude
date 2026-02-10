@@ -18,7 +18,7 @@ This folder is the source of truth for artifact retention and provenance.
 4. Run `cargo test --release` to enforce registry integrity checks.
 5. Optional cleanup:
    - `./scripts/prune-artifacts.sh` (dry-run)
-   - `./scripts/prune-artifacts.sh --apply`
+   - `./scripts/prune-artifacts.sh --mode apply`
 
 ## Safety guarantee
 

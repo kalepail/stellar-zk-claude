@@ -5,7 +5,7 @@ import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
-import { parseInteger, safeErrorMessage } from "../utils";
+import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -248,9 +248,25 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
 
     const coordinator = coordinatorStub(c.env);
-    const job = await coordinator.getJob(jobId);
+    let job = await coordinator.getJob(jobId);
     if (!job) {
       return jsonError(c, 404, `job not found: ${jobId}`);
+    }
+
+    // Opportunistic: if the DO alarm hasn't polled recently (unreliable in local
+    // dev), do a single-shot prover check so the frontend sees progress.
+    // DOs are single-threaded so this is safe from races in prod.
+    if (
+      !isTerminalProofStatus(job.status) &&
+      job.prover.jobId &&
+      (!job.prover.lastPolledAt || Date.now() - new Date(job.prover.lastPolledAt).getTime() > 5_000)
+    ) {
+      try {
+        await coordinator.kickAlarm();
+        job = (await coordinator.getJob(jobId)) ?? job;
+      } catch {
+        // Best-effort — don't fail the read if kicking the alarm errors.
+      }
     }
 
     return c.json({
@@ -292,6 +308,24 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       headers: {
         "content-type": "application/json; charset=utf-8",
       },
+    });
+  });
+
+  api.delete("/proofs/jobs/:jobId", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const job = await coordinator.markFailed(jobId, "cancelled by user");
+    if (!job) {
+      return jsonError(c, 404, `job not found: ${jobId}`);
+    }
+
+    return c.json({
+      success: true,
+      job: asPublicJob(job),
     });
   });
 

@@ -1,7 +1,7 @@
 use std::{env, sync::Arc};
 
 use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
-use host::{ProveOptions, SEGMENT_LIMIT_PO2_DEFAULT};
+use host::{ProofMode, ProveOptions, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT};
 use tokio::sync::Semaphore;
 
 use crate::{JobStore, ProveTapeQuery};
@@ -11,19 +11,64 @@ pub(crate) const FIXED_PROVER_CONCURRENCY: usize = 1;
 pub(crate) const DEFAULT_JOB_TTL_SECS: u64 = 24 * 60 * 60;
 pub(crate) const DEFAULT_JOB_SWEEP_SECS: u64 = 60;
 pub(crate) const DEFAULT_MAX_JOBS: usize = 64;
-pub(crate) const DEFAULT_RUNNING_JOB_TIMEOUT_SECS: u64 = 30 * 60;
+// Target: typical proofs ~5 min; accept up to 10 min before timing out.
+pub(crate) const DEFAULT_RUNNING_JOB_TIMEOUT_SECS: u64 = 10 * 60;
 pub(crate) const DEFAULT_MIN_SEGMENT_LIMIT_PO2: u32 = 16;
 pub(crate) const DEFAULT_MAX_SEGMENT_LIMIT_PO2: u32 = 21;
 pub(crate) const DEFAULT_HTTP_MAX_CONNECTIONS: usize = 25_000;
 pub(crate) const DEFAULT_HTTP_KEEP_ALIVE_SECS: u64 = 75;
-pub(crate) const DEFAULT_TIMED_OUT_PROOF_KILL_SECS: u64 = 120;
+// After a proof timeout, give the detached task a short grace window, then abort
+// so the supervisor can restart the process (prevents a permanently wedged prover).
+pub(crate) const DEFAULT_TIMED_OUT_PROOF_KILL_SECS: u64 = 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProofModePolicy {
+    SecureOnly,
+    SecureAndDev,
+}
+
+impl ProofModePolicy {
+    fn from_env(raw: Option<String>) -> Self {
+        match raw
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("secure-only") => Self::SecureOnly,
+            Some("secure-and-dev") => Self::SecureAndDev,
+            Some(other) => {
+                tracing::warn!(
+                    "invalid PROOF_MODE_POLICY='{}'. Expected secure-only|secure-and-dev. Falling back to secure-only.",
+                    other
+                );
+                Self::SecureOnly
+            }
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::SecureOnly => "secure-only",
+            Self::SecureAndDev => "secure-and-dev",
+        }
+    }
+
+    pub(crate) fn allows(self, mode: ProofMode) -> bool {
+        match (self, mode) {
+            (Self::SecureOnly, ProofMode::Secure) => true,
+            (Self::SecureOnly, ProofMode::Dev) => false,
+            (Self::SecureAndDev, _) => true,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ServerPolicy {
     pub(crate) max_frames: u32,
     pub(crate) min_segment_limit_po2: u32,
     pub(crate) max_segment_limit_po2: u32,
-    pub(crate) allow_dev_mode_requests: bool,
+    pub(crate) proof_mode_policy: ProofModePolicy,
 }
 
 impl ServerPolicy {
@@ -47,7 +92,7 @@ impl ServerPolicy {
             max_frames: read_env_u32("MAX_FRAMES", MAX_FRAMES_DEFAULT),
             min_segment_limit_po2,
             max_segment_limit_po2,
-            allow_dev_mode_requests: read_env_bool("ALLOW_DEV_MODE_REQUESTS", false),
+            proof_mode_policy: ProofModePolicy::from_env(env::var("PROOF_MODE_POLICY").ok()),
         }
     }
 
@@ -77,23 +122,22 @@ impl ServerPolicy {
             ));
         }
 
-        let allow_dev_mode = query.allow_dev_mode.unwrap_or(false);
-        if allow_dev_mode && !self.allow_dev_mode_requests {
+        let proof_mode = query.proof_mode.unwrap_or(ProofMode::Secure);
+        if !self.proof_mode_policy.allows(proof_mode) {
             return Err((
-                "allow_dev_mode is disabled by server policy".to_string(),
-                "dev_mode_disabled",
+                "proof_mode=dev is disabled by server policy".to_string(),
+                "proof_mode_disabled",
             ));
         }
 
-        // Default to false: verification happens on-chain, not server-side.
-        let verify_receipt = query.verify_receipt.unwrap_or(false);
+        let verify_mode = query.verify_mode.unwrap_or(VerifyMode::Policy);
 
         Ok(ProveOptions {
             max_frames,
             segment_limit_po2,
             receipt_kind: query.receipt_kind.unwrap_or_default(),
-            allow_dev_mode,
-            verify_receipt,
+            proof_mode,
+            verify_mode,
         })
     }
 }
@@ -149,17 +193,5 @@ pub(crate) fn read_env_u32(name: &str, default: u32) -> u32 {
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-pub(crate) fn read_env_bool(name: &str, default: bool) -> bool {
-    env::var(name)
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
         .unwrap_or(default)
 }

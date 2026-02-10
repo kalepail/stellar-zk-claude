@@ -6,16 +6,18 @@ import {
   DEFAULT_MAX_JOB_WALL_TIME_MS,
   DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
+  DEFAULT_SEGMENT_LIMIT_PO2,
   JOB_KEY_PREFIX,
   MAX_PROVER_RECOVERY_ATTEMPTS,
 } from "../constants";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
-import { pollProver, submitToProver, summarizeProof } from "../prover/client";
+import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
 import type {
   CreateJobResult,
   ProofJobRecord,
   ProofResultSummary,
+  ProverPollResult,
   PublicProofJob,
   ProofTapeInfo,
 } from "../types";
@@ -206,8 +208,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const currentSegment =
       typeof job.prover.segmentLimitPo2 === "number"
         ? job.prover.segmentLimitPo2
-        : parseInteger(this.env.PROVER_SEGMENT_LIMIT_PO2, 21, 1);
-    const fallbackSegment = parseInteger(this.env.PROVER_FALLBACK_SEGMENT_LIMIT_PO2, 21, 1);
+        : DEFAULT_SEGMENT_LIMIT_PO2;
+    const fallbackSegment = DEFAULT_SEGMENT_LIMIT_PO2;
     const normalizedReason = reason.toLowerCase();
     const looksLikeOom =
       normalizedReason.includes("out of memory") || normalizedReason.includes("allocation failed");
@@ -457,6 +459,233 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job;
   }
 
+  /**
+   * Shared poll-result state machine. Both alarm() and kickAlarm() delegate
+   * here after obtaining a ProverPollResult.
+   *
+   * @param scheduleNext  true from alarm() (schedules next alarm on "running"
+   *                      and does backoff retries); false from kickAlarm()
+   *                      (just writes the state update, no alarm scheduling).
+   */
+  private async applyPollResult(
+    activeJobId: string,
+    job: ProofJobRecord,
+    pollResult: ProverPollResult,
+    scheduleNext: boolean,
+  ): Promise<void> {
+    const pollIntervalMs = parseInteger(
+      this.env.PROVER_POLL_INTERVAL_MS,
+      DEFAULT_POLL_INTERVAL_MS,
+      500,
+    );
+
+    if (pollResult.type === "running") {
+      job.prover.pollingErrors = 0;
+      job.prover.status = pollResult.status;
+      job.prover.lastPolledAt = nowIso();
+      job.updatedAt = nowIso();
+      job.queue.lastError = null;
+      job.queue.nextRetryAt = null;
+      await this.saveJob(job);
+      if (scheduleNext) {
+        await this.scheduleAlarm(pollIntervalMs);
+      }
+      return;
+    }
+
+    if (pollResult.type === "success") {
+      let summary: Awaited<ReturnType<typeof summarizeProof>>;
+      try {
+        summary = summarizeProof(pollResult.response);
+      } catch (error) {
+        await this.markFailed(
+          activeJobId,
+          `invalid prover success payload: ${safeErrorMessage(error)}`,
+        );
+        return;
+      }
+
+      const artifactStorageKey = resultKey(activeJobId);
+      try {
+        await this.env.PROOF_ARTIFACTS.put(
+          artifactStorageKey,
+          JSON.stringify({ stored_at: nowIso(), prover_response: pollResult.response }, null, 2),
+          {
+            httpMetadata: { contentType: "application/json" },
+            customMetadata: { jobId: activeJobId },
+          },
+        );
+      } catch (error) {
+        if (scheduleNext) {
+          // R2 write failed — retry with backoff rather than failing the job.
+          job.prover.pollingErrors += 1;
+          job.status = "retrying";
+          job.queue.lastError = `failed writing proof artifact to R2: ${safeErrorMessage(error)}`;
+          job.updatedAt = nowIso();
+          const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+          job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+          await this.saveJob(job);
+          await this.scheduleAlarm(delaySec * 1000);
+        }
+        // kickAlarm path: next kick will retry.
+        return;
+      }
+
+      await this.markSucceeded(activeJobId, summary, artifactStorageKey);
+      return;
+    }
+
+    if (pollResult.type === "retry") {
+      if (pollResult.clearProverJob) {
+        if (scheduleNext) {
+          // alarm path: attempt recovery re-submit
+          const recoveryAttempts = job.prover.recoveryAttempts;
+          if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+            await this.markFailed(
+              activeJobId,
+              `prover recovery exhausted after ${recoveryAttempts} attempt(s): ${pollResult.message}`,
+            );
+            return;
+          }
+
+          const nextRecoveryAttempts = recoveryAttempts + 1;
+          const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
+          if (!tapeObject) {
+            await this.markFailed(activeJobId, "missing tape artifact in R2 during re-submit");
+            return;
+          }
+
+          const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
+          const fallbackSegmentPo2 = this.segmentFallbackForOom(job, pollResult.message);
+          if (fallbackSegmentPo2 !== null) {
+            console.warn(
+              `[proof-worker] falling back segment_limit_po2 ${job.prover.segmentLimitPo2 ?? "unknown"} -> ${fallbackSegmentPo2} after OOM`,
+            );
+          }
+          const submitResult = await submitToProver(
+            this.env,
+            tapeBytes,
+            fallbackSegmentPo2 !== null
+              ? { segmentLimitPo2: fallbackSegmentPo2 }
+              : {},
+          );
+
+          if (submitResult.type === "success") {
+            await this.markProverAccepted(
+              activeJobId,
+              submitResult.jobId,
+              submitResult.statusUrl,
+              submitResult.segmentLimitPo2,
+              nextRecoveryAttempts,
+            );
+            return;
+          }
+
+          if (submitResult.type === "retry") {
+            if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
+              await this.markFailed(
+                activeJobId,
+                `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
+              );
+              return;
+            }
+
+            job.prover.jobId = null;
+            job.prover.status = null;
+            job.prover.statusUrl = null;
+            job.prover.segmentLimitPo2 = null;
+            job.prover.lastPolledAt = null;
+            job.prover.pollingErrors += 1;
+            job.prover.recoveryAttempts = nextRecoveryAttempts;
+            job.status = "retrying";
+            job.updatedAt = nowIso();
+            job.queue.lastError = submitResult.message;
+            const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+            job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+            await this.saveJob(job);
+            await this.scheduleAlarm(delaySec * 1000);
+            return;
+          }
+
+          // fatal re-submit
+          await this.markFailed(activeJobId, submitResult.message);
+          return;
+        }
+
+        // kickAlarm path: just clear prover job, let alarm handle recovery.
+        job.prover.jobId = null;
+        job.prover.status = null;
+        job.prover.statusUrl = null;
+        job.prover.lastPolledAt = nowIso();
+        job.prover.pollingErrors += 1;
+        job.prover.recoveryAttempts += 1;
+        job.status = "retrying";
+        job.updatedAt = nowIso();
+        job.queue.lastError = pollResult.message;
+        await this.saveJob(job);
+        return;
+      }
+
+      // Transient poll error without clearing the prover job.
+      job.prover.pollingErrors += 1;
+      job.prover.lastPolledAt = nowIso();
+      job.updatedAt = nowIso();
+      job.queue.lastError = pollResult.message;
+      if (scheduleNext) {
+        job.status = "retrying";
+        const delaySec = retryDelaySeconds(job.prover.pollingErrors);
+        job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
+        await this.saveJob(job);
+        await this.scheduleAlarm(delaySec * 1000);
+      } else {
+        await this.saveJob(job);
+      }
+      return;
+    }
+
+    // pollResult.type === "fatal"
+    await this.markFailed(activeJobId, pollResult.message);
+  }
+
+  /**
+   * Lightweight single-shot poll triggered by the GET endpoint.
+   * Unlike alarm(), this does NOT schedule follow-up alarms — it checks the
+   * prover once and writes the state update so the frontend sees progress.
+   */
+  async kickAlarm(): Promise<void> {
+    const activeJobId = await this.getActiveJobId();
+    if (!activeJobId) {
+      return;
+    }
+
+    const job = await this.loadJob(activeJobId);
+    if (!job || isTerminalProofStatus(job.status)) {
+      return;
+    }
+
+    const proverJobId = job.prover.jobId;
+    if (!proverJobId) {
+      // No prover job yet — the queue consumer handles submission.
+      // Just ensure the alarm is scheduled.
+      await this.scheduleAlarm(500);
+      return;
+    }
+
+    let pollResult: ProverPollResult;
+    try {
+      pollResult = await pollProverOnce(this.env, proverJobId);
+    } catch (error) {
+      job.prover.pollingErrors += 1;
+      job.prover.lastPolledAt = nowIso();
+      job.updatedAt = nowIso();
+      job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
+      await this.saveJob(job);
+      return;
+    }
+
+    await this.applyPollResult(activeJobId, job, pollResult, false);
+  }
+
   async alarm(): Promise<void> {
     const activeJobId = await this.getActiveJobId();
     if (!activeJobId) {
@@ -472,11 +701,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       this.env.MAX_JOB_WALL_TIME_MS,
       DEFAULT_MAX_JOB_WALL_TIME_MS,
       60_000,
-    );
-    const pollIntervalMs = parseInteger(
-      this.env.PROVER_POLL_INTERVAL_MS,
-      DEFAULT_POLL_INTERVAL_MS,
-      500,
     );
     const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
 
@@ -505,7 +729,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       }
 
       const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-      const submitResult = await submitToProver(this.env, tapeBytes);
+      const submitResult = await submitToProver(this.env, tapeBytes, {});
 
       if (submitResult.type === "success") {
         await this.markProverAccepted(
@@ -545,7 +769,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    let pollResult: Awaited<ReturnType<typeof pollProver>>;
+    let pollResult: ProverPollResult;
     try {
       pollResult = await pollProver(this.env, proverJobId);
     } catch (error) {
@@ -560,153 +784,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    if (pollResult.type === "running") {
-      job.prover.pollingErrors = 0;
-      job.prover.status = pollResult.status;
-      job.prover.lastPolledAt = nowIso();
-      job.updatedAt = nowIso();
-      job.queue.lastError = null;
-      job.queue.nextRetryAt = null;
-      await this.saveJob(job);
-      await this.scheduleAlarm(pollIntervalMs);
-      return;
-    }
-
-    if (pollResult.type === "success") {
-      let summary: Awaited<ReturnType<typeof summarizeProof>>;
-      try {
-        summary = summarizeProof(pollResult.response);
-      } catch (error) {
-        await this.markFailed(
-          activeJobId,
-          `invalid prover success payload: ${safeErrorMessage(error)}`,
-        );
-        return;
-      }
-
-      const artifactStorageKey = resultKey(activeJobId);
-      try {
-        await this.env.PROOF_ARTIFACTS.put(
-          artifactStorageKey,
-          JSON.stringify(
-            {
-              stored_at: nowIso(),
-              prover_response: pollResult.response,
-            },
-            null,
-            2,
-          ),
-          {
-            httpMetadata: { contentType: "application/json" },
-            customMetadata: { jobId: activeJobId },
-          },
-        );
-      } catch (error) {
-        // R2 write failed — retry with backoff rather than failing the job.
-        job.prover.pollingErrors += 1;
-        job.status = "retrying";
-        job.queue.lastError = `failed writing proof artifact to R2: ${safeErrorMessage(error)}`;
-        job.updatedAt = nowIso();
-        const delaySec = retryDelaySeconds(job.prover.pollingErrors);
-        job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
-        await this.saveJob(job);
-        await this.scheduleAlarm(delaySec * 1000);
-        return;
-      }
-
-      await this.markSucceeded(activeJobId, summary, artifactStorageKey);
-      return;
-    }
-
-    if (pollResult.type === "retry") {
-      if (pollResult.clearProverJob) {
-        const recoveryAttempts = job.prover.recoveryAttempts;
-        if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-          await this.markFailed(
-            activeJobId,
-            `prover recovery exhausted after ${recoveryAttempts} attempt(s): ${pollResult.message}`,
-          );
-          return;
-        }
-
-        const nextRecoveryAttempts = recoveryAttempts + 1;
-
-        // Prover lost the job (e.g. restart). Re-read tape and re-submit.
-        const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
-        if (!tapeObject) {
-          await this.markFailed(activeJobId, "missing tape artifact in R2 during re-submit");
-          return;
-        }
-
-        const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-        const fallbackSegmentPo2 = this.segmentFallbackForOom(job, pollResult.message);
-        if (fallbackSegmentPo2 !== null) {
-          console.warn(
-            `[proof-worker] falling back segment_limit_po2 ${job.prover.segmentLimitPo2 ?? "unknown"} -> ${fallbackSegmentPo2} after OOM`,
-          );
-        }
-        const submitResult = await submitToProver(
-          this.env,
-          tapeBytes,
-          fallbackSegmentPo2 !== null ? { segmentLimitPo2: fallbackSegmentPo2 } : undefined,
-        );
-
-        if (submitResult.type === "success") {
-          await this.markProverAccepted(
-            activeJobId,
-            submitResult.jobId,
-            submitResult.statusUrl,
-            submitResult.segmentLimitPo2,
-            nextRecoveryAttempts,
-          );
-          // markProverAccepted already schedules the next alarm
-          return;
-        }
-
-        if (submitResult.type === "retry") {
-          if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-            await this.markFailed(
-              activeJobId,
-              `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
-            );
-            return;
-          }
-
-          job.prover.jobId = null;
-          job.prover.status = null;
-          job.prover.statusUrl = null;
-          job.prover.segmentLimitPo2 = null;
-          job.prover.lastPolledAt = null;
-          job.prover.pollingErrors += 1;
-          job.prover.recoveryAttempts = nextRecoveryAttempts;
-          job.status = "retrying";
-          job.updatedAt = nowIso();
-          job.queue.lastError = submitResult.message;
-          const delaySec = retryDelaySeconds(job.prover.pollingErrors);
-          job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
-          await this.saveJob(job);
-          await this.scheduleAlarm(delaySec * 1000);
-          return;
-        }
-
-        // fatal
-        await this.markFailed(activeJobId, submitResult.message);
-        return;
-      }
-
-      // Transient poll error without clearing the prover job — backoff and retry.
-      job.prover.pollingErrors += 1;
-      job.status = "retrying";
-      job.updatedAt = nowIso();
-      job.queue.lastError = pollResult.message;
-      const delaySec = retryDelaySeconds(job.prover.pollingErrors);
-      job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
-      await this.saveJob(job);
-      await this.scheduleAlarm(delaySec * 1000);
-      return;
-    }
-
-    // pollResult.type === "fatal"
-    await this.markFailed(activeJobId, pollResult.message);
+    await this.applyPollResult(activeJobId, job, pollResult, true);
   }
 }

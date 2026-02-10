@@ -8,41 +8,84 @@ set -euo pipefail
 #   bash scripts/batch-smoke-test.sh [options] <tape-paths-or-dirs...>
 #
 # Options:
-#   --url <prover-url>     Prover URL (default: https://risc0-kalien.stellar.buzz)
-#   --composite-only       Only run composite stage
-#   --groth16-only         Only run groth16 stage
+#   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
+#   --receipts <csv>       composite,groth16 (default: composite,groth16)
 #   --poll <seconds>       Poll interval (default: 5)
 #   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
+#   -h, --help             Show this help
 #
 # Examples:
 #   bash scripts/batch-smoke-test.sh test-fixtures/
-#   bash scripts/batch-smoke-test.sh --composite-only test-fixtures/test-short.tape test-fixtures/test-medium.tape
+#   bash scripts/batch-smoke-test.sh --receipts composite test-fixtures/test-short.tape test-fixtures/test-medium.tape
 #   bash scripts/batch-smoke-test.sh --url http://localhost:8080 --out results/ test-fixtures/
+#   bash scripts/batch-smoke-test.sh --url https://<vast-host>:<port> --out results/ test-fixtures/
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-PROVER_URL="https://risc0-kalien.stellar.buzz"
-RUN_COMPOSITE=1
-RUN_GROTH16=1
+PROVER_URL="http://127.0.0.1:8080"
+RECEIPTS_CSV="composite,groth16"
 POLL_INTERVAL=5
 OUT_DIR=""
 TAPE_ARGS=()
+declare -a RECEIPTS=()
+
+usage() {
+  cat <<'USAGE_EOF'
+Usage: scripts/batch-smoke-test.sh [options] <tape-paths-or-dirs...>
+
+Options:
+  --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
+  --receipts <csv>       Comma-separated list of receipt kinds to run.
+                         Allowed values: composite|groth16
+                         Default: composite,groth16
+  --poll <seconds>       Poll interval (default: 5)
+  --out <dir>            Output directory (default: auto-timestamped in batch-results/)
+  -h, --help             Show this help
+USAGE_EOF
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --url) PROVER_URL="${2%/}"; shift 2 ;;
-    --composite-only) RUN_COMPOSITE=1; RUN_GROTH16=0; shift ;;
-    --groth16-only)   RUN_COMPOSITE=0; RUN_GROTH16=1; shift ;;
+    --receipts) RECEIPTS_CSV="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
     --poll) POLL_INTERVAL="$2"; shift 2 ;;
     --out) OUT_DIR="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
     --*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) TAPE_ARGS+=("$1"); shift ;;
   esac
 done
 
+if [[ -z "$RECEIPTS_CSV" ]]; then
+  echo "ERROR: --receipts cannot be empty" >&2
+  exit 1
+fi
+IFS=',' read -r -a RECEIPTS <<< "$RECEIPTS_CSV"
+if [[ "${#RECEIPTS[@]}" -eq 0 ]]; then
+  echo "ERROR: --receipts must include at least one value" >&2
+  exit 1
+fi
+declare -a NORMALIZED_RECEIPTS=()
+for receipt in "${RECEIPTS[@]}"; do
+  receipt="$(echo "$receipt" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "$receipt" in
+    composite|groth16)
+      NORMALIZED_RECEIPTS+=("$receipt")
+      ;;
+    *)
+      echo "ERROR: unsupported receipt kind in --receipts: $receipt (allowed: composite|groth16)" >&2
+      exit 1
+      ;;
+  esac
+done
+RECEIPTS=("${NORMALIZED_RECEIPTS[@]}")
+if [[ "${#RECEIPTS[@]}" -eq 0 ]]; then
+  echo "ERROR: --receipts must include at least one valid receipt kind" >&2
+  exit 1
+fi
+
 if [[ ${#TAPE_ARGS[@]} -eq 0 ]]; then
-  echo "Usage: $0 [options] <tape-paths-or-dirs...>" >&2
-  echo "Run '$0 --help' or see script header for details." >&2
+  usage >&2
   exit 1
 fi
 
@@ -123,7 +166,7 @@ echo "================================================================"
 echo ""
 echo "Prover:     $PROVER_URL"
 echo "Tapes:      $TAPE_COUNT"
-echo "Stages:     $([ $RUN_COMPOSITE -eq 1 ] && echo -n "composite ")$([ $RUN_GROTH16 -eq 1 ] && echo -n "groth16")"
+echo "Receipts:   ${RECEIPTS[*]}"
 echo "Poll:       ${POLL_INTERVAL}s"
 echo "Output:     $OUT_DIR"
 echo ""
@@ -170,7 +213,8 @@ run_stage() {
   wait_for_idle
 
   # Submit
-  local query="receipt_kind=${receipt}&verify_receipt=false"
+  local query
+  query=$(with_claimant_query "receipt_kind=${receipt}&verify_mode=policy")
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${tape}" -H "content-type: application/octet-stream")
@@ -263,41 +307,23 @@ while IFS=$'\t' read -r frames score seed size tape; do
   echo "────────────────────────────────────────────────────────────────"
   } | tee -a "$LOG_FILE"
 
-  if [[ $RUN_COMPOSITE -eq 1 ]]; then
-    echo "  composite:" | tee -a "$LOG_FILE"
+  for receipt in "${RECEIPTS[@]}"; do
+    echo "  ${receipt}:" | tee -a "$LOG_FILE"
     stage_rc=0
-    run_stage "$tape" "composite" "$frames" "$score" "$seed" "$size" > >(tee -a "$LOG_FILE") 2>&1 || stage_rc=$?
+    run_stage "$tape" "$receipt" "$frames" "$score" "$seed" "$size" > >(tee -a "$LOG_FILE") 2>&1 || stage_rc=$?
     if [[ $stage_rc -eq 0 ]]; then
       if [[ "$LAST_STATUS" == "skip" ]]; then
         total_skip=$((total_skip + 1))
-        printf '%s\tcomposite\tskip\n' "$tape_name" >> "$RESULT_FILE"
+        printf '%s\t%s\tskip\n' "$tape_name" "$receipt" >> "$RESULT_FILE"
       else
         total_pass=$((total_pass + 1))
-        printf '%s\tcomposite\tpass\n' "$tape_name" >> "$RESULT_FILE"
+        printf '%s\t%s\tpass\n' "$tape_name" "$receipt" >> "$RESULT_FILE"
       fi
     else
       total_fail=$((total_fail + 1))
-      printf '%s\tcomposite\tfail\n' "$tape_name" >> "$RESULT_FILE"
+      printf '%s\t%s\tfail\n' "$tape_name" "$receipt" >> "$RESULT_FILE"
     fi
-  fi
-
-  if [[ $RUN_GROTH16 -eq 1 ]]; then
-    echo "  groth16:" | tee -a "$LOG_FILE"
-    stage_rc=0
-    run_stage "$tape" "groth16" "$frames" "$score" "$seed" "$size" > >(tee -a "$LOG_FILE") 2>&1 || stage_rc=$?
-    if [[ $stage_rc -eq 0 ]]; then
-      if [[ "$LAST_STATUS" == "skip" ]]; then
-        total_skip=$((total_skip + 1))
-        printf '%s\tgroth16\tskip\n' "$tape_name" >> "$RESULT_FILE"
-      else
-        total_pass=$((total_pass + 1))
-        printf '%s\tgroth16\tpass\n' "$tape_name" >> "$RESULT_FILE"
-      fi
-    else
-      total_fail=$((total_fail + 1))
-      printf '%s\tgroth16\tfail\n' "$tape_name" >> "$RESULT_FILE"
-    fi
-  fi
+  done
 
   echo "" | tee -a "$LOG_FILE"
 done < "$TAPE_INDEX_FILE"

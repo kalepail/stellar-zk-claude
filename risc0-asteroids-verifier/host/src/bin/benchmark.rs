@@ -4,13 +4,31 @@ use anyhow::{anyhow, Context, Result};
 use asteroids_verifier_core::{
     constants::MAX_FRAMES_DEFAULT, tape::parse_tape, VerificationJournal,
 };
+use host::SEGMENT_LIMIT_PO2_DEFAULT;
 use methods::VERIFY_TAPE_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
+use serde::Serialize;
 
 #[derive(Debug)]
 struct Cli {
     tape_path: PathBuf,
     max_frames: u32,
+    segment_limit_po2: u32,
+    json_out: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkJson {
+    seed: u32,
+    frame_count: u32,
+    final_score: u32,
+    final_rng_state: u32,
+    tape_checksum: u32,
+    rules_digest: u32,
+    claimant_address: String,
+    segments: u64,
+    total_cycles: u64,
+    cycles_per_frame: u64,
 }
 
 impl Cli {
@@ -18,6 +36,8 @@ impl Cli {
         let mut args = env::args().skip(1);
         let mut tape_path: Option<PathBuf> = None;
         let mut max_frames = MAX_FRAMES_DEFAULT;
+        let mut segment_limit_po2 = SEGMENT_LIMIT_PO2_DEFAULT;
+        let mut json_out: Option<PathBuf> = None;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -35,9 +55,23 @@ impl Cli {
                         .parse::<u32>()
                         .with_context(|| format!("invalid --max-frames value: {value}"))?;
                 }
+                "--segment-limit-po2" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow!("--segment-limit-po2 requires a number"))?;
+                    segment_limit_po2 = value.parse::<u32>().with_context(|| {
+                        format!("invalid --segment-limit-po2 value: {value}")
+                    })?;
+                }
+                "--json-out" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow!("--json-out requires a file path"))?;
+                    json_out = Some(PathBuf::from(value));
+                }
                 "-h" | "--help" => {
                     println!(
-                        "Usage: cargo run --release -p host --bin benchmark -- --tape <file.tape> [--max-frames <n>]"
+                        "Usage: cargo run --release -p host --bin benchmark -- --tape <file.tape> [--max-frames <n>] [--segment-limit-po2 <n>] [--json-out <file.json>]\n\nNote: This benchmark is intended to run in dev mode only (RISC0_DEV_MODE=1)."
                     );
                     process::exit(0);
                 }
@@ -49,6 +83,8 @@ impl Cli {
         Ok(Self {
             tape_path,
             max_frames,
+            segment_limit_po2,
+            json_out,
         })
     }
 }
@@ -59,6 +95,12 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse()?;
+    if !host::risc0_dev_mode_enabled() {
+        return Err(anyhow!(
+            "RISC0_DEV_MODE is not enabled. This benchmark is dev-mode only. Re-run with: RISC0_DEV_MODE=1 cargo run -p host --release --no-default-features --bin benchmark -- ..."
+        ));
+    }
+
     let tape_bytes = fs::read(&cli.tape_path)
         .with_context(|| format!("failed to read tape: {}", cli.tape_path.display()))?;
     let (expected_seed, expected_frame_count, expected_score, expected_rng_state) = {
@@ -77,10 +119,12 @@ fn main() -> Result<()> {
         padded_tape.push(0);
     }
 
-    let env = ExecutorEnv::builder()
-        .write_slice(&cli.max_frames.to_le_bytes())
-        .write_slice(&tape_len.to_le_bytes())
-        .write_slice(&padded_tape)
+    let mut env_builder = ExecutorEnv::builder();
+    env_builder.write_slice(&cli.max_frames.to_le_bytes());
+    env_builder.write_slice(&tape_len.to_le_bytes());
+    env_builder.write_slice(&padded_tape);
+    env_builder.segment_limit_po2(cli.segment_limit_po2);
+    let env = env_builder
         .build()
         .context("failed to build executor env")?;
 
@@ -111,12 +155,31 @@ fn main() -> Result<()> {
     }
 
     let total_cycles = session.cycles();
-    let segments = session.segments.len();
+    let segments = session.segments.len() as u64;
     let cycles_per_frame = if journal.frame_count == 0 {
         0
     } else {
         total_cycles / journal.frame_count as u64
     };
+
+    if let Some(path) = cli.json_out.as_ref() {
+        let summary = BenchmarkJson {
+            seed: journal.seed,
+            frame_count: journal.frame_count,
+            final_score: journal.final_score,
+            final_rng_state: journal.final_rng_state,
+            tape_checksum: journal.tape_checksum,
+            rules_digest: journal.rules_digest,
+            claimant_address: journal.claimant_address.clone(),
+            segments,
+            total_cycles,
+            cycles_per_frame,
+        };
+        let json = serde_json::to_vec_pretty(&summary)
+            .context("failed serializing benchmark summary")?;
+        fs::write(path, json)
+            .with_context(|| format!("failed writing benchmark summary to {}", path.display()))?;
+    }
 
     println!("Benchmark complete.");
     println!("  Seed:          0x{:08x}", journal.seed);
@@ -125,9 +188,11 @@ fn main() -> Result<()> {
     println!("  Final RNG:     0x{:08x}", journal.final_rng_state);
     println!("  Tape checksum: 0x{:08x}", journal.tape_checksum);
     println!("  Rules digest:  0x{:08x}", journal.rules_digest);
+    println!("  Claimant:      {}", journal.claimant_address);
     println!("  Segments:      {}", segments);
     println!("  Total cycles:  {}", total_cycles);
     println!("  Cycles/frame:  {}", cycles_per_frame);
 
     Ok(())
 }
+

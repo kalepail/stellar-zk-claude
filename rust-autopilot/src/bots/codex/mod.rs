@@ -2,8 +2,8 @@ use super::AutopilotBot;
 use asteroids_verifier_core::constants::{
     SCORE_LARGE_SAUCER, SCORE_SMALL_SAUCER, SHIP_BULLET_COOLDOWN_FRAMES,
     SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, SHIP_BULLET_SPEED_Q8_8,
-    SHIP_MAX_SPEED_SQ_Q16_16, SHIP_THRUST_Q8_8, SHIP_TURN_SPEED_BAM, WORLD_HEIGHT_Q12_4,
-    WORLD_WIDTH_Q12_4,
+    SHIP_MAX_SPEED_SQ_Q16_16, SHIP_RESPAWN_FRAMES, SHIP_THRUST_Q8_8, SHIP_TURN_SPEED_BAM,
+    WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
 };
 use asteroids_verifier_core::fixed_point::{
     apply_drag, atan2_bam, clamp_speed_q8_8, cos_bam, displace_q12_4, shortest_delta_q12_4,
@@ -23,6 +23,9 @@ const ACTIONS_WIDE: [u8; 12] = [
     0x00, 0x04, 0x01, 0x02, 0x05, 0x06, 0x08, 0x09, 0x0A, 0x0C, 0x0D, 0x0E,
 ];
 const ACTIONS_ROLLOUT: [u8; 10] = [0x00, 0x04, 0x01, 0x02, 0x05, 0x06, 0x08, 0x09, 0x0A, 0x0C];
+// This challenge uses a fixed 30-minute cap at 60 FPS (108000 frames).
+const ENDGAME_FRAME_CAP: i32 = 108_000;
+const ENDGAME_PUSH_START_FRAME: i32 = 72_000;
 const ADAPTIVE_PROFILE_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/codex-/state/adaptive-profile.json");
 
@@ -172,7 +175,18 @@ pub(super) struct PotentialBot {
     cfg: PotentialConfig,
     rng: SeededRng,
     orbit_sign: i32,
-    tick_count: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EndgamePressure {
+    endgame_push: f64,
+    saucer_push: f64,
+    target_value_mult: f64,
+    min_fire_quality_relief: f64,
+    control_relief: f64,
+    risk_asteroid_mult: f64,
+    risk_saucer_mult: f64,
+    risk_bullet_mult: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -575,42 +589,43 @@ impl PotentialBot {
             cfg,
             rng: SeededRng::new(0xC0D3_5001),
             orbit_sign: 1,
-            tick_count: 0,
         }
     }
 
     fn evaluate_action(&self, world: &WorldSnapshot, action: u8) -> f64 {
         let pred = predict_ship(world, action);
         let input = decode_input_byte(action);
-        let target = best_target(world, pred, self.cfg.lookahead_frames + 48.0, 1.0);
-
-        // Late-game pressure: if we still have spare lives near the frame cap, push for faster clears.
-        let late_pressure = if self.tick_count > 84_000 {
-            ((self.tick_count - 84_000) as f64 / 24_000.0).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let life_surplus = ((world.lives - 2).max(0) as f64 / 8.0).clamp(0.0, 1.0);
-        let pressure = late_pressure * life_surplus;
+        let pressure = compute_endgame_pressure(world);
+        let target = best_target(
+            world,
+            pred,
+            self.cfg.lookahead_frames + 48.0,
+            pressure.target_value_mult,
+        );
 
         let mut aggression = self.cfg.aggression_weight;
         if world.time_since_last_kill >= self.cfg.lurk_trigger_frames {
             aggression *= self.cfg.lurk_boost;
         }
-        aggression *= 1.0 + 0.35 * pressure;
+        aggression *= 1.0 + 0.28 * pressure.endgame_push + 0.44 * pressure.saucer_push;
 
-        let survival_weight = self.cfg.survival_weight * (1.0 - 0.2 * pressure);
-        let fire_reward = self.cfg.fire_reward * (1.0 + 0.25 * pressure);
-        let shot_penalty = self.cfg.shot_penalty * (1.0 - 0.18 * pressure);
-        let miss_fire_penalty = self.cfg.miss_fire_penalty * (1.0 - 0.14 * pressure);
+        let survival_weight = self.cfg.survival_weight * (1.0 - 0.22 * pressure.endgame_push);
+        let fire_reward = self.cfg.fire_reward
+            * (1.0 + 0.26 * pressure.endgame_push + 0.24 * pressure.saucer_push);
+        let shot_penalty = (self.cfg.shot_penalty
+            * (1.0 - 0.2 * pressure.endgame_push - 0.12 * pressure.saucer_push))
+            .max(self.cfg.shot_penalty * 0.35);
+        let miss_fire_penalty = (self.cfg.miss_fire_penalty
+            * (1.0 - 0.16 * pressure.endgame_push - 0.14 * pressure.saucer_push))
+            .max(self.cfg.miss_fire_penalty * 0.4);
 
         let risk = total_risk(
             world,
             pred,
             self.cfg.lookahead_frames,
-            self.cfg.risk_weight_asteroid,
-            self.cfg.risk_weight_saucer,
-            self.cfg.risk_weight_bullet,
+            self.cfg.risk_weight_asteroid * pressure.risk_asteroid_mult,
+            self.cfg.risk_weight_saucer * pressure.risk_saucer_mult,
+            self.cfg.risk_weight_bullet * pressure.risk_bullet_mult,
         );
 
         let flow_align = self
@@ -621,13 +636,22 @@ impl PotentialBot {
         let mut attack = 0.0;
         let mut fire_alignment = 0.0;
         if let Some(plan) = target {
+            let is_saucer_target = looks_like_saucer_target(plan.target);
             attack += plan.value * aggression;
             fire_alignment = angle_alignment(pred.angle, plan.aim_angle);
-            if plan.distance_px < self.cfg.fire_distance_px {
+            let fire_distance_push =
+                self.cfg.fire_distance_px * (1.0 + 0.2 * pressure.saucer_push);
+            if plan.distance_px < fire_distance_push {
                 attack += 0.11;
             }
             if plan.intercept_frames < 14.0 {
                 attack += 0.05;
+            }
+            if is_saucer_target {
+                attack += 0.1 * pressure.saucer_push;
+                if plan.intercept_frames < 18.0 {
+                    attack += 0.08 * pressure.saucer_push;
+                }
             }
         }
 
@@ -641,13 +665,14 @@ impl PotentialBot {
         if input.fire {
             if can_fire(world, pred) {
                 let fire_quality = estimate_fire_quality(world, pred);
-                let min_quality = dynamic_min_fire_quality(
+                let min_quality = (dynamic_min_fire_quality(
                     self.cfg.min_fire_quality,
                     world.time_since_last_kill,
                     self.cfg.lurk_trigger_frames,
                     nearest_saucer,
                 )
-                .max((self.cfg.min_fire_quality - 0.03 * pressure).clamp(0.05, 0.65));
+                    - pressure.min_fire_quality_relief)
+                    .clamp(0.04, 0.6);
                 let duplicate = target
                     .map(|plan| target_already_covered_by_ship_bullets(plan.target, &world.bullets))
                     .unwrap_or(false);
@@ -677,14 +702,14 @@ impl PotentialBot {
         }
 
         let mut control_term = 0.0;
-        let control_scale = if risk > 3.0 {
+        let mut control_scale: f64 = if risk > 3.0 {
             0.22
         } else if risk > 1.8 {
             0.42
         } else {
             1.0
         };
-        let control_scale = (control_scale * (1.0 - 0.25 * pressure)).max(0.08);
+        control_scale = (control_scale * (1.0 - pressure.control_relief)).max(0.08);
         if action != 0x00 {
             control_term -= self.cfg.action_penalty * control_scale;
         }
@@ -693,8 +718,13 @@ impl PotentialBot {
         }
         if input.thrust {
             control_term -= self.cfg.thrust_penalty * control_scale;
+            if pressure.saucer_push > 0.5 && risk < 1.05 {
+                control_term += self.cfg.thrust_penalty * 0.08 * pressure.saucer_push;
+            }
         } else if action == 0x00 && nearest_threat > 185.0 {
-            control_term += self.cfg.action_penalty * 0.16;
+            control_term += self.cfg.action_penalty
+                * 0.16
+                * (1.0 - pressure.control_relief * 0.75);
         }
 
         -risk * survival_weight
@@ -782,14 +812,12 @@ impl AutopilotBot for PotentialBot {
             .fold(0u32, |acc, b| acc.rotate_left(5) ^ (b as u32));
         self.rng = SeededRng::new(seed ^ hash ^ 0xC0D3_A11A);
         self.orbit_sign = if self.rng.next() & 1 == 0 { 1 } else { -1 };
-        self.tick_count = 0;
     }
 
     fn next_input(&mut self, world: &WorldSnapshot) -> FrameInput {
         if world.is_game_over || !world.ship.can_control {
             return no_input();
         }
-        self.tick_count = self.tick_count.saturating_add(1);
 
         let mut best = 0x00u8;
         let mut best_value = f64::NEG_INFINITY;
@@ -1818,6 +1846,73 @@ fn nearest_saucer_distance_px_at_step(world: &WorldSnapshot, ship: PredictedShip
         9999.0
     } else {
         nearest
+    }
+}
+
+#[inline]
+fn looks_like_saucer_target(target: MovingTarget) -> bool {
+    target.value_hint >= 1.8
+}
+
+#[inline]
+fn compute_endgame_pressure(world: &WorldSnapshot) -> EndgamePressure {
+    let frame = world.frame_count as i32;
+    let remaining_frames = (ENDGAME_FRAME_CAP - frame).max(0);
+
+    let endgame_phase = if frame > ENDGAME_PUSH_START_FRAME {
+        ((frame - ENDGAME_PUSH_START_FRAME) as f64
+            / (ENDGAME_FRAME_CAP - ENDGAME_PUSH_START_FRAME) as f64)
+            .clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let endgame_phase = endgame_phase.powi(2);
+
+    let life_buffer = ((world.lives - 1).max(0) as f64 / 10.0).clamp(0.0, 1.0);
+    let late_life_push = ((world.lives - 3).max(0) as f64 / 8.0).clamp(0.0, 1.0);
+
+    // Saucer intensity saturates around wave 9+ in this sim; push harder when it is active.
+    let wave_pressure = ((world.wave - 8).max(0) as f64 / 8.0).clamp(0.0, 1.0);
+    let visible_saucer_pressure = (world.saucers.len() as f64 / 3.0).clamp(0.0, 1.0);
+    let spawn_timer = world.saucer_spawn_timer.max(0);
+    let spawn_imminence = ((96 - spawn_timer) as f64 / 96.0).clamp(0.0, 1.0);
+    let saucer_push = (0.52 * wave_pressure + 0.34 * visible_saucer_pressure + 0.14 * spawn_imminence)
+        .clamp(0.0, 1.0);
+
+    let remaining_ratio = (remaining_frames as f64 / ENDGAME_FRAME_CAP as f64).clamp(0.0, 1.0);
+    let time_urgency = (1.0 - remaining_ratio).clamp(0.0, 1.0);
+
+    // Every death burns 75 control-less frames; soften risk push when remaining time is tight.
+    let death_frame_tax = (SHIP_RESPAWN_FRAMES as f64 / remaining_frames.max(1) as f64).clamp(0.0, 1.0);
+    let death_tax_weight = (1.0 - 0.42 * life_buffer).clamp(0.5, 1.0);
+    let death_tax = death_frame_tax * death_tax_weight;
+
+    let base_push = endgame_phase * (0.55 + 0.45 * late_life_push)
+        + saucer_push * (0.35 + 0.25 * life_buffer)
+        + time_urgency * 0.18;
+    let endgame_push = (base_push * (1.0 - death_tax * 0.45)).clamp(0.0, 1.0);
+
+    let target_value_mult = 1.0 + 0.24 * endgame_push + 0.42 * saucer_push;
+    let min_fire_quality_relief =
+        (0.02 + 0.1 * endgame_push + 0.1 * saucer_push - 0.05 * death_tax).clamp(0.0, 0.22);
+    let control_relief =
+        (0.08 + 0.22 * endgame_push + 0.18 * saucer_push - 0.1 * death_tax).clamp(0.0, 0.42);
+
+    let risk_asteroid_mult = (1.0 - 0.18 * endgame_push + 0.2 * death_tax).clamp(0.62, 1.32);
+    let risk_saucer_mult =
+        (1.0 - 0.3 * endgame_push - 0.16 * saucer_push + 0.24 * death_tax).clamp(0.48, 1.3);
+    let risk_bullet_mult =
+        (1.0 - 0.22 * endgame_push - 0.08 * saucer_push + 0.24 * death_tax).clamp(0.52, 1.34);
+
+    EndgamePressure {
+        endgame_push,
+        saucer_push,
+        target_value_mult,
+        min_fire_quality_relief,
+        control_relief,
+        risk_asteroid_mult,
+        risk_saucer_mult,
+        risk_bullet_mult,
     }
 }
 

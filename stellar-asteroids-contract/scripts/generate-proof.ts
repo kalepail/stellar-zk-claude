@@ -9,13 +9,14 @@
  * Usage:
  *   bun run scripts/generate-proof.ts \
  *     --tape ../test-fixtures/test-short.tape \
- *     --prover https://risc0-kalien.stellar.buzz \
+ *     --prover http://127.0.0.1:8080 \
+ *     --claimant-address C... \
  *     --out ../test-fixtures/proof-short.json
  *
  * Output fixture format:
  *   {
  *     "seal":        "hex string (260 bytes = 4-byte selector + 256-byte proof)",
- *     "journal_raw": "hex string (24 bytes = 6 x u32 LE)",
+ *     "journal_raw": "hex string (24-byte base + claimant payload)",
  *     "image_id":    "hex string (32 bytes LE)",
  *     "journal":     { seed, frame_count, final_score, ... },
  *     "receipt_kind": "groth16",
@@ -27,7 +28,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { createHash } from "crypto";
 
-const EXPECTED_RULES_DIGEST = 0x41535432; // "AST2"
+const EXPECTED_RULES_DIGEST = 0x41535433; // "AST3"
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -36,12 +37,13 @@ const EXPECTED_RULES_DIGEST = 0x41535432; // "AST2"
 function parseArgs() {
   const args = process.argv.slice(2);
   let tape = "";
-  let prover = "https://risc0-kalien.stellar.buzz";
+  let prover = "http://127.0.0.1:8080";
   let out = "";
   let receiptKind = "groth16";
   let segmentLimitPo2 = "21";
   let maxFrames = "18000";
   let imageId = "";
+  let claimantAddress = "";
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -66,6 +68,9 @@ function parseArgs() {
       case "--image-id":
         imageId = args[++i];
         break;
+      case "--claimant-address":
+        claimantAddress = args[++i];
+        break;
       default:
         console.error(`Unknown arg: ${args[i]}`);
         process.exit(1);
@@ -74,8 +79,12 @@ function parseArgs() {
 
   if (!tape) {
     console.error(
-      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--out <file.json>]"
+      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--claimant-address <strkey>] [--out <file.json>]"
     );
+    process.exit(1);
+  }
+  if (!claimantAddress || claimantAddress.trim().length === 0) {
+    console.error("--claimant-address is required");
     process.exit(1);
   }
 
@@ -94,6 +103,7 @@ function parseArgs() {
     segmentLimitPo2,
     maxFrames,
     imageId,
+    claimantAddress,
   };
 }
 
@@ -122,6 +132,7 @@ interface ProverJobResponse {
         final_rng_state: number;
         tape_checksum: number;
         rules_digest: number;
+        claimant_address: string;
       };
       receipt: any;
       requested_receipt_kind: string;
@@ -143,9 +154,17 @@ async function submitTape(
   tapeBytes: Uint8Array,
   receiptKind: string,
   segmentLimitPo2: string,
-  maxFrames: string
+  maxFrames: string,
+  claimantAddress: string
 ): Promise<string> {
-  const url = `${proverUrl}/api/jobs/prove-tape/raw?receipt_kind=${receiptKind}&segment_limit_po2=${segmentLimitPo2}&max_frames=${maxFrames}&verify_receipt=false`;
+  const params = new URLSearchParams({
+    receipt_kind: receiptKind,
+    segment_limit_po2: segmentLimitPo2,
+    max_frames: maxFrames,
+    verify_mode: "policy",
+    claimant_address: claimantAddress.trim(),
+  });
+  const url = `${proverUrl}/api/jobs/prove-tape/raw?${params.toString()}`;
 
   console.log(`Submitting tape (${tapeBytes.length} bytes) to ${proverUrl}...`);
 
@@ -252,8 +271,14 @@ function extractSeal(receipt: any): Uint8Array {
 }
 
 function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
-  // Journal is 6 x u32 LE = 24 bytes
-  const buf = new Uint8Array(24);
+  const claimant = journal.claimant_address.trim();
+  const claimantBytes = new TextEncoder().encode(claimant);
+
+  // Journal format:
+  //   24-byte base (6 x u32 LE)
+  //   claimant_len u32 LE
+  //   claimant bytes
+  const buf = new Uint8Array(24 + 4 + claimantBytes.length);
   const view = new DataView(buf.buffer);
 
   view.setUint32(0, journal.seed, true);
@@ -262,6 +287,8 @@ function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journa
   view.setUint32(12, journal.final_rng_state, true);
   view.setUint32(16, journal.tape_checksum, true);
   view.setUint32(20, journal.rules_digest, true);
+  view.setUint32(24, claimantBytes.length >>> 0, true);
+  buf.set(claimantBytes, 28);
 
   return buf;
 }
@@ -317,7 +344,8 @@ async function main() {
     tapeBytes,
     config.receiptKind,
     config.segmentLimitPo2,
-    config.maxFrames
+    config.maxFrames,
+    config.claimantAddress
   );
 
   // Poll for result
@@ -332,7 +360,7 @@ async function main() {
   const rulesDigest = proof.journal.rules_digest >>> 0;
   if (rulesDigest !== EXPECTED_RULES_DIGEST) {
     throw new Error(
-      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST2). Update/redeploy prover before generating fixtures.`
+      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST3). Update/redeploy prover before generating fixtures.`
     );
   }
   if ((proof.journal.final_score >>> 0) === 0) {
@@ -348,6 +376,7 @@ async function main() {
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
   console.log(`  Rules digest: 0x${rulesDigest.toString(16)}`);
+  console.log(`  Claimant: ${proof.journal.claimant_address}`);
   console.log(
     `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
   );
@@ -357,7 +386,7 @@ async function main() {
   const journalRaw = extractJournalRaw(proof.journal);
 
   // Get image_id: prefer --image-id flag, then fetch from prover /health
-  let imageId = extractImageId(config.imageId || undefined);
+  let imageId = extractImageId(config.imageId);
   if (!imageId) {
     imageId = await fetchImageIdFromProver(config.proverUrl);
   }

@@ -13,48 +13,117 @@ set -uo pipefail
 #   5. Single-flight enforcement – 429 when prover is busy
 #
 # Usage:
-#   bash scripts/stress-test-api.sh <prover-url> [options]
+#   bash scripts/stress-test-api.sh [prover-url] [options]
 #
 # Options:
-#   --delay <minutes>   How long to wait before delayed retrieval (default: 5)
-#   --tape <path>       Tape file for real proving (default: test-fixtures/test-medium.tape)
-#   --short-tape <path> Short tape for fast error tests (default: test-fixtures/test-short.tape)
+#   --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
+#   --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
+#   --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+#   --long-phase <mode>     auto|on|off (default: auto)
+#   -h, --help              Show this help
 #
 # Examples:
-#   bash scripts/stress-test-api.sh https://risc0-kalien.stellar.buzz
-#   bash scripts/stress-test-api.sh https://risc0-kalien.stellar.buzz --delay 10
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080 --delay-minutes 10
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080 --fixtures-dir ./test-fixtures --long-phase off
+#   bash scripts/stress-test-api.sh https://<vast-host>:<port> --delay-minutes 10
 # ============================================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TAPE_FILE="$ROOT_DIR/test-fixtures/test-medium.tape"
-SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
-LONG_TAPE="$ROOT_DIR/test-fixtures/test-real-game.tape"
+FIXTURES_DIR="$ROOT_DIR/test-fixtures"
+TAPE_FILE=""
+SHORT_TAPE=""
+LONG_TAPE=""
 POLL_INTERVAL=5
 DELAY_MINUTES=5
+SEGMENT_LIMIT_PO2=20
+LONG_PHASE_MODE="auto" # auto|on|off
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <prover-url> [--delay <minutes>] [--tape <path>] [--short-tape <path>]" >&2
-  exit 1
+set_fixture_paths() {
+  TAPE_FILE="$FIXTURES_DIR/test-medium.tape"
+  SHORT_TAPE="$FIXTURES_DIR/test-short.tape"
+  LONG_TAPE="$FIXTURES_DIR/test-real-game.tape"
+}
+
+usage() {
+  cat <<'USAGE_EOF'
+Usage: scripts/stress-test-api.sh [prover-url] [options]
+
+Options:
+  --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
+  --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
+  --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+  --long-phase <mode>     auto|on|off (default: auto)
+  -h, --help              Show this help
+
+Examples:
+  bash scripts/stress-test-api.sh
+  bash scripts/stress-test-api.sh http://127.0.0.1:8080
+  bash scripts/stress-test-api.sh https://<vast-host>:<port> --delay-minutes 10
+USAGE_EOF
+}
+
+set_fixture_paths
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
 fi
 
-PROVER_URL="${1%/}"
-shift
+PROVER_URL="http://127.0.0.1:8080"
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  PROVER_URL="${1%/}"
+  shift
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --delay) DELAY_MINUTES="$2"; shift 2 ;;
-    --tape) TAPE_FILE="$2"; shift 2 ;;
-    --short-tape) SHORT_TAPE="$2"; shift 2 ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
+    --delay-minutes) DELAY_MINUTES="${2:-}"; shift 2 ;;
+    --fixtures-dir)
+      FIXTURES_DIR="${2:-}"
+      set_fixture_paths
+      shift 2
+      ;;
+    --segment-limit-po2) SEGMENT_LIMIT_PO2="${2:-}"; shift 2 ;;
+    --long-phase) LONG_PHASE_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
   esac
 done
 
+if ! [[ "$DELAY_MINUTES" =~ ^[0-9]+$ ]] || [[ "$DELAY_MINUTES" -lt 1 ]]; then
+  echo "ERROR: --delay-minutes must be an integer >= 1" >&2
+  exit 1
+fi
+if ! [[ "$SEGMENT_LIMIT_PO2" =~ ^[0-9]+$ ]] || [[ "$SEGMENT_LIMIT_PO2" -lt 1 ]]; then
+  echo "ERROR: --segment-limit-po2 must be an integer >= 1" >&2
+  exit 1
+fi
+if [[ "$LONG_PHASE_MODE" != "auto" && "$LONG_PHASE_MODE" != "on" && "$LONG_PHASE_MODE" != "off" ]]; then
+  echo "ERROR: --long-phase must be auto, on, or off" >&2
+  exit 1
+fi
+if [[ ! -d "$FIXTURES_DIR" ]]; then
+  echo "ERROR: fixtures directory not found: $FIXTURES_DIR" >&2
+  exit 1
+fi
 if [[ ! -f "$TAPE_FILE" ]]; then
-  echo "ERROR: tape file not found: $TAPE_FILE" >&2
+  echo "ERROR: medium tape file not found: $TAPE_FILE" >&2
   exit 1
 fi
 if [[ ! -f "$SHORT_TAPE" ]]; then
   echo "ERROR: short tape file not found: $SHORT_TAPE" >&2
+  exit 1
+fi
+if [[ "$LONG_PHASE_MODE" == "on" && ! -f "$LONG_TAPE" ]]; then
+  echo "ERROR: --long-phase on requires long tape at: $LONG_TAPE" >&2
   exit 1
 fi
 
@@ -95,8 +164,10 @@ submit_garbage_and_wait() {
   gfile=$(mktemp)
   dd if=/dev/urandom of="$gfile" bs=128 count=1 2>/dev/null
 
+  local query
+  query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy")
   local resp_raw http_code body
-  resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20" \
+  resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@$gfile" -H "content-type: application/octet-stream")
   http_code=$(echo "$resp_raw" | tail -1)
   body=$(echo "$resp_raw" | sed '$d')
@@ -148,11 +219,18 @@ echo "$(date)"
 echo "================================================================"
 echo ""
 echo "Target:      $PROVER_URL"
+echo "Fixtures:    $FIXTURES_DIR"
 echo "Tape:        $(basename "$TAPE_FILE") ($(wc -c < "$TAPE_FILE" | tr -d ' ') bytes)"
 echo "Short tape:  $(basename "$SHORT_TAPE") ($(wc -c < "$SHORT_TAPE" | tr -d ' ') bytes)"
-if [[ -f "$LONG_TAPE" ]]; then
+if [[ "$LONG_PHASE_MODE" == "off" ]]; then
+echo "Long tape:   (disabled by --long-phase off)"
+elif [[ -f "$LONG_TAPE" ]]; then
 echo "Long tape:   $(basename "$LONG_TAPE") ($(wc -c < "$LONG_TAPE" | tr -d ' ') bytes)"
+else
+echo "Long tape:   missing at $LONG_TAPE"
 fi
+echo "Long phase:  $LONG_PHASE_MODE"
+echo "Seg po2:     $SEGMENT_LIMIT_PO2"
 echo "Delay test:  ${DELAY_MINUTES} minutes"
 echo ""
 
@@ -223,7 +301,8 @@ info "response: $body"
 # Test 2b: Submit empty body → 400
 echo ""
 echo "[2b] POST empty body"
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw" \
+empty_query=$(with_claimant_query "")
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${empty_query}" \
   -H "content-type: application/octet-stream" -d '')
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -296,7 +375,8 @@ fi
 # Test 2f: Out-of-range segment_limit_po2 → 400
 echo ""
 echo "[2f] POST with out-of-range segment_limit_po2"
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=99" \
+bad_segment_query=$(with_claimant_query "segment_limit_po2=99&verify_mode=policy")
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${bad_segment_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -371,7 +451,8 @@ echo "[4a] Submit medium tape for proving"
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 info "tape: $(basename "$TAPE_FILE") ($tape_size bytes)"
 
-resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20&receipt_kind=composite" \
+submit_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy")
+resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${submit_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream" 2>&1)
 
 if [[ $? -ne 0 ]]; then
@@ -409,7 +490,8 @@ for attempt in $(seq 1 10); do
 done
 
 # Now try to submit a second job while the prover is busy
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20" \
+busy_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy")
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${busy_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -528,7 +610,14 @@ echo ""
 
 echo "── Phase 5: Running Status Observation (long tape) ────────────"
 
-if [[ -f "$LONG_TAPE" ]]; then
+RUN_LONG_PHASE=0
+if [[ "$LONG_PHASE_MODE" == "on" ]]; then
+  RUN_LONG_PHASE=1
+elif [[ "$LONG_PHASE_MODE" == "auto" && -f "$LONG_TAPE" ]]; then
+  RUN_LONG_PHASE=1
+fi
+
+if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
   wait_for_idle
 
   echo ""
@@ -536,7 +625,8 @@ if [[ -f "$LONG_TAPE" ]]; then
   long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
   info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
 
-  resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20&receipt_kind=composite" \
+  long_query=$(with_claimant_query "segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy")
+  resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${long_query}" \
     --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
 
   if [[ $? -ne 0 ]]; then
@@ -607,8 +697,12 @@ if [[ -f "$LONG_TAPE" ]]; then
     fi
   fi
 else
-  info "long tape not found at $LONG_TAPE — skipping running-status test"
-  warn "skipped running-status observation (no long tape)"
+  if [[ "$LONG_PHASE_MODE" == "off" ]]; then
+    info "long-phase=off — skipping running-status observation"
+  else
+    info "long tape not found at $LONG_TAPE — skipping running-status test"
+    warn "skipped running-status observation (no long tape)"
+  fi
 fi
 
 echo ""

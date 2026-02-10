@@ -65,7 +65,7 @@ RISC0 host + zkVM guest             │  polls prover  │
 - Returns service metadata, compatibility expectations, prover compatibility
   status, and the active job (if any).
 - Response includes:
-  - `expected.ruleset` and `expected.rules_digest_hex` (AST2 target)
+  - `expected.ruleset` and `expected.rules_digest_hex` (AST3 target)
   - optional `expected.image_id` (if pinning is enabled)
   - `prover.status` (`"compatible"` or `"degraded"`)
   - on compatible: `prover.ruleset`, `prover.rules_digest_hex`, `prover.image_id`
@@ -288,7 +288,8 @@ bytes needed for on-chain verification.
 | `PROVER_SEGMENT_LIMIT_PO2` | `"21"` | Segment size limit (power of 2) |
 | `PROVER_FALLBACK_SEGMENT_LIMIT_PO2` | `"21"` | Auto-downgrade segment target when the prover reports OOM/allocation failure |
 | `PROVER_MAX_FRAMES` | `"18000"` | ~5 minutes at 60fps |
-| `PROVER_VERIFY_RECEIPT` | `"0"` | Skip prover-side receipt verification (on-chain verification is the source of truth) |
+| `PROVER_PROOF_MODE` | `"secure"` | Secure proofs only (dev proofs disabled in production) |
+| `PROVER_VERIFY_MODE` | `"policy"` | Skip prover-side receipt verification (on-chain verification is the source of truth) |
 | `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
 | `PROVER_HEALTH_CACHE_MS` | `"30000"` | Prover health cache TTL in Worker isolate |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |
@@ -326,7 +327,7 @@ struct VerificationJournal {
     final_score: u32,
     final_rng_state: u32,
     tape_checksum: u32,
-    rules_digest: u32,  // RULES_DIGEST_V2 = 0x41535432 ("AST2")
+    rules_digest: u32,  // RULES_DIGEST = 0x41535433 ("AST3")
 }
 ```
 
@@ -335,12 +336,12 @@ Serialized as 24 bytes (6 × u32 LE).
 ### Host prover behavior
 
 `prove_tape` in `host/src/lib.rs`:
-1. Validates dev-mode policy (`RISC0_DEV_MODE` + `allow_dev_mode`).
+1. Validates dev-mode policy (`RISC0_DEV_MODE` + `proof_mode`).
 2. Builds executor env with `max_frames`, original `tape_len`, padded tape, `segment_limit_po2`.
 3. Proves using requested receipt kind (composite → succinct → groth16).
 4. Detects produced receipt kind from receipt internals.
 5. In non-dev mode, requires produced kind == requested kind.
-6. Optionally verifies receipt against `VERIFY_TAPE_ID`.
+6. Verifies receipt against `VERIFY_TAPE_ID` when `verify_mode=verify`.
 7. Decodes and returns committed journal.
 
 ### API server (`api-server/src/main.rs`)
@@ -357,7 +358,7 @@ Job states: `queued` → `running` → `succeeded` | `failed`.
 Single-flight enforced by global semaphore (concurrency 1) + active-job check.
 
 Query param policy gates: `max_frames`, `receipt_kind`, `segment_limit_po2`,
-`allow_dev_mode`, `verify_receipt`.
+`proof_mode`, `verify_mode`.
 
 Operational defaults: `MAX_TAPE_BYTES=2097152`, `MAX_JOBS=64`,
 `JOB_TTL_SECS=86400`, `MAX_FRAMES=18000`, `MIN_SEGMENT_LIMIT_PO2=16`,

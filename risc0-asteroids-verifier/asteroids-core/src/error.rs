@@ -18,6 +18,7 @@ pub enum RuleCode {
     PlayerBulletCooldownBypass,
     PlayerBulletLimit,
     PlayerBulletState,
+    SaucerBulletLimit,
     SaucerBulletState,
     AsteroidState,
     SaucerState,
@@ -43,6 +44,7 @@ impl fmt::Display for RuleCode {
             Self::PlayerBulletCooldownBypass => write!(f, "PLAYER_BULLET_COOLDOWN_BYPASS"),
             Self::PlayerBulletLimit => write!(f, "PLAYER_BULLET_LIMIT"),
             Self::PlayerBulletState => write!(f, "PLAYER_BULLET_STATE"),
+            Self::SaucerBulletLimit => write!(f, "SAUCER_BULLET_LIMIT"),
             Self::SaucerBulletState => write!(f, "SAUCER_BULLET_STATE"),
             Self::AsteroidState => write!(f, "ASTEROID_STATE"),
             Self::SaucerState => write!(f, "SAUCER_STATE"),
@@ -56,6 +58,7 @@ pub enum VerifyError {
     TapeTooShort { actual: usize, min: usize },
     InvalidMagic { found: u32 },
     UnsupportedVersion { found: u8 },
+    UnknownRulesTag { found: u8 },
     HeaderReservedNonZero,
     FrameCountOutOfRange { frame_count: u32, max_frames: u32 },
     TapeLengthMismatch { expected: usize, actual: usize },
@@ -65,6 +68,7 @@ pub enum VerifyError {
     FrameCountMismatch { claimed: u32, computed: u32 },
     ScoreMismatch { claimed: u32, computed: u32 },
     RngMismatch { claimed: u32, computed: u32 },
+    InvalidClaimantAddressUtf8,
 }
 
 impl fmt::Display for VerifyError {
@@ -75,6 +79,7 @@ impl fmt::Display for VerifyError {
             }
             Self::InvalidMagic { found } => write!(f, "invalid tape magic: 0x{found:08x}"),
             Self::UnsupportedVersion { found } => write!(f, "unsupported tape version: {found}"),
+            Self::UnknownRulesTag { found } => write!(f, "unknown rules tag: {found}"),
             Self::HeaderReservedNonZero => write!(f, "header reserved bytes are non-zero"),
             Self::FrameCountOutOfRange {
                 frame_count,
@@ -112,6 +117,9 @@ impl fmt::Display for VerifyError {
                     f,
                     "rng mismatch: claimed=0x{claimed:08x}, computed=0x{computed:08x}"
                 )
+            }
+            Self::InvalidClaimantAddressUtf8 => {
+                write!(f, "claimant address is not valid UTF-8")
             }
         }
     }
@@ -179,6 +187,10 @@ mod tests {
             "PLAYER_BULLET_STATE"
         );
         assert_eq!(
+            RuleCode::SaucerBulletLimit.to_string(),
+            "SAUCER_BULLET_LIMIT"
+        );
+        assert_eq!(
             RuleCode::SaucerBulletState.to_string(),
             "SAUCER_BULLET_STATE"
         );
@@ -198,6 +210,9 @@ mod tests {
         assert!(VerifyError::UnsupportedVersion { found: 9 }
             .to_string()
             .contains("unsupported tape version"));
+        assert!(VerifyError::UnknownRulesTag { found: 99 }
+            .to_string()
+            .contains("unknown rules tag"));
         assert_eq!(
             VerifyError::HeaderReservedNonZero.to_string(),
             "header reserved bytes are non-zero"
@@ -250,6 +265,9 @@ mod tests {
         }
         .to_string()
         .contains("claimed=0xabcdef01"));
+        assert!(VerifyError::InvalidClaimantAddressUtf8
+            .to_string()
+            .contains("UTF-8"));
     }
 
     #[cfg(feature = "std")]

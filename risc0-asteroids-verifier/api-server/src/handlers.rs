@@ -3,7 +3,7 @@ use actix_web::{
     web::{Bytes, Data, Path, Query},
     HttpResponse, Responder,
 };
-use asteroids_verifier_core::constants::{RULESET_V2_NAME, RULES_DIGEST_V2};
+use asteroids_verifier_core::constants::{RULESET_NAME, RULES_DIGEST};
 use asteroids_verifier_core::tape::parse_tape;
 use host::accelerator;
 use uuid::Uuid;
@@ -65,9 +65,9 @@ pub(crate) async fn health(state: Data<AppState>) -> impl Responder {
         service: "risc0-asteroids-api",
         accelerator: accelerator(),
         image_id: host::image_id_hex(),
-        rules_digest: RULES_DIGEST_V2,
-        rules_digest_hex: format!("0x{RULES_DIGEST_V2:08x}"),
-        ruleset: RULESET_V2_NAME,
+        rules_digest: RULES_DIGEST,
+        rules_digest_hex: format!("0x{RULES_DIGEST:08x}"),
+        ruleset: RULESET_NAME,
         dev_mode: host::risc0_dev_mode_enabled(),
         queued_jobs,
         running_jobs,

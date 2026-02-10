@@ -15,7 +15,7 @@
 #
 # Usage:
 #   ./scripts/cost-analysis.sh                    # full deploy + measure
-#   ./scripts/cost-analysis.sh --skip-deploy      # reuse existing deployment
+#   ./scripts/cost-analysis.sh --deploy-mode reuse # reuse existing deployment
 #   ./scripts/cost-analysis.sh --deployer <name>  # custom deployer key name
 
 set -euo pipefail
@@ -26,33 +26,53 @@ source "$SCRIPT_DIR/_helpers.sh"
 
 require_cmds stellar jq curl python3 xxd
 
-SKIP_DEPLOY=false
+DEPLOY_MODE="fresh" # fresh|reuse
 RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-cost-${RUN_ID}"
 PLAYER_NAME="ast-costp-${RUN_ID}"
 
 STATE_FILE="$CONTRACT_DIR/.cost-analysis-state.env"
 
+usage() {
+  cat <<'USAGE_EOF'
+Usage: stellar-asteroids-contract/scripts/cost-analysis.sh [options]
+
+Options:
+  --deploy-mode <mode>  fresh|reuse (default: fresh)
+  --deployer <name>     Custom deployer key name
+  -h, --help            Show this help
+USAGE_EOF
+}
+
 # ---------------------------------------------------------------------------
 # Parse args
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-deploy)
-      SKIP_DEPLOY=true
-      shift
+    --deploy-mode)
+      DEPLOY_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
       ;;
     --deployer)
       DEPLOYER_NAME="$2"
       shift 2
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
       echo "Unknown arg: $1" >&2
-      echo "Usage: $0 [--skip-deploy] [--deployer <name>]" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
+
+if [[ "$DEPLOY_MODE" != "fresh" && "$DEPLOY_MODE" != "reuse" ]]; then
+  err "--deploy-mode must be fresh or reuse"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # State persistence (cost-analysis-specific fields)
@@ -283,6 +303,7 @@ measure_submit_score_groth16() {
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   measure_operation "submit_score (groth16)" \
     --id "$SCORE_CONTRACT_ID" \
@@ -290,7 +311,6 @@ measure_submit_score_groth16() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex"
 }
@@ -307,6 +327,9 @@ measure_submit_score_mock() {
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
 
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
+
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -314,15 +337,12 @@ measure_submit_score_mock() {
   local seal_hex
   seal_hex=$(mock_seal "$IMAGE_ID_HEX" "$journal_digest_hex")
 
-  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-
   measure_operation "submit_score (mock)" \
     --id "$SCORE_CONTRACT_ID" \
     --source "$PLAYER_NAME" \
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex"
 }
@@ -464,13 +484,13 @@ echo "$(date)" >&2
 echo "================================================================" >&2
 echo "" >&2
 
-if [[ "$SKIP_DEPLOY" == false ]]; then
+if [[ "$DEPLOY_MODE" == "fresh" ]]; then
   deploy_cost_instance
 else
   load_state "$STATE_FILE"
   read_image_id
   if [[ -z "${SCORE_CONTRACT_ID:-}" || -z "${TOKEN_ID:-}" || -z "${PLAYER_NAME:-}" ]]; then
-    err "No deployment state found (or missing PLAYER_NAME). Run without --skip-deploy first."
+    err "No deployment state found (or missing PLAYER_NAME). Run with --deploy-mode fresh first."
     exit 1
   fi
   info "Reusing deployment from $STATE_FILE"

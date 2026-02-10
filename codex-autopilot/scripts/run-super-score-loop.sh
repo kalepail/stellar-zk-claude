@@ -16,8 +16,7 @@ SEARCH_OUTPUT="$($LAB_DIR/scripts/iterative-search.py \
   --max-frames "$MAX_FRAMES" \
   --jobs "$JOBS" \
   --selection-metric "$SELECTION_METRIC" \
-  --seeds-file codex-autopilot/seeds/screen-seeds.txt \
-  --install-champion true)"
+  --seeds-file codex-autopilot/seeds/screen-seeds.txt)"
 
 echo "$SEARCH_OUTPUT"
 

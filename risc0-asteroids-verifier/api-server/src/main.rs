@@ -18,23 +18,29 @@ use tokio::sync::Semaphore;
 #[cfg(test)]
 use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
 
-pub(crate) use auth::{bearer_token, is_request_authorized};
+#[cfg(test)]
+pub(crate) use auth::bearer_token;
+pub(crate) use auth::is_request_authorized;
 pub(crate) use config::{
     read_env_optional_usize, read_env_u64, read_env_u64_allow_zero, read_env_usize, AppState,
     ServerPolicy, DEFAULT_HTTP_KEEP_ALIVE_SECS, DEFAULT_HTTP_MAX_CONNECTIONS,
-    DEFAULT_JOB_SWEEP_SECS, DEFAULT_JOB_TTL_SECS, DEFAULT_MAX_JOBS, DEFAULT_MAX_SEGMENT_LIMIT_PO2,
-    DEFAULT_MAX_TAPE_BYTES, DEFAULT_MIN_SEGMENT_LIMIT_PO2, DEFAULT_RUNNING_JOB_TIMEOUT_SECS,
-    DEFAULT_TIMED_OUT_PROOF_KILL_SECS, FIXED_PROVER_CONCURRENCY,
+    DEFAULT_JOB_SWEEP_SECS, DEFAULT_JOB_TTL_SECS, DEFAULT_MAX_JOBS, DEFAULT_MAX_TAPE_BYTES,
+    DEFAULT_RUNNING_JOB_TIMEOUT_SECS, DEFAULT_TIMED_OUT_PROOF_KILL_SECS, FIXED_PROVER_CONCURRENCY,
 };
-pub(crate) use handlers::{
-    create_prove_job_raw, delete_job, get_job, health, unauthorized, validate_non_zero_score_tape,
-    validate_tape_size,
+#[cfg(test)]
+pub(crate) use config::{
+    ProofModePolicy, DEFAULT_MAX_SEGMENT_LIMIT_PO2, DEFAULT_MIN_SEGMENT_LIMIT_PO2,
 };
-pub(crate) use jobs::{enqueue_proof_job, now_unix_s, options_summary, spawn_job_cleanup_task};
+pub(crate) use handlers::{create_prove_job_raw, delete_job, get_job, health, unauthorized};
+#[cfg(test)]
+pub(crate) use handlers::{validate_non_zero_score_tape, validate_tape_size};
+#[cfg(test)]
+pub(crate) use jobs::{enqueue_proof_job, options_summary};
+pub(crate) use jobs::{now_unix_s, spawn_job_cleanup_task};
 pub(crate) use store::{EnqueueResult, JobStore};
 pub(crate) use types::{
-    HealthResponse, JobCreatedResponse, JobStatus, ProofEnvelope, ProofJob, ProveOptionsSummary,
-    ProveTapeQuery,
+    HealthResponse, JobCreatedResponse, JobStatus, ProofEnvelope, ProofJob, ProofMode,
+    ProveOptionsSummary, ProveTapeQuery, VerifyMode,
 };
 
 #[actix_web::main]
@@ -75,7 +81,7 @@ async fn main() -> std::io::Result<()> {
     let job_store = JobStore::open(&data_dir).expect("failed to open job store");
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
+        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] proof_mode_policy={} http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
         bind_addr,
         accelerator(),
         FIXED_PROVER_CONCURRENCY,
@@ -84,6 +90,7 @@ async fn main() -> std::io::Result<()> {
         policy.max_frames,
         policy.min_segment_limit_po2,
         policy.max_segment_limit_po2,
+        policy.proof_mode_policy.as_str(),
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
@@ -174,7 +181,7 @@ mod tests {
             max_frames: MAX_FRAMES_DEFAULT,
             min_segment_limit_po2: DEFAULT_MIN_SEGMENT_LIMIT_PO2,
             max_segment_limit_po2: DEFAULT_MAX_SEGMENT_LIMIT_PO2,
-            allow_dev_mode_requests: false,
+            proof_mode_policy: ProofModePolicy::SecureOnly,
         }
     }
 
@@ -203,8 +210,17 @@ mod tests {
             max_frames: MAX_FRAMES_DEFAULT,
             segment_limit_po2: SEGMENT_LIMIT_PO2_DEFAULT,
             receipt_kind: ReceiptKind::default(),
-            allow_dev_mode: false,
-            verify_receipt: true,
+            proof_mode: ProofMode::Secure,
+            verify_mode: VerifyMode::Verify,
+            claimant_address: "GCLAIMANTADDRESS".to_string(),
+        }
+    }
+
+    fn query_with_claimant() -> ProveTapeQuery {
+        ProveTapeQuery {
+            claimant_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .to_string(),
+            ..Default::default()
         }
     }
 
@@ -236,16 +252,16 @@ mod tests {
     }
 
     #[test]
-    fn policy_rejects_allow_dev_mode_when_disabled() {
+    fn policy_rejects_proof_mode_dev_when_disabled() {
         let policy = strict_policy();
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
-                allow_dev_mode: Some(true),
-                ..Default::default()
+                proof_mode: Some(ProofMode::Dev),
+                ..query_with_claimant()
             })
             .unwrap_err();
-        assert!(msg.contains("allow_dev_mode"));
-        assert_eq!(code, "dev_mode_disabled");
+        assert!(msg.contains("proof_mode"));
+        assert_eq!(code, "proof_mode_disabled");
     }
 
     #[test]
@@ -254,7 +270,7 @@ mod tests {
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 segment_limit_po2: Some(DEFAULT_MAX_SEGMENT_LIMIT_PO2 + 1),
-                ..Default::default()
+                ..query_with_claimant()
             })
             .unwrap_err();
         assert!(msg.contains("segment_limit_po2"));
@@ -267,7 +283,7 @@ mod tests {
         let (msg, code) = policy
             .to_options(&ProveTapeQuery {
                 max_frames: Some(MAX_FRAMES_DEFAULT + 1),
-                ..Default::default()
+                ..query_with_claimant()
             })
             .unwrap_err();
         assert!(msg.contains("max_frames"));
@@ -319,7 +335,7 @@ mod tests {
             started_at_unix_s: None,
             finished_at_unix_s: None,
             tape_size_bytes: 1,
-            options: options_summary(sample_options()),
+            options: options_summary(&sample_options()),
             result: None,
             error: None,
             error_code: None,
@@ -338,7 +354,7 @@ mod tests {
             started_at_unix_s: None,
             finished_at_unix_s: None,
             tape_size_bytes: 1,
-            options: options_summary(sample_options()),
+            options: options_summary(&sample_options()),
             result: None,
             error: None,
             error_code: None,
@@ -356,11 +372,18 @@ mod tests {
     #[test]
     fn policy_accepts_valid_defaults() {
         let policy = strict_policy();
-        let options = policy.to_options(&ProveTapeQuery::default()).unwrap();
+        let options = policy.to_options(&query_with_claimant()).unwrap();
         assert_eq!(options.max_frames, MAX_FRAMES_DEFAULT);
         assert_eq!(options.segment_limit_po2, SEGMENT_LIMIT_PO2_DEFAULT);
-        assert!(!options.allow_dev_mode);
-        assert!(!options.verify_receipt);
+        assert_eq!(options.proof_mode, ProofMode::Secure);
+        assert_eq!(options.verify_mode, VerifyMode::Policy);
+    }
+
+    #[test]
+    fn policy_rejects_missing_claimant_address() {
+        let policy = strict_policy();
+        let (_, code) = policy.to_options(&ProveTapeQuery::default()).unwrap_err();
+        assert_eq!(code, "missing_claimant_address");
     }
 
     #[test]
@@ -369,7 +392,7 @@ mod tests {
         let (_, code) = policy
             .to_options(&ProveTapeQuery {
                 max_frames: Some(0),
-                ..Default::default()
+                ..query_with_claimant()
             })
             .unwrap_err();
         assert_eq!(code, "invalid_max_frames");
@@ -381,7 +404,7 @@ mod tests {
         let (_, code) = policy
             .to_options(&ProveTapeQuery {
                 segment_limit_po2: Some(DEFAULT_MIN_SEGMENT_LIMIT_PO2 - 1),
-                ..Default::default()
+                ..query_with_claimant()
             })
             .unwrap_err();
         assert_eq!(code, "invalid_segment_limit");

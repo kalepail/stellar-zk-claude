@@ -1,0 +1,27 @@
+# Cloudflare Worker local vars (`wrangler dev`)
+# Copy to .dev.vars and set secrets before running locally.
+
+# Required
+PROVER_BASE_URL=https://replace-with-your-prover.example.com
+
+# Optional auth headers for prover access
+PROVER_API_KEY=
+PROVER_ACCESS_CLIENT_ID=
+PROVER_ACCESS_CLIENT_SECRET=
+
+# Prover behavior / policy
+PROVER_EXPECTED_IMAGE_ID=
+ALLOW_INSECURE_PROVER_URL=0
+
+# Health + request tuning
+PROVER_HEALTH_CACHE_MS=30000
+PROVER_POLL_INTERVAL_MS=3000
+PROVER_POLL_TIMEOUT_MS=900000
+PROVER_POLL_BUDGET_MS=45000
+PROVER_REQUEST_TIMEOUT_MS=30000
+
+# Gateway limits + retention
+MAX_TAPE_BYTES=2097152
+MAX_JOB_WALL_TIME_MS=3600000
+MAX_COMPLETED_JOBS=200
+COMPLETED_JOB_RETENTION_MS=86400000

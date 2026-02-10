@@ -5,44 +5,76 @@ set -euo pipefail
 # Useful for quick one-off proof generation and debugging.
 #
 # Usage:
-#   bash scripts/prove-tape.sh <prover-url> <tape-file> [options]
+#   bash scripts/prove-tape.sh [prover-url] <tape-file> [options]
 #
 # Options (passed as query params):
 #   --seg <n>          segment_limit_po2 (default: 21)
 #   --receipt <kind>   composite|succinct|groth16 (default: composite)
-#   --verify           Enable receipt verification on prover (default: disabled)
-#   --no-verify        Skip receipt verification on the prover
 #   --poll <seconds>   Poll interval (default: 5)
-#   --keep             Don't delete the job after completion
+#   --cleanup-mode <m> delete|keep (default: delete)
+#   -h, --help         Show this help
 #
 # Examples:
+#   bash scripts/prove-tape.sh test-fixtures/test-short.tape
 #   bash scripts/prove-tape.sh http://host:8080 test-fixtures/test-short.tape
 #   bash scripts/prove-tape.sh http://host:8080 test-fixtures/test-medium.tape --seg 20
-#   bash scripts/prove-tape.sh http://host:8080 my-game.tape --receipt succinct --verify --keep
+#   bash scripts/prove-tape.sh http://host:8080 my-game.tape --receipt succinct --cleanup-mode keep
 
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <prover-url> <tape-file> [--seg N] [--receipt KIND] [--no-verify] [--poll N] [--keep]" >&2
+usage() {
+  cat <<'USAGE_EOF'
+Usage: scripts/prove-tape.sh [prover-url] <tape-file> [options]
+
+Options:
+  --seg <n>          segment_limit_po2 (default: 21)
+  --receipt <kind>   composite|succinct|groth16 (default: composite)
+  --poll <seconds>   Poll interval (default: 5)
+  --cleanup-mode <m> delete|keep (default: delete)
+  -h, --help         Show this help
+
+Examples:
+  bash scripts/prove-tape.sh test-fixtures/test-short.tape
+  bash scripts/prove-tape.sh http://127.0.0.1:8080 test-fixtures/test-medium.tape --seg 20
+  bash scripts/prove-tape.sh https://<vast-host>:<port> test-fixtures/test-medium.tape --receipt groth16
+USAGE_EOF
+}
+
+if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -lt 1 ]]; then
+  usage >&2
   exit 1
 fi
 
-PROVER_URL="${1%/}"
-TAPE_FILE="$2"
-shift 2
+DEFAULT_PROVER_URL="http://127.0.0.1:8080"
+PROVER_URL="$DEFAULT_PROVER_URL"
+if [[ $# -ge 2 && "${1:-}" != --* && -f "${2:-}" ]]; then
+  PROVER_URL="${1%/}"
+  shift
+fi
+
+if [[ $# -lt 1 ]]; then
+  usage >&2
+  exit 1
+fi
+
+TAPE_FILE="$1"
+shift
 
 SEG=21
 RECEIPT="composite"
-VERIFY="false"
 POLL_INTERVAL=5
-KEEP=0
+CLEANUP_MODE="delete"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seg) SEG="$2"; shift 2 ;;
     --receipt) RECEIPT="$2"; shift 2 ;;
-    --verify) VERIFY="true"; shift ;;
-    --no-verify) VERIFY="false"; shift ;;
     --poll) POLL_INTERVAL="$2"; shift 2 ;;
-    --keep) KEEP=1; shift ;;
+    --cleanup-mode) CLEANUP_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -52,6 +84,29 @@ source "$(dirname "${BASH_SOURCE[0]}")/_prover-helpers.sh"
 
 if [[ ! -f "$TAPE_FILE" ]]; then
   echo "ERROR: tape file not found: $TAPE_FILE" >&2
+  exit 1
+fi
+
+if ! [[ "$SEG" =~ ^[0-9]+$ ]] || [[ "$SEG" -lt 1 ]]; then
+  echo "ERROR: --seg must be an integer >= 1" >&2
+  exit 1
+fi
+
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$POLL_INTERVAL" -lt 1 ]]; then
+  echo "ERROR: --poll must be an integer >= 1" >&2
+  exit 1
+fi
+
+case "$RECEIPT" in
+  composite|succinct|groth16) ;;
+  *)
+    echo "ERROR: --receipt must be one of: composite, succinct, groth16" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$CLEANUP_MODE" != "delete" && "$CLEANUP_MODE" != "keep" ]]; then
+  echo "ERROR: --cleanup-mode must be delete or keep" >&2
   exit 1
 fi
 
@@ -93,7 +148,7 @@ PYEOF
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 echo "Tape:    $(basename "$TAPE_FILE") (${tape_size} bytes)"
 echo "Prover:  $PROVER_URL"
-echo "Params:  seg=$SEG  receipt=$RECEIPT  verify=$VERIFY"
+echo "Params:  seg=$SEG  receipt=$RECEIPT  verify_mode=policy  cleanup_mode=$CLEANUP_MODE"
 echo ""
 
 # Check prover health.
@@ -108,7 +163,7 @@ if [[ "$running" != "0" ]]; then
 fi
 
 # Submit.
-query="segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_receipt=${VERIFY}"
+query=$(with_claimant_query "segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_mode=policy")
 resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
   --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream") || {
   echo "ERROR: failed to connect to prover at $PROVER_URL" >&2
@@ -143,7 +198,7 @@ while true; do
   if [[ "$status" == "succeeded" ]]; then
     echo ""
     echo "$jr" | python3 "$FMT_SCRIPT"
-    if [[ "$KEEP" -eq 0 ]]; then
+    if [[ "$CLEANUP_MODE" == "delete" ]]; then
       curl -sf -X DELETE "${PROVER_URL}/api/jobs/${job_id}" > /dev/null 2>&1 || true
     else
       echo ""
@@ -159,7 +214,7 @@ while true; do
     else
       echo "FAILED: $err" >&2
     fi
-    if [[ "$KEEP" -eq 0 ]]; then
+    if [[ "$CLEANUP_MODE" == "delete" ]]; then
       curl -sf -X DELETE "${PROVER_URL}/api/jobs/${job_id}" > /dev/null 2>&1 || true
     fi
     exit 1

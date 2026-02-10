@@ -31,8 +31,8 @@ jobs and consume expensive GPU time.
       Zero Trust application policy on the tunnel.
 - [ ] **Verify `RISC0_DEV_MODE=0`** on the prover instance. Dev mode generates
       fake proofs that would pass the mock verifier but not the Groth16 verifier.
-- [ ] **Verify `ALLOW_DEV_MODE_REQUESTS=false`** on the prover instance so
-      clients cannot request dev-mode proving.
+- [ ] **Verify `PROOF_MODE_POLICY=secure-only`** on the prover instance so
+      clients cannot request `proof_mode=dev`.
 - [ ] **Verify `ALLOW_INSECURE_PROVER_URL=0`** in wrangler.jsonc (already the
       default). The worker must communicate with the prover over HTTPS only.
 - [ ] **Update `PROVER_BASE_URL`** in wrangler.jsonc from the placeholder
@@ -58,12 +58,14 @@ Switch all Stellar references from testnet to mainnet.
       spec (`docs/games/asteroids/10-CLIENT-INTEGRATION-SPEC.md:106-112`)
       defines these — they need actual values:
       ```
-      VITE_SOROBAN_RPC_URL=<mainnet RPC>
-      VITE_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
-      VITE_CONTRACT_ADDRESS=<mainnet score contract ID>
-      VITE_TOKEN_ADDRESS=<mainnet token ID>
-      VITE_RELAYER_URL=<relayer endpoint>
-      VITE_EXPLORER_URL=https://stellar.expert
+      VITE_SMART_ACCOUNT_RPC_URL=<mainnet RPC>
+      VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+      VITE_SMART_ACCOUNT_WASM_HASH=<mainnet account contract wasm hash>
+      VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS=<mainnet webauthn verifier contract ID>
+      VITE_SMART_ACCOUNT_RELAYER_URL=https://channels.openzeppelin.com
+      VITE_SMART_ACCOUNT_RELAYER_API_KEY=<mainnet relayer API key>
+      VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID=<optional relayer plugin ID>
+      VITE_SMART_ACCOUNT_RP_NAME="Stellar ZK"
       ```
 - [ ] **Confirm the RISC Zero router contract exists on mainnet**. The testnet
       router is `CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD` and
@@ -213,7 +215,7 @@ submission. These are all missing and required for mainnet.
       6. Return tx hash + minted score
 - [ ] **Implement token balance and history display** (`chain/` module):
       token balance queries, `ScoreSubmitted` event history.
-- [ ] **Choose and configure a relayer** (Stellar Launchtube or custom) for
+- [ ] **Choose and configure a relayer** (OpenZeppelin Channels or custom) for
       feeless or sponsored transactions.
 - [ ] **Handle mainnet XLM requirements**: players need trustlines to the SCORE
       token. Decide if the relayer/sponsor covers this or if the user must have
@@ -336,7 +338,7 @@ Rust prover core.
       2. Submit to prover and get Groth16 proof
       3. Submit proof to testnet contract with Groth16 verifier
       4. Confirm token minting succeeds
-- [ ] **Validate the `RULES_DIGEST_V2` constant** (`0x4153_5432` / "AST2").
+- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5433` / "AST3").
       This is baked into both the guest and contract. It serves as a versioning
       marker — if game rules change, bump this value.
 
@@ -521,7 +523,7 @@ anything to mainnet so all deployed config points to the final names.
 | Env Var | Required Value for Mainnet |
 |---|---|
 | `RISC0_DEV_MODE` | `0` |
-| `ALLOW_DEV_MODE_REQUESTS` | `false` |
+| `PROOF_MODE_POLICY` | `secure-only` |
 | `ALLOW_INSECURE_PROVER_URL` | `0` |
 | `PROVER_RECEIPT_KIND` | `groth16` |
 | `NETWORK` | `mainnet` (in deployment scripts) |

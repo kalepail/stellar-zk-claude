@@ -6,6 +6,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from "./constants";
+import { shortestDelta } from "./torus";
 import type { Asteroid, Bullet, Saucer, Ship, Vec2 } from "./types";
 
 /**
@@ -55,6 +56,15 @@ const AGGRESSION = 0.7;
 /** Cooldown between shots to avoid wasting bullets */
 const SHOT_PATIENCE = 0.05;
 
+/** Danger radius multiplier when on last life */
+const LOW_LIVES_DANGER_MULT = 1.4;
+
+/** Aggression bonus per wave (additive, capped at 1.0) */
+const WAVE_AGGRESSION_BONUS = 0.03;
+
+/** Frame count after which lurk-kill incentive kicks in */
+const LURK_KILL_FRAMES = 240;
+
 // ============================================================================
 // AUTOPILOT CLASS
 // ============================================================================
@@ -72,6 +82,9 @@ export interface GameStateSnapshot {
   saucers: Saucer[];
   bullets: Bullet[]; // Player bullets
   saucerBullets: Bullet[];
+  wave: number;
+  lives: number;
+  timeSinceLastKill: number;
 }
 
 interface Threat {
@@ -105,6 +118,12 @@ export class Autopilot {
   // Debug/visualization data
   private debugThreats: Threat[] = [];
   private debugTarget: Target | null = null;
+
+  // Per-frame effective parameters (adjusted by wave/lives/lurk)
+  private effectiveDangerRadius = DANGER_RADIUS;
+  private effectiveCautionRadius = CAUTION_RADIUS;
+  private effectiveAggression = AGGRESSION;
+  private lurkPressure = false;
 
   /** Enable or disable the autopilot */
   setEnabled(enabled: boolean): void {
@@ -149,6 +168,13 @@ export class Autopilot {
     }
 
     const ship = state.ship;
+
+    // Adjust effective parameters based on wave / lives / lurk state
+    const dangerMult = state.lives <= 1 ? LOW_LIVES_DANGER_MULT : 1.0;
+    this.effectiveDangerRadius = DANGER_RADIUS * dangerMult;
+    this.effectiveCautionRadius = CAUTION_RADIUS * dangerMult;
+    this.effectiveAggression = Math.min(1.0, AGGRESSION + state.wave * WAVE_AGGRESSION_BONUS);
+    this.lurkPressure = state.timeSinceLastKill >= LURK_KILL_FRAMES;
 
     // 1. Analyze all threats
     const threats = this.analyzeThreats(ship, state);
@@ -225,11 +251,14 @@ export class Autopilot {
     entity: Asteroid | Saucer | Bullet,
     type: "asteroid" | "saucer" | "bullet",
   ): Threat | null {
-    const delta = this.shortestDelta(ship.x, ship.y, entity.x, entity.y);
+    const dangerR = this.effectiveDangerRadius;
+    const cautionR = this.effectiveCautionRadius;
+
+    const delta = shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 
     // Skip if too far
-    if (distance > CAUTION_RADIUS * 2) return null;
+    if (distance > cautionR * 2) return null;
 
     // Calculate relative velocity
     const relVx = entity.vx - ship.vx;
@@ -241,7 +270,7 @@ export class Autopilot {
     // Only care about future threats
     if (timeToImpact < 0 || timeToImpact > COLLISION_LOOKAHEAD) {
       // Still track nearby entities as low-level threats
-      if (distance < CAUTION_RADIUS) {
+      if (distance < cautionR) {
         return {
           x: entity.x,
           y: entity.y,
@@ -249,7 +278,7 @@ export class Autopilot {
           vy: entity.vy,
           radius: entity.radius,
           type,
-          danger: 0.2 * (1 - distance / CAUTION_RADIUS),
+          danger: 0.2 * (1 - distance / cautionR),
           timeToImpact: 999,
           entity,
         };
@@ -270,10 +299,10 @@ export class Autopilot {
     if (closestDistance < collisionRadius) {
       // Will collide!
       danger = 1.0;
-    } else if (closestDistance < DANGER_RADIUS) {
-      danger = 0.8 * (1 - closestDistance / DANGER_RADIUS);
-    } else if (closestDistance < CAUTION_RADIUS) {
-      danger = 0.3 * (1 - closestDistance / CAUTION_RADIUS);
+    } else if (closestDistance < dangerR) {
+      danger = 0.8 * (1 - closestDistance / dangerR);
+    } else if (closestDistance < cautionR) {
+      danger = 0.3 * (1 - closestDistance / cautionR);
     }
 
     // Increase danger for faster-approaching threats
@@ -337,12 +366,12 @@ export class Autopilot {
   }
 
   private scoreTarget(ship: Ship, entity: Asteroid | Saucer): Target | null {
-    const delta = this.shortestDelta(ship.x, ship.y, entity.x, entity.y);
+    const delta = shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 
     // Calculate lead angle (where to aim to hit moving target)
     const leadPos = this.calculateLeadPosition(ship, entity);
-    const leadDelta = this.shortestDelta(ship.x, ship.y, leadPos.x, leadPos.y);
+    const leadDelta = shortestDelta(ship.x, ship.y, leadPos.x, leadPos.y);
     const aimAngle = Math.atan2(leadDelta.y, leadDelta.x);
 
     // Calculate angle difference
@@ -386,12 +415,14 @@ export class Autopilot {
     };
   }
 
-  private calculateLeadPosition(ship: Ship, entity: Asteroid | Saucer): Vec2 {
-    const delta = this.shortestDelta(ship.x, ship.y, entity.x, entity.y);
+  private calculateLeadPosition(ship: Ship, entity: { x: number; y: number; vx: number; vy: number }): Vec2 {
+    const delta = shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 
-    // Estimate bullet travel time
-    const bulletSpeed = SHIP_BULLET_SPEED + Math.hypot(ship.vx, ship.vy) * 0.35;
+    // Match game bullet speed boost model:
+    // shipSpeedApprox = (|vx| + |vy|) * 3/4, boost = shipSpeedApprox * 89/256.
+    const shipSpeedApprox = (Math.abs(ship.vx) + Math.abs(ship.vy)) * 0.75;
+    const bulletSpeed = SHIP_BULLET_SPEED + shipSpeedApprox * (89 / 256);
     const travelTime = distance / bulletSpeed;
 
     // Lead the target
@@ -418,7 +449,7 @@ export class Autopilot {
     let escapeY = 0;
 
     for (const threat of criticalThreats) {
-      const delta = this.shortestDelta(ship.x, ship.y, threat.x, threat.y);
+      const delta = shortestDelta(ship.x, ship.y, threat.x, threat.y);
       const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y) || 1;
 
       // Vector away from threat, weighted by danger
@@ -452,8 +483,8 @@ export class Autopilot {
     // Opportunistic shot if a threat is in our sights
     const mostDangerous = criticalThreats[0];
     if (mostDangerous) {
-      const leadPos = this.calculateLeadPosition(ship, mostDangerous.entity as Asteroid);
-      const leadDelta = this.shortestDelta(ship.x, ship.y, leadPos.x, leadPos.y);
+      const leadPos = this.calculateLeadPosition(ship, mostDangerous.entity);
+      const leadDelta = shortestDelta(ship.x, ship.y, leadPos.x, leadPos.y);
       const aimAngle = Math.atan2(leadDelta.y, leadDelta.x);
       const aimDiff = Math.abs(this.normalizeAngle(aimAngle - ship.angle));
 
@@ -491,12 +522,16 @@ export class Autopilot {
     }
 
     // Fire if aimed
-    if (Math.abs(angleDiff) < AIM_TOLERANCE) {
+    // Lurk pressure: relax aim tolerance to kill faster
+    const aimTol = this.lurkPressure ? AIM_TOLERANCE * 1.5 : AIM_TOLERANCE;
+
+    if (Math.abs(angleDiff) < aimTol) {
       // Check bullet will reach target
       const bulletRange = SHIP_BULLET_RANGE;
       if (target.distance < bulletRange * 0.9) {
-        // Rate limit shots
-        if (gameTime - this.lastShotTime > SHOT_PATIENCE) {
+        // Rate limit shots (faster when lurk pressure)
+        const patience = this.lurkPressure ? SHOT_PATIENCE * 0.5 : SHOT_PATIENCE;
+        if (gameTime - this.lastShotTime > patience) {
           input.fire = true;
           this.lastShotTime = gameTime;
         }
@@ -506,12 +541,13 @@ export class Autopilot {
     // Thrust management
     const speed = Math.hypot(ship.vx, ship.vy);
     const moderateThreats = threats.filter((t) => t.danger > 0.3);
+    const aggression = this.effectiveAggression;
 
     if (moderateThreats.length > 0) {
       // Threats nearby - be cautious about thrusting
       // Only thrust if moving away from threats
       const threatCenter = this.averagePosition(moderateThreats);
-      const toThreat = this.shortestDelta(ship.x, ship.y, threatCenter.x, threatCenter.y);
+      const toThreat = shortestDelta(ship.x, ship.y, threatCenter.x, threatCenter.y);
       const thrustDir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
 
       // Dot product: positive means thrusting toward threat
@@ -524,10 +560,11 @@ export class Autopilot {
     } else {
       // No immediate threats
       // Approach target if far, maintain distance if close
-      if (target.distance > SAFE_DISTANCE * 1.5) {
+      const approachDist = this.lurkPressure ? SAFE_DISTANCE : SAFE_DISTANCE * 1.5;
+      if (target.distance > approachDist) {
         // Move toward target if aimed roughly at it
         if (Math.abs(angleDiff) < Math.PI / 3) {
-          input.thrust = speed < SHIP_MAX_SPEED * AGGRESSION;
+          input.thrust = speed < SHIP_MAX_SPEED * aggression;
         }
       } else if (target.distance < SAFE_DISTANCE * 0.8) {
         // Too close - thrust away
@@ -552,7 +589,7 @@ export class Autopilot {
     // If there are any threats, rotate toward center for safety
     if (threats.length > 0) {
       const center = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
-      const delta = this.shortestDelta(ship.x, ship.y, center.x, center.y);
+      const delta = shortestDelta(ship.x, ship.y, center.x, center.y);
       const centerAngle = Math.atan2(delta.y, delta.x);
       const angleDiff = this.normalizeAngle(centerAngle - ship.angle);
 
@@ -568,19 +605,6 @@ export class Autopilot {
   // ============================================================================
   // UTILITY FUNCTIONS
   // ============================================================================
-
-  /** Calculate shortest delta in toroidal world */
-  private shortestDelta(fromX: number, fromY: number, toX: number, toY: number): Vec2 {
-    let dx = toX - fromX;
-    let dy = toY - fromY;
-
-    if (dx > WORLD_WIDTH / 2) dx -= WORLD_WIDTH;
-    if (dx < -WORLD_WIDTH / 2) dx += WORLD_WIDTH;
-    if (dy > WORLD_HEIGHT / 2) dy -= WORLD_HEIGHT;
-    if (dy < -WORLD_HEIGHT / 2) dy += WORLD_HEIGHT;
-
-    return { x: dx, y: dy };
-  }
 
   /** Normalize angle to [-PI, PI] */
   private normalizeAngle(angle: number): number {

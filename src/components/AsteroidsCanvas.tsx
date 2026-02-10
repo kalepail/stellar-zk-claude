@@ -12,15 +12,21 @@ export interface CompletedGameRun {
 
 interface AsteroidsCanvasProps {
   onGameOver?: (run: CompletedGameRun) => void;
+  claimantAddress?: string;
 }
 
-export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
+export function AsteroidsCanvas({ onGameOver, claimantAddress }: AsteroidsCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onGameOverRef = useRef(onGameOver);
+  const claimantAddressRef = useRef(claimantAddress ?? "");
 
   useEffect(() => {
     onGameOverRef.current = onGameOver;
   }, [onGameOver]);
+
+  useEffect(() => {
+    claimantAddressRef.current = claimantAddress ?? "";
+  }, [claimantAddress]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,7 +47,7 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
 
       const modeNow = game.getMode();
       if (modeNow === "game-over" && modeBefore !== "game-over") {
-        const tape = game.getTape();
+        const tape = game.getTape(claimantAddressRef.current);
         if (tape) {
           onGameOverRef.current?.({
             tape,

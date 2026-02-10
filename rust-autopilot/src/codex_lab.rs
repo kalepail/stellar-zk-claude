@@ -2,7 +2,9 @@ use crate::benchmark::BenchmarkReport;
 use crate::runner::run_bot;
 use anyhow::{anyhow, Context, Result};
 use asteroids_verifier_core::constants::{
-    SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
+    SCORE_LARGE_ASTEROID, SCORE_LARGE_SAUCER, SCORE_MEDIUM_ASTEROID, SCORE_SMALL_ASTEROID,
+    SCORE_SMALL_SAUCER, SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4,
+    WORLD_WIDTH_Q12_4,
 };
 use asteroids_verifier_core::fixed_point::shortest_delta_q12_4;
 use asteroids_verifier_core::sim::{LiveGame, WorldSnapshot};
@@ -243,7 +245,11 @@ pub fn analyze_inputs(bot_id: &str, seed: u32, max_frames: u32, inputs: &[u8]) -
 
         if snapshot.lives < before.lives {
             let killer = probable_killer(&before);
-            let recent_actions = summarize_action_window(&action_history, action_history.len(), CONTEXT_WINDOW_FRAMES);
+            let recent_actions = summarize_action_window(
+                &action_history,
+                action_history.len(),
+                CONTEXT_WINDOW_FRAMES,
+            );
             let (recent_avg_threat, recent_min_threat) = summarize_recent_threats(&threat_history);
             let (recent_shots_fired, recent_shots_hit, recent_shots_missed) =
                 summarize_recent_shots(&shots, frame_number, CONTEXT_WINDOW_FRAMES as u32);
@@ -290,7 +296,8 @@ pub fn analyze_inputs(bot_id: &str, seed: u32, max_frames: u32, inputs: &[u8]) -
         shot.resolution_reason = "run_ended_before_resolution".to_string();
     }
 
-    let final_actions = summarize_action_window(&action_history, action_history.len(), action_history.len());
+    let final_actions =
+        summarize_action_window(&action_history, action_history.len(), action_history.len());
 
     let mut total_hit = 0u32;
     let mut total_miss = 0u32;
@@ -351,8 +358,13 @@ pub fn analyze_benchmark_summary(
         if codex_only && !run.bot_id.starts_with("codex-") {
             continue;
         }
-        let intel = collect_run_intel(&run.bot_id, run.seed, report.max_frames)
-            .with_context(|| format!("intel collection failed for bot={} seed={:#010x}", run.bot_id, run.seed))?;
+        let intel =
+            collect_run_intel(&run.bot_id, run.seed, report.max_frames).with_context(|| {
+                format!(
+                    "intel collection failed for bot={} seed={:#010x}",
+                    run.bot_id, run.seed
+                )
+            })?;
         runs.push(intel);
     }
 
@@ -463,8 +475,8 @@ pub fn derive_learning_recommendation(intel: &BenchmarkIntelReport) -> LearningR
     let bullet_ratio = ratio_from_map(&death_causes, "saucer_bullet", total_deaths);
 
     let panic_factor = (deaths_per_10k / 1.8).clamp(0.0, 1.6);
-    let risk_weight_scale = (1.0 + 0.22 * panic_factor + 0.12 * bullet_ratio + 0.08 * asteroid_ratio)
-        .clamp(0.75, 1.9);
+    let risk_weight_scale =
+        (1.0 + 0.22 * panic_factor + 0.12 * bullet_ratio + 0.08 * asteroid_ratio).clamp(0.75, 1.9);
     let survival_weight_scale = (1.0 + 0.28 * panic_factor + 0.1 * bullet_ratio).clamp(0.8, 2.0);
     let aggression_weight_scale =
         (1.0 - 0.2 * panic_factor + 0.16 * (hit_rate - 0.5)).clamp(0.55, 1.4);
@@ -581,7 +593,11 @@ pub fn run_learning_cycle(
     })
 }
 
-fn summarize_action_window(actions: &[u8], end_exclusive: usize, window: usize) -> ActionWindowSummary {
+fn summarize_action_window(
+    actions: &[u8],
+    end_exclusive: usize,
+    window: usize,
+) -> ActionWindowSummary {
     let start = end_exclusive.saturating_sub(window);
     let mut summary = ActionWindowSummary {
         window_frames: end_exclusive.saturating_sub(start),
@@ -671,7 +687,12 @@ fn probable_killer(world: &WorldSnapshot) -> ThreatSample {
     };
 
     for asteroid in &world.asteroids {
-        consider(asteroid.x, asteroid.y, asteroid.radius, DeathCause::Asteroid);
+        consider(
+            asteroid.x,
+            asteroid.y,
+            asteroid.radius,
+            DeathCause::Asteroid,
+        );
     }
     for saucer in &world.saucers {
         consider(saucer.x, saucer.y, saucer.radius, DeathCause::Saucer);
@@ -731,7 +752,13 @@ fn estimate_hit_events(score_delta: u32) -> u32 {
         return 0;
     }
 
-    const EVENTS: [u32; 5] = [20, 50, 100, 200, 1000];
+    const EVENTS: [u32; 5] = [
+        SCORE_LARGE_ASTEROID,
+        SCORE_MEDIUM_ASTEROID,
+        SCORE_SMALL_ASTEROID,
+        SCORE_LARGE_SAUCER,
+        SCORE_SMALL_SAUCER,
+    ];
     for count in 1..=4u32 {
         if can_make_score_delta(score_delta, count as usize, &EVENTS) {
             return count;

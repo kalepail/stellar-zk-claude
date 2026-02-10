@@ -456,7 +456,7 @@ impl KimiLearningBot {
 
         if world.next_extra_life_score > world.score {
             let to_next = world.next_extra_life_score - world.score;
-            if to_next <= 1000 {
+            if to_next <= SCORE_SMALL_SAUCER {
                 self.current_aggression *= 1.15;
             }
         }
@@ -1225,7 +1225,11 @@ impl AutopilotBot for KimiLearningBot {
         if world.score > self.last_score {
             let score_delta = world.score - self.last_score;
             match score_delta {
-                20 | 50 | 100 | 200 | 1000 => {
+                SCORE_LARGE_ASTEROID
+                | SCORE_MEDIUM_ASTEROID
+                | SCORE_SMALL_ASTEROID
+                | SCORE_LARGE_SAUCER
+                | SCORE_SMALL_SAUCER => {
                     self.learning_db.record_hit();
                 }
                 _ => {}

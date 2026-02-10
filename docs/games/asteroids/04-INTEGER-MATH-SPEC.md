@@ -29,14 +29,25 @@ Define deterministic numeric rules used by gameplay and verification.
 - Use wrapped shortest-delta squared distance.
 - Compare against squared collision threshold.
 
+### Ship fire gate (anti-autofire)
+- `ship_fire_shift_reg = (ship_fire_shift_reg >> 1) | (fire ? 0x80 : 0x00)`
+- Ship shot is allowed only when:
+  - bit7 is set (fire pressed this frame), and
+  - bit6 is clear (fire was not pressed on previous frame).
+
+### Saucer fire cadence
+- Saucer fire timer reload is fixed at `SAUCER_FIRE_RELOAD_FRAMES`.
+- Current value is `10` frames.
+
 ## Constants (Consensus-Critical)
 - `SHIP_TURN_SPEED_BAM = 3`
 - `SHIP_BULLET_LIMIT = 4`
-- `SHIP_BULLET_COOLDOWN_FRAMES = 10`
-- `SHIP_BULLET_LIFETIME_FRAMES = 51`
-- `SHIP_RESPAWN_FRAMES = 75`
+- `SAUCER_BULLET_LIMIT = 2`
+- `SAUCER_FIRE_RELOAD_FRAMES = 10`
+- `SHIP_BULLET_LIFETIME_FRAMES = 72`
+- `SHIP_RESPAWN_FRAMES = 0`
 - `SHIP_SPAWN_INVULNERABLE_FRAMES = 120`
-- `SAUCER_BULLET_LIFETIME_FRAMES = 84`
+- `SAUCER_BULLET_LIFETIME_FRAMES = 72`
 - `LURK_TIME_THRESHOLD_FRAMES = 360`
 - `EXTRA_LIFE_SCORE_STEP = 10000`
 

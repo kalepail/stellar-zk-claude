@@ -3,7 +3,7 @@
 ## Goal
 
 Define the client-side path that:
-1. Connects a passkey wallet via passkey-kit.
+1. Connects a smart-account wallet via smart-account-kit.
 2. Submits a completed game tape for ZK proving.
 3. Claims the proven score on-chain via the Soroban contract.
 4. Displays token balance and submission history.
@@ -16,7 +16,7 @@ with no wallet, no on-chain submission, and no token display.
 
 ## User Flow
 
-1. User opens app, creates or connects a passkey wallet.
+1. User opens app, creates or connects a smart-account wallet.
 2. User plays Asteroids; tape records every frame.
 3. Game over → user submits tape to worker for proving.
 4. UI shows proof pipeline status (queued → proving → done).
@@ -75,8 +75,8 @@ import { Client } from 'asteroids-score-client';
 
 const scoreContract = new Client({
   contractId: import.meta.env.VITE_SCORE_CONTRACT_ID,
-  networkPassphrase: import.meta.env.VITE_STELLAR_NETWORK_PASSPHRASE,
-  rpcUrl: import.meta.env.VITE_STELLAR_RPC_URL,
+  networkPassphrase: import.meta.env.VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE,
+  rpcUrl: import.meta.env.VITE_SMART_ACCOUNT_RPC_URL,
 });
 ```
 
@@ -86,118 +86,132 @@ without signing or sending. Mutating calls (like `submit_score`) return an
 
 ---
 
-## Passkey Wallet
+## Smart Account Wallet
 
 ### Package
 
 ```
-passkey-kit@0.12.0
+smart-account-kit
 ```
 
-`passkey-kit` provides three exports:
-- `PasskeyKit` — client-side wallet creation, connection, and auth entry signing
-- `PasskeyServer` — server-side relay submission and keyId→contractId lookup
-- `SACClient` — Stellar Asset Contract helper for token queries
-
-Note: passkey-kit docs reference "smart-account-kit" as a future successor, but
-`passkey-kit` at 0.12.0 is what is currently published and in use.
+`smart-account-kit` is the wallet SDK used by the app for:
+- passkey-backed smart wallet creation
+- reconnecting existing wallet sessions
+- signing and submitting Soroban transactions
 
 ### Client-Side Setup
 
 ```typescript
-import { PasskeyKit } from 'passkey-kit';
+import { SmartAccountKit, IndexedDBStorage } from 'smart-account-kit';
 
-const account = new PasskeyKit({
-  rpcUrl: import.meta.env.VITE_STELLAR_RPC_URL,
-  networkPassphrase: import.meta.env.VITE_STELLAR_NETWORK_PASSPHRASE,
-  walletWasmHash: import.meta.env.VITE_WALLET_WASM_HASH,
+const kit = new SmartAccountKit({
+  rpcUrl: import.meta.env.VITE_SMART_ACCOUNT_RPC_URL,
+  networkPassphrase: import.meta.env.VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE,
+  accountWasmHash: import.meta.env.VITE_SMART_ACCOUNT_WASM_HASH,
+  webauthnVerifierAddress: import.meta.env.VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS,
+  relayerUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL,
+  storage: new IndexedDBStorage(),
+  rpName: import.meta.env.VITE_SMART_ACCOUNT_RP_NAME ?? 'Stellar ZK',
 });
 ```
 
 ### Wallet Creation (One-Time)
 
 ```typescript
-const { keyId_base64, contractId, built } = await account.createWallet(
-  'ZK Asteroids',  // relying party / app name
-  'player'         // user display name
-);
-// `built` is a signed deploy transaction XDR
-// Submit via Launchtube (user has no XLM yet)
-// Store keyId_base64 in localStorage for reconnection
+const creation = await kit.createWallet('Stellar ZK Asteroids', 'player', {
+  autoSubmit: false,
+});
+
+// Submit signed deployment XDR through relayer
+await submitDeploymentXdr(creation.signedTransaction);
+
+// Bind the newly deployed wallet as the active session
+const session = await kit.connectWallet({
+  contractId: creation.contractId,
+  credentialId: creation.credentialId,
+});
+
+if (!session) {
+  throw new Error('wallet deployed, but failed to restore connected session');
+}
 ```
 
 ### Wallet Reconnection
 
 ```typescript
-const { keyId_base64, contractId } = await account.connectWallet({
-  getContractId: async (keyId) => {
-    // Look up contractId from keyId via Mercury indexer or own DB
-    return await server.getContractId({ keyId });
-  },
-});
+// Silent restore from local persisted session
+const restored = await kit.connectWallet();
+
+// Prompt user with passkey chooser when needed
+const prompted = await kit.connectWallet({ prompt: true });
 ```
 
 ### Signing Flow
 
-`account.sign()` bridges the generated contract client and WebAuthn:
+`smart-account-kit` supports both manual and one-shot submission flows:
 
-1. Takes the `built` Transaction XDR from an `AssembledTransaction`
-2. Finds all `SorobanAuthorizationEntry` entries that need signing
-3. Triggers the browser's WebAuthn API for each entry's preimage
-4. Returns the transaction with signed auth entries injected
+```typescript
+// Manual: sign auth entries on an assembled transaction
+const signed = await kit.sign(assembledTx);
 
-The smart wallet's `__check_auth` function validates the WebAuthn signature
-on-chain during execution.
+// Recommended: sign + re-simulate + submit
+const txResult = await kit.signAndSubmit(assembledTx);
+```
+
+The smart wallet's `__check_auth` function validates WebAuthn signatures on-chain.
 
 ---
 
-## Transaction Relay (Launchtube)
+## Transaction Relay (OpenZeppelin Channels)
 
 ### What It Is
 
-Launchtube is the SDF-maintained relay that accepts Soroban transactions and
-submits them on-chain with **fee sponsorship**. Users do not need XLM.
+OpenZeppelin Channels is the relayer used for sponsored Soroban transaction
+submission.
 
 ### Endpoints
 
-- Testnet: `https://testnet.launchtube.xyz`
-- Mainnet: `https://launchtube.xyz`
+- Testnet: `https://channels.openzeppelin.com/testnet`
+- Mainnet: `https://channels.openzeppelin.com`
 
 ### Authentication
 
-Bearer JWT token. Testnet tokens available at `https://testnet.launchtube.xyz/gen`.
+API key. Generation endpoints:
+- Testnet: `https://channels.openzeppelin.com/testnet/gen`
+- Mainnet: `https://channels.openzeppelin.com/gen`
 
-### Server-Side Integration
+### Client-Side Integration
 
-`PasskeyServer` wraps the Launchtube HTTP API:
+For the managed Channels service, use `baseUrl` + `apiKey`:
 
 ```typescript
-import { PasskeyServer } from 'passkey-kit';
+import { ChannelsClient } from '@openzeppelin/relayer-plugin-channels';
 
-const server = new PasskeyServer({
-  rpcUrl: process.env.STELLAR_RPC_URL,
-  launchtubeUrl: process.env.LAUNCHTUBE_URL,
-  launchtubeJwt: process.env.LAUNCHTUBE_JWT,
-  mercuryUrl: process.env.MERCURY_URL,    // for keyId → contractId lookup
-  mercuryJwt: process.env.MERCURY_JWT,
+const client = new ChannelsClient({
+  baseUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL!,
+  apiKey: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_API_KEY!,
 });
 
-// Submit a signed transaction
-const result = await server.send(signedTxXdr);
+const result = await client.submitTransaction({ xdr: signedTransaction });
 ```
 
-Note: Launchtube is marked as legacy; the successor is the
-[OpenZeppelin Relayer](https://docs.openzeppelin.com/relayer/stellar) (self-hosted).
-Launchtube is still operational on both testnet and mainnet.
+If using a self-hosted OpenZeppelin Relayer plugin, include `pluginId`:
 
-### Where Relay Lives
+```typescript
+const client = new ChannelsClient({
+  baseUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL!,
+  apiKey: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_API_KEY!,
+  pluginId: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID!,
+});
+```
 
-The relay endpoint requires a JWT secret, so it must run server-side. Options:
-- A route on the existing Cloudflare Worker (`/api/send`)
-- A separate serverless function
-- A Cloudflare Worker Pages Function
+### Where Relay Logic Lives
 
-The browser never calls Launchtube directly.
+For local/dev flows, direct browser submission is acceptable.
+For production, prefer delegating transaction submission to the worker backend so
+API keys remain server-side.
+
+The browser should never receive privileged backend relay secrets.
 
 ---
 
@@ -219,18 +233,15 @@ The browser never calls Launchtube directly.
 
 4. Build contract call
    const at = await scoreContract.submit_score({
-     player: account.wallet,     // smart wallet contract address
+     player: walletSession.contractId,   // claimant smart wallet contract address
      seal: Buffer.from(sealBytes),
      journal_raw: Buffer.from(journalBytes),
    });
 
-5. Sign auth entries with passkey
-   const signedTx = await account.sign(at.built!, { keyId });
+5. Sign and submit with smart-account-kit
+   const result = await kit.signAndSubmit(at);
 
-6. Submit via relay
-   const result = await sendToServer(signedTx);
-
-7. Return tx hash + minted score
+6. Return tx hash + minted score
 ```
 
 ### Journal Packing
@@ -257,17 +268,11 @@ function packJournal(journal: ProofJournal): Uint8Array {
 
 ### Balance
 
-The token is a SAC. Use `SACClient` from passkey-kit or query via Stellar SDK:
+The token is a SAC. Query it via generated token bindings or direct Stellar SDK
+contract calls (frontend or worker backend). `smart-account-kit` does not expose
+a dedicated SAC balance helper.
 
 ```typescript
-import { SACClient } from 'passkey-kit';
-
-const sac = new SACClient({
-  rpcUrl: import.meta.env.VITE_STELLAR_RPC_URL,
-  networkPassphrase: import.meta.env.VITE_STELLAR_NETWORK_PASSPHRASE,
-});
-
-const tokenClient = sac.getSACClient(import.meta.env.VITE_TOKEN_CONTRACT_ID);
 const balance = await tokenClient.balance({ id: walletContractId });
 ```
 
@@ -309,7 +314,7 @@ ledger timestamp, and tx hash.
 ## State Management
 
 React context + hooks (no external lib):
-- `WalletProvider` — PasskeyKit instance, connection state, keyId, contractId
+- `WalletProvider` — SmartAccountKit instance, connection state, credentialId, contractId
 - `ProofProvider` — active proof job, polling, result cache
 - `ChainProvider` — token balance, submission history
 
@@ -322,22 +327,25 @@ Each exposes a custom hook (`useWallet`, `useProof`, `useChain`).
 ### Vite Env Vars
 
 ```
-VITE_STELLAR_RPC_URL          # Soroban RPC endpoint
-VITE_STELLAR_NETWORK_PASSPHRASE  # "Test SDF Network ; September 2015"
+VITE_SMART_ACCOUNT_RPC_URL          # Soroban RPC endpoint
+VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE  # "Test SDF Network ; September 2015"
+VITE_SMART_ACCOUNT_WASM_HASH        # Smart account WASM hash
+VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS  # WebAuthn verifier contract ID
+VITE_SMART_ACCOUNT_RELAYER_URL      # Channels endpoint (testnet/mainnet)
+VITE_SMART_ACCOUNT_RELAYER_API_KEY  # API key for managed Channels
+VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID  # Optional, self-hosted OZ Relayer only
+VITE_SMART_ACCOUNT_RP_NAME          # Relying party name shown in passkey UX
 VITE_SCORE_CONTRACT_ID        # Asteroids score contract address
 VITE_TOKEN_CONTRACT_ID        # SAC token contract address
-VITE_WALLET_WASM_HASH         # Smart wallet WASM hash (for passkey-kit)
 VITE_EXPLORER_URL             # Stellar Expert or StellarChain base URL
 ```
 
 ### Server-Side Env Vars (Worker)
 
 ```
-STELLAR_RPC_URL               # Soroban RPC
-LAUNCHTUBE_URL                # https://testnet.launchtube.xyz
-LAUNCHTUBE_JWT                # Launchtube auth token
-MERCURY_URL                   # Mercury indexer (keyId → contractId)
-MERCURY_JWT                   # Mercury auth token
+RELAYER_URL                   # Channels or proxy endpoint
+RELAYER_API_KEY               # Keep as worker secret when proxying tx submission
+RELAYER_PLUGIN_ID             # Optional, self-hosted OZ Relayer plugin id
 ```
 
 ### Vite Config
@@ -364,8 +372,11 @@ export default defineConfig({
 # Stellar SDK (peer dep of generated bindings)
 @stellar/stellar-sdk
 
-# Passkey wallet creation, signing, relay, SAC queries
-passkey-kit
+# Smart account wallet creation, signing, and session management
+smart-account-kit
+
+# Optional direct Channels client integration
+@openzeppelin/relayer-plugin-channels
 
 # Generated typed contract client (local)
 file:./packages/asteroids-score-client
@@ -383,8 +394,8 @@ packages/
   asteroids-score-client/     # Generated contract bindings (npm run build)
 src/
   wallet/
-    passkey.ts               # PasskeyKit instance + create/connect/sign
-    relay.ts                 # Server call to submit signed TX via Launchtube
+    smartAccount.ts          # SmartAccountKit instance + create/connect/sign
+    relay.ts                 # Optional server call to submit signed TX via Channels
   contract/
     score.ts                 # Generated Client instance, configured
     journal.ts               # packJournal(), computeJournalDigest()
@@ -417,9 +428,9 @@ src/
    the raw seal bytes and confirm the format (hex string, base64, or nested
    object). This is the primary blocker before implementing the claim flow.
 
-2. **Mercury indexer** — passkey-kit uses Mercury for keyId → contractId
-   reverse lookup during `connectWallet()`. Do we need a Mercury account, or
-   can we store the mapping ourselves (localStorage + optional backend)?
+2. **Claim submission path** — Should claim transactions submit directly from
+   frontend via `kit.signAndSubmit()`, or should frontend only sign and send
+   the signed payload to worker for backend submission?
 
 3. **Contract deployment** — Testnet addresses for:
    - Asteroids score contract
@@ -427,8 +438,8 @@ src/
    - RISC Zero router contract
    - Smart wallet WASM hash
 
-4. **Relay hosting** — The Launchtube JWT must stay server-side. Add a
-   `/api/send` route to the existing Cloudflare Worker, or deploy separately?
+4. **Relay hosting** — If we proxy Channels through worker, add `/api/send` to
+   existing Cloudflare Worker, or deploy a separate relay façade?
 
 ---
 
@@ -440,22 +451,22 @@ src/
 - Create `config.ts` and `.env.example`
 - Verify: `is_claimed()` and read-only getters work against testnet
 
-### Phase 2: Passkey Wallet
-- Add `passkey-kit` dependency
-- Build `wallet/passkey.ts` (PasskeyKit instance, create, connect)
+### Phase 2: Smart Account Wallet
+- Add `smart-account-kit` dependency
+- Build `wallet/smartAccount.ts` (SmartAccountKit instance, create, connect)
 - Build `WalletProvider` context
 - Add `WalletHeader` component
 - Gate: can create wallet, reconnect, see contract address
 
 ### Phase 3: Relay + Claim Flow
-- Add relay route to worker (or separate function)
+- Add Channels relay route to worker (or separate function)
 - Build `wallet/relay.ts` and `proof/claim.ts`
 - Build `contract/journal.ts` (pack + digest)
 - Build `ClaimPanel` component
 - Gate: full flow from proof result → signed tx → on-chain mint → tx hash
 
 ### Phase 4: Balance & History
-- Build `chain/balance.ts` using SACClient
+- Build `chain/balance.ts` using token contract client
 - Build `chain/history.ts` using Soroban events
 - Build `ChainProvider` context + `HistoryPanel` component
 - Gate: balance updates after claim, browsable history

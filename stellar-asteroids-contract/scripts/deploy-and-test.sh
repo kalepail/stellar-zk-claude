@@ -16,8 +16,8 @@
 #
 # Usage:
 #   ./scripts/deploy-and-test.sh                    # full deploy + test (mock verifier)
-#   ./scripts/deploy-and-test.sh --groth16          # mock tests + real Groth16 tests
-#   ./scripts/deploy-and-test.sh --skip-deploy      # reuse existing deployment
+#   ./scripts/deploy-and-test.sh --proof-mode all   # mock tests + real Groth16 tests
+#   ./scripts/deploy-and-test.sh --deploy-mode reuse # reuse existing deployment
 #   ./scripts/deploy-and-test.sh --deployer <name>  # custom deployer key name
 
 set -euo pipefail
@@ -28,8 +28,8 @@ source "$SCRIPT_DIR/_helpers.sh"
 
 require_cmds stellar python3 xxd
 
-SKIP_DEPLOY=false
-RUN_GROTH16=false
+DEPLOY_MODE="fresh" # fresh|reuse
+PROOF_MODE="mock" # mock|all
 # Use unique key names per run to avoid token admin conflicts
 RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-deploy-${RUN_ID}"
@@ -43,30 +43,56 @@ PASSED=0
 FAILED=0
 TOTAL=0
 
+usage() {
+  cat <<'USAGE_EOF'
+Usage: stellar-asteroids-contract/scripts/deploy-and-test.sh [options]
+
+Options:
+  --deploy-mode <mode>  fresh|reuse (default: fresh)
+  --proof-mode <mode>   mock|all (default: mock)
+  --deployer <name>     Custom deployer key name
+  -h, --help            Show this help
+USAGE_EOF
+}
+
 # ---------------------------------------------------------------------------
 # Parse args
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-deploy)
-      SKIP_DEPLOY=true
-      shift
+    --deploy-mode)
+      DEPLOY_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
       ;;
-    --groth16)
-      RUN_GROTH16=true
-      shift
+    --proof-mode)
+      PROOF_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
       ;;
     --deployer)
       DEPLOYER_NAME="$2"
       shift 2
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
       echo "Unknown arg: $1" >&2
-      echo "Usage: $0 [--skip-deploy] [--groth16] [--deployer <name>]" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
+
+if [[ "$DEPLOY_MODE" != "fresh" && "$DEPLOY_MODE" != "reuse" ]]; then
+  err "--deploy-mode must be fresh or reuse"
+  exit 1
+fi
+
+if [[ "$PROOF_MODE" != "mock" && "$PROOF_MODE" != "all" ]]; then
+  err "--proof-mode must be mock or all"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Test assertions
@@ -234,7 +260,7 @@ test_read_functions() {
     --network "$NETWORK" \
     -- \
     rules_digest 2>&1) || true
-  assert_eq "rules_digest matches AST2" "$((0x41535432))" "$rules_digest_result"
+  assert_eq "rules_digest matches AST3" "$((0x41535433))" "$rules_digest_result"
 }
 
 # ---------------------------------------------------------------------------
@@ -254,8 +280,14 @@ test_submit_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   # Compute journal digest and generate mock seal
   local journal_digest_hex
@@ -276,7 +308,6 @@ test_submit_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) || {
@@ -309,7 +340,6 @@ test_submit_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) && dup_exit=0 || dup_exit=$?
@@ -333,8 +363,14 @@ test_reject_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -351,7 +387,6 @@ test_reject_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) && exit_code=0 || exit_code=$?
@@ -497,8 +532,14 @@ test_submit_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -514,7 +555,6 @@ test_submit_groth16_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) || {
@@ -547,7 +587,6 @@ test_submit_groth16_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) && dup_exit=0 || dup_exit=$?
@@ -575,8 +614,14 @@ test_reject_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -588,7 +633,6 @@ test_reject_groth16_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
     2>&1) && exit_code=0 || exit_code=$?
@@ -616,13 +660,13 @@ echo "$(date)"
 echo "================================================"
 echo ""
 
-if [[ "$SKIP_DEPLOY" == false ]]; then
+if [[ "$DEPLOY_MODE" == "fresh" ]]; then
   deploy
 else
   load_state "$STATE_FILE"
   read_image_id
   if [[ -z "${SCORE_CONTRACT_ID:-}" || -z "${TOKEN_ID:-}" ]]; then
-    err "No deployment state found. Run without --skip-deploy first."
+    err "No deployment state found. Run with --deploy-mode fresh first."
     exit 1
   fi
   info "Reusing deployment from $STATE_FILE"
@@ -657,8 +701,8 @@ echo ""
 # 4. Check cumulative token balance (90 + 32860 = 32950)
 test_cumulative_balance "32950"
 
-# 5. Groth16 tests (if --groth16 flag was passed)
-if [[ "$RUN_GROTH16" == true ]]; then
+# 5. Groth16 tests (if proof-mode=all)
+if [[ "$PROOF_MODE" == "all" ]]; then
   echo ""
   echo "================================================"
   echo "Groth16 Real Proof Tests"

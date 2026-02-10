@@ -20,9 +20,9 @@ impl JobStore {
                 job_id, status, created_at, started_at, finished_at,
                 tape_size_bytes,
                 opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
-                opt_allow_dev_mode, opt_verify_receipt, opt_accelerator,
+                opt_proof_mode, opt_verify_mode, opt_claimant_address, opt_accelerator,
                 result_path, error, error_code
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 job.job_id.to_string(),
                 status_to_str(job.status),
@@ -33,8 +33,9 @@ impl JobStore {
                 job.options.max_frames as i64,
                 job.options.receipt_kind.as_str(),
                 job.options.segment_limit_po2 as i64,
-                job.options.allow_dev_mode as i64,
-                job.options.verify_receipt as i64,
+                job.options.proof_mode.as_str(),
+                job.options.verify_mode.as_str(),
+                "", // claimant_address now lives in tape, not options
                 job.options.accelerator,
                 Option::<String>::None,
                 job.error.as_deref(),
@@ -54,7 +55,7 @@ impl JobStore {
                 "SELECT job_id, status, created_at, started_at, finished_at,
                         tape_size_bytes,
                         opt_max_frames, opt_receipt_kind, opt_segment_limit_po2,
-                        opt_allow_dev_mode, opt_verify_receipt, opt_accelerator,
+                        opt_proof_mode, opt_verify_mode, opt_claimant_address, opt_accelerator,
                         result_path, error, error_code
                  FROM jobs WHERE job_id = ?1",
                 params![job_id.to_string()],
@@ -69,12 +70,13 @@ impl JobStore {
                         opt_max_frames: row.get(6)?,
                         opt_receipt_kind: row.get(7)?,
                         opt_segment_limit_po2: row.get(8)?,
-                        opt_allow_dev_mode: row.get(9)?,
-                        opt_verify_receipt: row.get(10)?,
-                        _opt_accelerator: row.get(11)?,
-                        result_path: row.get(12)?,
-                        error: row.get(13)?,
-                        error_code: row.get(14)?,
+                        opt_proof_mode: row.get(9)?,
+                        opt_verify_mode: row.get(10)?,
+                        opt_claimant_address: row.get(11)?,
+                        _opt_accelerator: row.get(12)?,
+                        result_path: row.get(13)?,
+                        error: row.get(14)?,
+                        error_code: row.get(15)?,
                     })
                 },
             )
@@ -93,6 +95,10 @@ impl JobStore {
         let status = status_from_str(&r.status)?;
         let receipt_kind = ReceiptKind::from_str(&r.opt_receipt_kind)
             .map_err(|e| format!("bad receipt_kind in db: {e}"))?;
+        let proof_mode = crate::ProofMode::from_str(&r.opt_proof_mode)
+            .map_err(|e| format!("bad proof_mode in db: {e}"))?;
+        let verify_mode = crate::VerifyMode::from_str(&r.opt_verify_mode)
+            .map_err(|e| format!("bad verify_mode in db: {e}"))?;
 
         let result = if status == JobStatus::Succeeded {
             if let Some(ref path) = r.result_path {
@@ -144,8 +150,8 @@ impl JobStore {
                 max_frames: r.opt_max_frames as u32,
                 receipt_kind,
                 segment_limit_po2: r.opt_segment_limit_po2 as u32,
-                allow_dev_mode: r.opt_allow_dev_mode != 0,
-                verify_receipt: r.opt_verify_receipt != 0,
+                proof_mode,
+                verify_mode,
                 accelerator: accelerator(),
             },
             result,
@@ -165,8 +171,9 @@ struct RawJobRow {
     opt_max_frames: i64,
     opt_receipt_kind: String,
     opt_segment_limit_po2: i64,
-    opt_allow_dev_mode: i64,
-    opt_verify_receipt: i64,
+    opt_proof_mode: String,
+    opt_verify_mode: String,
+    _opt_claimant_address: String,
     _opt_accelerator: String,
     result_path: Option<String>,
     error: Option<String>,

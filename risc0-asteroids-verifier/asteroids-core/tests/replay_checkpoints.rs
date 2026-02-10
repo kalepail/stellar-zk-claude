@@ -52,7 +52,7 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Updated golden fingerprint for AST2 ruleset.
+    // Updated golden fingerprint for AST3 ruleset.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         10_036_430_449_149_217_048
@@ -71,7 +71,7 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Updated golden fingerprint for AST2 ruleset.
+    // Updated golden fingerprint for AST3 ruleset.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         11_214_824_663_140_276_594

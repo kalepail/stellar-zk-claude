@@ -67,6 +67,46 @@ sha256_of_hex() {
   echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
 }
 
+u32_to_le_hex() {
+  local value="${1:-0}"
+  local hex
+  hex=$(printf '%08x' "$value")
+  printf '%s%s%s%s' "${hex:6:2}" "${hex:4:2}" "${hex:2:2}" "${hex:0:2}"
+}
+
+# Append claimant_address payload to a 24-byte journal hex string:
+# journal_v2 = journal_v1 || claimant_len_le_u32 || claimant_ascii_bytes
+append_claimant_to_journal_hex() {
+  local journal_hex="$1"
+  local claimant="$2"
+  local claimant_hex claimant_len claimant_len_le
+  claimant_hex=$(printf '%s' "$claimant" | xxd -p -c 1000 | tr -d '\n')
+  claimant_len=${#claimant}
+  claimant_len_le=$(u32_to_le_hex "$claimant_len")
+  printf '%s%s%s' "$journal_hex" "$claimant_len_le" "$claimant_hex"
+}
+
+# Validate that a journal hex payload encodes AST3 rules_digest at bytes 20..24.
+# Expects little-endian u32 "AST3" = 0x41535433 => hex 33545341 at byte offset 20.
+assert_ast3_rules_digest_in_journal_hex() {
+  local journal_hex="${1:-}"
+  local context="${2:-journal}"
+  local expected_le_hex="33545341"
+
+  if [[ ${#journal_hex} -lt 48 ]]; then
+    err "$context: journal too short (${#journal_hex} hex chars, need at least 48)"
+    return 1
+  fi
+
+  local rules_digest_le_hex="${journal_hex:40:8}"
+  rules_digest_le_hex=$(printf '%s' "$rules_digest_le_hex" | tr '[:upper:]' '[:lower:]')
+  if [[ "$rules_digest_le_hex" != "$expected_le_hex" ]]; then
+    err "$context: rules_digest is not AST3 (found LE hex ${rules_digest_le_hex}, expected ${expected_le_hex})"
+    err "$context: regenerate proof fixtures against the AST3 prover before running this script"
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Stellar key management
 # ---------------------------------------------------------------------------

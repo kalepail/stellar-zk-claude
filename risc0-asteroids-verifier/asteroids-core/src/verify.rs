@@ -1,7 +1,7 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST_V2};
+use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST};
 use crate::error::VerifyError;
 use crate::sim::{replay_strict, ReplayResult, ReplayViolation};
 use crate::tape::parse_tape;
@@ -12,7 +12,7 @@ pub struct GuestInput {
     pub max_frames: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationJournal {
     pub seed: u32,
     pub frame_count: u32,
@@ -20,6 +20,7 @@ pub struct VerificationJournal {
     pub final_rng_state: u32,
     pub tape_checksum: u32,
     pub rules_digest: u32,
+    pub claimant_address: String,
 }
 
 pub fn verify_guest_input(input: &GuestInput) -> Result<VerificationJournal, VerifyError> {
@@ -71,13 +72,18 @@ where
         });
     }
 
+    // Claimant address is now embedded in the tape header
+    let claimant_address = String::from_utf8(tape.header.claimant_address)
+        .map_err(|_| VerifyError::InvalidClaimantAddressUtf8)?;
+
     Ok(VerificationJournal {
         seed: tape.header.seed,
         frame_count: tape.header.frame_count,
         final_score: replay_result.final_score,
         final_rng_state: replay_result.final_rng_state,
         tape_checksum: tape.footer.checksum,
-        rules_digest: RULES_DIGEST_V2,
+        rules_digest: RULES_DIGEST,
+        claimant_address,
     })
 }
 
@@ -108,12 +114,13 @@ mod tests {
             inputs,
             replay_result.final_score,
             replay_result.final_rng_state,
+            b"",
         )
     }
 
     #[test]
     fn rejects_reserved_input_bits() {
-        let mut tape = serialize_tape(0xAABB_CCDD, &[0x10], 0, 0xAABB_CCDD);
+        let mut tape = serialize_tape(0xAABB_CCDD, &[0x10], 0, 0xAABB_CCDD, b"");
         write_footer(&mut tape, 1, 0, 0xAABB_CCDD);
 
         let err = verify_tape(&tape, 10).unwrap_err();
@@ -157,7 +164,14 @@ mod tests {
     #[test]
     fn guest_input_uses_default_max_frames_when_zero() {
         let inputs = [0x00u8; 32];
-        let tape = valid_tape(0x4455_6677, &inputs);
+        let replay_result = replay(0x4455_6677, &inputs);
+        let tape = serialize_tape(
+            0x4455_6677,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+            b"CANONICALCLAIMANT",
+        );
         let guest_input = GuestInput {
             tape,
             max_frames: 0,
@@ -165,7 +179,8 @@ mod tests {
 
         let journal = verify_guest_input(&guest_input).unwrap();
         assert_eq!(journal.frame_count, inputs.len() as u32);
-        assert_eq!(journal.rules_digest, RULES_DIGEST_V2);
+        assert_eq!(journal.rules_digest, RULES_DIGEST);
+        assert_eq!(journal.claimant_address, "CANONICALCLAIMANT");
     }
 
     #[test]
@@ -258,5 +273,24 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, VerifyError::InvalidMagic { .. }));
+    }
+
+    #[test]
+    fn rejects_non_utf8_claimant_address() {
+        let inputs = [0x00u8; 4];
+        let replay_result = replay(0x1234_5678, &inputs);
+        let mut tape = serialize_tape(
+            0x1234_5678,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+            &[0xC0, 0x80],
+        );
+        // Recompute CRC since we wrote non-UTF8 into the claimant field
+        let footer_off = TAPE_HEADER_SIZE + inputs.len();
+        let checksum = crc32(&tape[..footer_off]);
+        tape[footer_off + 8..footer_off + 12].copy_from_slice(&checksum.to_le_bytes());
+        let err = verify_tape(&tape, 10_000).unwrap_err();
+        assert!(matches!(err, VerifyError::InvalidClaimantAddressUtf8));
     }
 }

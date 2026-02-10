@@ -42,6 +42,7 @@ export interface ProofJournal {
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
+  claimant_address: string;
 }
 
 export interface ProofStats {
@@ -139,6 +140,25 @@ export function isTerminalProofStatus(status: ProofJobStatus): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ProofApiError("request timed out", 0);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function parseError(response: Response): Promise<ProofApiError> {
   let message = `request failed (${response.status})`;
   let activeJob: ProofJobPublic | null = null;
@@ -163,16 +183,19 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function submitProofJob(tapeBytes: Uint8Array): Promise<SubmitProofJobResponse> {
+export async function submitProofJob(
+  tapeBytes: Uint8Array,
+): Promise<SubmitProofJobResponse> {
   const body = new Uint8Array(tapeBytes).buffer;
+  const headers: Record<string, string> = {
+    "content-type": "application/octet-stream",
+  };
 
-  const response = await fetch("/api/proofs/jobs", {
+  const response = await fetchWithTimeout("/api/proofs/jobs", {
     method: "POST",
-    headers: {
-      "content-type": "application/octet-stream",
-    },
+    headers,
     body,
-  });
+  }, 30_000);
 
   if (!response.ok) {
     throw await parseError(response);
@@ -182,9 +205,21 @@ export async function submitProofJob(tapeBytes: Uint8Array): Promise<SubmitProof
 }
 
 export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
-  const response = await fetch(`/api/proofs/jobs/${jobId}`, {
+  const response = await fetchWithTimeout(`/api/proofs/jobs/${jobId}`, {
     method: "GET",
-  });
+  }, 10_000);
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  return parseJson<GetProofJobResponse>(response);
+}
+
+export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse> {
+  const response = await fetchWithTimeout(`/api/proofs/jobs/${jobId}`, {
+    method: "DELETE",
+  }, 10_000);
 
   if (!response.ok) {
     throw await parseError(response);
@@ -194,9 +229,9 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
 }
 
 export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
-  const response = await fetch("/api/health", {
+  const response = await fetchWithTimeout("/api/health", {
     method: "GET",
-  });
+  }, 10_000);
 
   if (!response.ok) {
     throw await parseError(response);

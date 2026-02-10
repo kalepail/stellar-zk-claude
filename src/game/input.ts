@@ -15,12 +15,36 @@ const GAME_KEYS = new Set([
   "Digit4", // Replay speed 4x
 ]);
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    return true;
+  }
+
+  if (target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  if (target instanceof HTMLElement && target.isContentEditable) {
+    return true;
+  }
+
+  return false;
+}
+
 export class InputController {
   private readonly down = new Set<string>();
   private readonly pressed = new Set<string>();
 
   handleKeyDown(event: KeyboardEvent): void {
     if (!GAME_KEYS.has(event.code)) {
+      return;
+    }
+
+    if (isEditableTarget(event.target)) {
       return;
     }
 
@@ -35,6 +59,13 @@ export class InputController {
 
   handleKeyUp(event: KeyboardEvent): void {
     if (!GAME_KEYS.has(event.code)) {
+      return;
+    }
+
+    // Always release the key, even when focus is inside a form control,
+    // so the game cannot get stuck in a "held key" state.
+    if (isEditableTarget(event.target)) {
+      this.down.delete(event.code);
       return;
     }
 

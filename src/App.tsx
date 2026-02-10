@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AsteroidsCanvas, type CompletedGameRun } from "./components/AsteroidsCanvas";
 import {
+  cancelProofJob,
   getGatewayHealth,
   ProofApiError,
   type GatewayHealthResponse,
@@ -11,6 +12,11 @@ import {
   type ProofJobStatus,
 } from "./proof/api";
 import { deserializeTape } from "./game/tape";
+import type {
+  SmartAccountConfig,
+  SmartAccountRelayerMode,
+  SmartWalletSession,
+} from "./wallet/smartAccount";
 import "./App.css";
 
 function formatHex32(value: number): string {
@@ -66,15 +72,80 @@ function statusClassName(status: ProofJobStatus | "idle"): string {
   return `status-chip status-chip--${status}`;
 }
 
+type WalletAction = "idle" | "restoring" | "connecting" | "creating" | "disconnecting";
+
+function walletActionLabel(action: WalletAction, connected: boolean): string {
+  if (action === "idle") {
+    return connected ? "Connected" : "Not Connected";
+  }
+
+  switch (action) {
+    case "restoring":
+      return "Restoring";
+    case "connecting":
+      return "Connecting";
+    case "creating":
+      return "Creating";
+    case "disconnecting":
+      return "Disconnecting";
+    default:
+      return "Wallet";
+  }
+}
+
+function walletChipClassName(action: WalletAction, connected: boolean): string {
+  if (action !== "idle") {
+    return "wallet-chip wallet-chip--busy";
+  }
+
+  return connected ? "wallet-chip wallet-chip--connected" : "wallet-chip wallet-chip--disconnected";
+}
+
+function relayerModeLabel(mode: SmartAccountRelayerMode): string {
+  switch (mode) {
+    case "channels-api-key":
+      return "OpenZeppelin Channels (API Key)";
+    case "channels-missing-key":
+      return "Channels URL Set (Missing API Key)";
+    case "proxy":
+      return "Relayer Proxy";
+    default:
+      return "Not Configured";
+  }
+}
+
+type SmartWalletModule = typeof import("./wallet/smartAccount");
+
+let smartWalletModulePromise: Promise<SmartWalletModule> | null = null;
+
+async function loadSmartWalletModule(): Promise<SmartWalletModule> {
+  if (!smartWalletModulePromise) {
+    smartWalletModulePromise = import("./wallet/smartAccount");
+  }
+
+  return smartWalletModulePromise;
+}
+
 function App() {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
   const [proofJob, setProofJob] = useState<ProofJobPublic | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [walletSession, setWalletSession] = useState<SmartWalletSession | null>(null);
+  const [walletAction, setWalletAction] = useState<WalletAction>("idle");
+  const [walletUserName, setWalletUserName] = useState("");
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletConfig, setWalletConfig] = useState<Pick<SmartAccountConfig, "networkPassphrase">>(
+    {
+      networkPassphrase: "Test SDF Network ; September 2015",
+    },
+  );
+  const [walletRelayerMode, setWalletRelayerMode] = useState<SmartAccountRelayerMode>("disabled");
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResponse | null>(null);
   const [gatewayHealthError, setGatewayHealthError] = useState<string | null>(null);
   const activeProofJobId = proofJob?.jobId ?? null;
   const activeProofJobStatus = proofJob?.status ?? null;
+  const claimantAddress = walletSession?.contractId ?? "";
 
   const handleGameOver = useCallback((run: CompletedGameRun) => {
     setLatestRun(run);
@@ -150,6 +221,80 @@ function App() {
     }
   }, [latestRun]);
 
+  const connectWallet = useCallback(async () => {
+    setWalletAction("connecting");
+    setWalletError(null);
+
+    try {
+      const walletModule = await loadSmartWalletModule();
+      const nextConfig = walletModule.getSmartAccountConfig();
+      setWalletConfig({ networkPassphrase: nextConfig.networkPassphrase });
+      setWalletRelayerMode(walletModule.getSmartAccountRelayerMode());
+      const session = await walletModule.connectSmartWallet();
+      setWalletSession(session);
+      setProofError(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "failed to connect wallet";
+      setWalletError(detail);
+    } finally {
+      setWalletAction("idle");
+    }
+  }, []);
+
+  const createWallet = useCallback(async () => {
+    setWalletAction("creating");
+    setWalletError(null);
+
+    try {
+      const walletModule = await loadSmartWalletModule();
+      const nextConfig = walletModule.getSmartAccountConfig();
+      setWalletConfig({ networkPassphrase: nextConfig.networkPassphrase });
+      setWalletRelayerMode(walletModule.getSmartAccountRelayerMode());
+      const session = await walletModule.createSmartWallet(walletUserName);
+      setWalletSession(session);
+      setProofError(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "failed to create wallet";
+      setWalletError(detail);
+    } finally {
+      setWalletAction("idle");
+    }
+  }, [walletUserName]);
+
+  const disconnectWallet = useCallback(async () => {
+    setWalletAction("disconnecting");
+    setWalletError(null);
+
+    try {
+      const walletModule = await loadSmartWalletModule();
+      const nextConfig = walletModule.getSmartAccountConfig();
+      setWalletConfig({ networkPassphrase: nextConfig.networkPassphrase });
+      setWalletRelayerMode(walletModule.getSmartAccountRelayerMode());
+      await walletModule.disconnectSmartWallet();
+      setWalletSession(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "failed to disconnect wallet";
+      setWalletError(detail);
+    } finally {
+      setWalletAction("idle");
+    }
+  }, []);
+
+  const cancelActiveJob = useCallback(async () => {
+    if (!proofJob || isTerminalProofStatus(proofJob.status)) {
+      return;
+    }
+
+    try {
+      const response = await cancelProofJob(proofJob.jobId);
+      setProofJob(response.job);
+      setProofError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to cancel job";
+      setProofError(message);
+    }
+  }, [proofJob]);
+
   useEffect(() => {
     if (!activeProofJobId || !activeProofJobStatus || isTerminalProofStatus(activeProofJobStatus)) {
       return;
@@ -203,6 +348,9 @@ function App() {
         }
         setGatewayHealth(response);
         setGatewayHealthError(null);
+        if (response.active_job) {
+          setProofJob((current) => current ?? response.active_job);
+        }
       } catch (error) {
         if (cancelled) {
           return;
@@ -226,9 +374,55 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const restore = async () => {
+      setWalletAction("restoring");
+      setWalletError(null);
+
+      try {
+        const walletModule = await loadSmartWalletModule();
+        const nextConfig = walletModule.getSmartAccountConfig();
+        const nextRelayerMode = walletModule.getSmartAccountRelayerMode();
+        const session = await walletModule.restoreSmartWalletSession();
+        if (cancelled) {
+          return;
+        }
+        setWalletConfig({ networkPassphrase: nextConfig.networkPassphrase });
+        setWalletRelayerMode(nextRelayerMode);
+        setWalletSession(session);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const detail = error instanceof Error ? error.message : "failed to restore wallet session";
+        setWalletError(detail);
+      } finally {
+        if (!cancelled) {
+          setWalletAction("idle");
+        }
+      }
+    };
+
+    void restore();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const proofBusy = proofJob ? !isTerminalProofStatus(proofJob.status) : false;
   const hasPositiveScore = (latestRun?.score ?? 0) > 0;
-  const canSubmit = Boolean(latestRun) && hasPositiveScore && !isSubmitting && !proofBusy;
+  const walletConnected = claimantAddress.trim().length > 0;
+  const walletBusy = walletAction !== "idle";
+  const canSubmit =
+    Boolean(latestRun) &&
+    hasPositiveScore &&
+    !isSubmitting &&
+    !proofBusy &&
+    walletConnected &&
+    !walletBusy;
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
@@ -236,6 +430,8 @@ function App() {
     proverHealthStatus === "compatible"
       ? "gateway-health gateway-health--ok"
       : "gateway-health gateway-health--warn";
+  const walletStatusText = walletActionLabel(walletAction, walletConnected);
+  const walletStatusClassName = walletChipClassName(walletAction, walletConnected);
 
   return (
     <main className="app-shell">
@@ -248,7 +444,7 @@ function App() {
       </section>
 
       <section className="game-panel" aria-label="Asteroids game panel">
-        <AsteroidsCanvas onGameOver={handleGameOver} />
+        <AsteroidsCanvas onGameOver={handleGameOver} claimantAddress={claimantAddress} />
       </section>
 
       <section className="proof-panel" aria-live="polite">
@@ -333,6 +529,78 @@ function App() {
             Zero-score runs are not accepted for proving or token minting.
           </p>
         ) : null}
+        {latestRun && !walletConnected ? (
+          <p className="proof-warning">Connect a smart wallet before submitting a proof.</p>
+        ) : null}
+
+        <div className="wallet-panel">
+          <div className="wallet-panel__header">
+            <div className="wallet-panel__copy">
+              <h3>Smart Wallet</h3>
+              <p>Proof claims are locked to the connected smart-account contract address.</p>
+            </div>
+            <span className={walletStatusClassName}>{walletStatusText}</span>
+          </div>
+
+          {!walletConnected ? (
+            <div className="wallet-panel__actions">
+              <input
+                type="text"
+                placeholder="Username for passkey (optional)"
+                value={walletUserName}
+                onChange={(event) => setWalletUserName(event.target.value)}
+                disabled={walletBusy}
+              />
+              <button type="button" onClick={createWallet} disabled={walletBusy}>
+                {walletAction === "creating" ? "Creating Wallet..." : "Create Wallet"}
+              </button>
+              <button type="button" onClick={connectWallet} disabled={walletBusy}>
+                {walletAction === "connecting" || walletAction === "restoring"
+                  ? "Connecting..."
+                  : "Connect Wallet"}
+              </button>
+            </div>
+          ) : (
+            <div className="wallet-panel__actions">
+              <button type="button" onClick={disconnectWallet} disabled={walletBusy}>
+                {walletAction === "disconnecting" ? "Disconnecting..." : "Disconnect Wallet"}
+              </button>
+            </div>
+          )}
+
+          <div className="claimant-field">
+            <label htmlFor="claimant-address">Claimant Address</label>
+            <input
+              id="claimant-address"
+              type="text"
+              placeholder="Connect wallet to set claimant address"
+              readOnly
+              spellCheck={false}
+              value={claimantAddress}
+            />
+          </div>
+
+          <div className="wallet-panel__meta">
+            <span>
+              <strong>Network:</strong> {walletConfig.networkPassphrase}
+            </span>
+            <span>
+              <strong>Relayer:</strong> {relayerModeLabel(walletRelayerMode)}
+            </span>
+          </div>
+
+          {walletSession ? (
+            <p className="wallet-panel__credential">
+              <strong>Credential:</strong>{" "}
+              <code>{abbreviateHex(walletSession.credentialId, 10)}</code>
+            </p>
+          ) : null}
+          {walletError ? (
+            <p className="proof-warning">
+              <strong>Wallet:</strong> {walletError}
+            </p>
+          ) : null}
+        </div>
 
         <div className="proof-actions">
           <button type="button" onClick={loadTapeFile} disabled={proofBusy}>
@@ -347,7 +615,9 @@ function App() {
               onClick={async () => {
                 const res = await fetch(`/api/proofs/jobs/${proofJob.jobId}/result`);
                 const blob = new Blob([await res.text()], { type: "application/json" });
-                window.open(URL.createObjectURL(blob), "_blank");
+                const url = URL.createObjectURL(blob);
+                window.open(url, "_blank");
+                URL.revokeObjectURL(url);
               }}
             >
               Open Raw Proof JSON
@@ -362,6 +632,11 @@ function App() {
             </p>
             <p>
               <strong>Queue Attempts:</strong> {proofJob.queue.attempts}
+              {proofBusy ? (
+                <button type="button" className="cancel-job-btn" onClick={cancelActiveJob}>
+                  Cancel
+                </button>
+              ) : null}
             </p>
             {proofJob.queue.lastError ? (
               <p className="proof-warning">

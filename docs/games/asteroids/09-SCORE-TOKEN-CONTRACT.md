@@ -35,7 +35,7 @@ Claimed entries are stored in **persistent** storage.
 ```rust
 enum ScoreError {
     InvalidJournalLength = 1, // journal_raw is not exactly 24 bytes
-    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5432 ("AST2")
+    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5433 ("AST3")
     JournalAlreadyClaimed = 3,// journal digest previously claimed
     ZeroScoreNotAllowed = 4,  // final_score == 0
 }
@@ -57,7 +57,7 @@ Validation and execution in order:
 
 1. `player.require_auth()`
 2. `journal_raw.len() != 24` → `InvalidJournalLength`
-3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5432` → `InvalidRulesDigest`
+3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5433` → `InvalidRulesDigest`
 4. Decode `final_score` from bytes `[8..12]` LE; must be `> 0` → `ZeroScoreNotAllowed`
 5. `journal_digest = sha256(journal_raw)`
 6. Check `Claimed(journal_digest)` not in persistent storage → `JournalAlreadyClaimed`
@@ -77,7 +77,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 - `image_id() -> BytesN<32>` — current verifier image ID
 - `router_id() -> Address` — router contract address
 - `token_id() -> Address` — token contract address
-- `rules_digest() -> u32` — expected journal rules digest (`0x4153_5432`)
+- `rules_digest() -> u32` — expected journal rules digest (`0x4153_5433`)
 
 ## Admin Functions
 
@@ -95,7 +95,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 | 8..12 | `final_score` | Score minted as tokens |
 | 12..16 | `final_rng_state` | RNG state at game end |
 | 16..20 | `tape_checksum` | CRC-32 of tape (unused by contract) |
-| 20..24 | `rules_digest` | Must be `0x4153_5432` ("AST2") |
+| 20..24 | `rules_digest` | Must be `0x4153_5433` ("AST3") |
 
 ## Event
 

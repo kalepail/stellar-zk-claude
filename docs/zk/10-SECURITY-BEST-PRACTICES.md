@@ -35,7 +35,7 @@ For replay/state-transition verification systems:
 RISC Zero dev mode (`RISC0_DEV_MODE=1`) generates fake receipts that bypass proving. Essential rules:
 - Dev mode receipts **fail standard verification**. Only a dev-mode verifier will accept them.
 - Use the `disable-dev-mode` feature flag on `risc0-zkvm` in production builds. If `RISC0_DEV_MODE` is set with this flag, the prover will panic.
-- Never deploy with `ALLOW_DEV_MODE_REQUESTS=true` in production API servers.
+- Never deploy with `PROOF_MODE_POLICY=secure-and-dev` in production API servers.
 - Dev mode is safe for: cycle count profiling, A/B optimization testing, local development.
 
 ## Precompile Timing Considerations

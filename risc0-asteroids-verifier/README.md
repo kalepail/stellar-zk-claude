@@ -204,7 +204,7 @@ If `API_KEY` is set, all `/api/*` routes require either:
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21' \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy' \
   --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
@@ -219,8 +219,8 @@ echo "Job ID: ${JOB_ID}"
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
 | `segment_limit_po2` | `21` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
-| `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
-| `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
+| `proof_mode` | `secure` | `secure` or `dev` (dev only when policy permits) |
+| `verify_mode` | `policy` | `policy` (skip prover-side verification) or `verify` |
 
 Zero-score tapes (`final_score == 0`) are rejected with `400` and
 `error_code: "zero_score_not_allowed"`.
@@ -292,7 +292,7 @@ See `api-server/.env.example` for all options. Key variables:
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
 | `CORS_ALLOWED_ORIGIN` | _(empty)_ | Optional single allowed browser origin |
-| `ALLOW_DEV_MODE_REQUESTS` | `false` | Allow `allow_dev_mode=true` query param |
+| `PROOF_MODE_POLICY` | `secure-only` | `secure-only` or `secure-and-dev` for `proof_mode` requests |
 
 ## Connecting the Cloudflare Worker
 
@@ -308,7 +308,8 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
 | `PROVER_FALLBACK_SEGMENT_LIMIT_PO2` | `21` by default; auto-downgrade target when prover reports OOM/allocation failure |
 | `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
-| `PROVER_VERIFY_RECEIPT` | `0` by default; on-chain verification is the source of truth |
+| `PROVER_PROOF_MODE` | `secure` by default; use `dev` only for development-only prover runs |
+| `PROVER_VERIFY_MODE` | `policy` by default; on-chain verification is the source of truth |
 | `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
 | `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
@@ -338,7 +339,7 @@ For local testing without the HTTP API:
 cd risc0-asteroids-verifier
 
 # Dev mode (fast, fake proof):
-RISC0_DEV_MODE=1 cargo run -p host --release -- --allow-dev-mode --tape ../test-fixtures/test-medium.tape
+RISC0_DEV_MODE=1 cargo run -p host --release -- --proof-mode dev --verify-mode policy --tape ../test-fixtures/test-medium.tape
 
 # Real proof:
 RISC0_DEV_MODE=0 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape
@@ -349,6 +350,23 @@ cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --journa
 # Execute-only benchmark (no proof):
 cargo run -p host --release --bin benchmark -- --tape ../test-fixtures/test-medium.tape
 ```
+
+## Core Cycle Regression Gate
+
+For deterministic guest-cost tracking (CPU mode, no CUDA/proving), run:
+
+```bash
+bash scripts/bench-core-cycles.sh --threshold-mode check
+```
+
+Optional hotspot capture (writes `.pprof` + `go tool pprof -top` report):
+
+```bash
+bash scripts/bench-core-cycles.sh --pprof-case medium --threshold-mode check
+```
+
+Threshold file:
+- `risc0-asteroids-verifier/benchmarks/core-cycle-thresholds.env`
 
 ## Tests
 
@@ -364,17 +382,18 @@ Use this when tuning `segment_limit_po2` on your x86/CUDA prover host:
 bash scripts/bench-segment-sweep.sh https://your-prover.example.com \
   --seg-floor 19 \
   --seg-ceiling 22 \
-  --receipt composite \
-  --receipt succinct \
+  --receipts composite,succinct \
   --repeat 2 \
-  --verify-receipt false \
-  --include-real
+  --verify-mode policy \
+  --tapes all
 ```
 
 Key knobs:
-- `--seg-floor` / `--seg-ceiling`: requested sweep bounds (clamped to `/health` policy unless `--strict-bounds`).
-- `--receipt`: repeatable; benchmark `composite`, `succinct`, and/or `groth16`.
-- `--verify-receipt`: `false` by default to match production policy.
+- `--seg-floor` / `--seg-ceiling`: requested sweep bounds.
+- `--bounds-mode`: `clamp` (default) or `strict` against `/health` policy bounds.
+- `--receipts`: CSV list of `composite`, `succinct`, and/or `groth16`.
+- `--tapes`: CSV list of `short`, `medium`, `real`, or `all`.
+- `--verify-mode`: `policy` (skip prover-side verification) or `verify` (force prover-side verification).
 - `--max-frames`: optional override for stress scenarios.
 - `--repeat`: run each configuration multiple times for stability.
 - Zero-score tapes are skipped automatically (prover policy rejects `final_score=0`).

@@ -88,15 +88,6 @@ def write_json(path: Path, data: Dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def parse_bool(raw: str) -> bool:
-    lowered = raw.strip().lower()
-    if lowered in {"1", "true", "yes", "y", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "n", "off"}:
-        return False
-    raise argparse.ArgumentTypeError(f"invalid boolean: {raw}")
-
-
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -352,7 +343,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-step", type=float, default=0.18)
     parser.add_argument("--decay", type=float, default=0.86)
     parser.add_argument("--min-step", type=float, default=0.04)
-    parser.add_argument("--install-champion", type=parse_bool, default=True)
+    parser.add_argument(
+        "--install-mode",
+        choices=["champion", "restore"],
+        default="champion",
+        help="champion=install session best into active profile, restore=restore previous active profile",
+    )
+    parser.add_argument(
+        "--start-profile",
+        default="",
+        help="Optional profile JSON path to use as the initial incumbent",
+    )
+    parser.add_argument(
+        "--anchor-mode",
+        choices=["all", "core"],
+        default="all",
+        help="all=core anchors + auto champion-* profiles, core=base/champion_score/champion_insane only",
+    )
     parser.add_argument(
         "--selection-metric",
         choices=["objective", "score", "insane"],
@@ -396,7 +403,14 @@ def main() -> int:
     write_json(session_dir / "backup-active-profile.json", old_profile)
 
     rng = random.Random(args.random_seed)
-    if champion_profile_path.exists():
+    if args.start_profile.strip():
+        resolved_start = Path(args.start_profile)
+        if not resolved_start.is_absolute():
+            resolved_start = (repo_root / resolved_start).resolve()
+        if not resolved_start.exists():
+            raise FileNotFoundError(f"start profile not found: {resolved_start}")
+        start_profile_path = resolved_start
+    elif champion_profile_path.exists():
         start_profile_path = champion_profile_path
     else:
         start_profile_path = base_profile_path
@@ -406,11 +420,24 @@ def main() -> int:
     global_best_result: CandidateResult | None = None
     incumbent_sig = profile_signature(incumbent_profile)
     anchor_profiles: List[Tuple[str, Dict[str, float]]] = []
-    for label, path in (
+    anchor_source_pairs: List[Tuple[str, Path]] = [
         ("base", base_profile_path),
         ("champion_score", lab_root / "profiles" / "champion-score.json"),
         ("champion_insane", lab_root / "profiles" / "champion-insane.json"),
-    ):
+    ]
+    if args.anchor_mode == "all":
+        seen_anchor_paths = {path.resolve() for _, path in anchor_source_pairs if path.exists()}
+        for path in sorted((lab_root / "profiles").glob("champion-*.json")):
+            resolved = path.resolve()
+            if not path.exists() or resolved in seen_anchor_paths:
+                continue
+            if path.name in {"champion.json"}:
+                continue
+            label = f"auto_{path.stem.replace('-', '_')}"
+            anchor_source_pairs.append((label, path))
+            seen_anchor_paths.add(resolved)
+
+    for label, path in anchor_source_pairs:
         if not path.exists():
             continue
         profile = normalize_profile(load_json(path))
@@ -651,6 +678,8 @@ def main() -> int:
             "max_frames": args.max_frames,
             "jobs": args.jobs,
             "selection_metric": args.selection_metric,
+            "anchor_mode": args.anchor_mode,
+            "install_mode": args.install_mode,
             "seeds_file": str(seeds_file),
             "random_seed": args.random_seed,
             "start_profile": str(start_profile_path),
@@ -668,7 +697,7 @@ def main() -> int:
         }
         write_json(session_dir / "summary.json", summary)
 
-        if args.install_champion:
+        if args.install_mode == "champion":
             write_json(active_profile_path, global_best_profile)
         else:
             write_json(active_profile_path, old_profile)

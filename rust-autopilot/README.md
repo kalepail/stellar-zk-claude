@@ -87,18 +87,14 @@ cargo run --release -- roster-manifest --output records/latest-roster-manifest.j
 Canonical roster defaults are centralized in `scripts/bot-roster.sh`.
 
 - `./scripts/run-efficiency-elite-suite.sh`
+- `./scripts/run-omega-top3-deep.sh`
 - `./scripts/run-30m-breakability-hunt.sh`
 - `./scripts/run-offline-alltime-parallel-hunt.sh`
 - `./scripts/run-runtime-nonoffline-parallel-suite.sh`
 - `./scripts/run-wrap-awareness-suite.sh`
 - `./scripts/rebench-finalists.sh`
 - `./scripts/sync-records.sh`
-- `./scripts/prune-artifacts.sh` (`--apply` to execute deletion)
-
-Legacy precision script names are retained as wrappers:
-
-- `./scripts/run-precision-intel-suite.sh` -> calls `run-efficiency-elite-suite.sh`
-- `./scripts/run-precision-top3-deep.sh` -> calls `run-omega-top3-deep.sh`
+- `./scripts/prune-artifacts.sh` (`--mode apply` to execute deletion)
 
 ## Output Artifacts
 

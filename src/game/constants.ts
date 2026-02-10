@@ -18,13 +18,14 @@ export const SHIP_BULLET_SPEED = 520;
 export const SHIP_BULLET_LIMIT = 4;
 
 export const SAUCER_BULLET_SPEED = 280;
+export const SAUCER_BULLET_LIMIT = 2;
 
 // Frame-count timer constants (integer, ZK-friendly)
-export const SHIP_RESPAWN_FRAMES = 75; // 1.25s * 60fps
+export const SHIP_RESPAWN_FRAMES = 75;
 export const SHIP_SPAWN_INVULNERABLE_FRAMES = 120; // 2s * 60fps
-export const SHIP_BULLET_LIFETIME_FRAMES = 72; // 1.2s * 60fps
-export const SHIP_BULLET_COOLDOWN_FRAMES = 10; // 0.16s * 60fps ≈ 9.6 → 10
-export const SAUCER_BULLET_LIFETIME_FRAMES = 72; // 1.2s * 60fps
+export const SHIP_BULLET_LIFETIME_FRAMES = 72; // Arcade-style: timer (#$12) on 4-frame cadence maps to ~72 frames
+export const SHIP_BULLET_COOLDOWN_FRAMES = 10;
+export const SAUCER_BULLET_LIFETIME_FRAMES = 72; // Arcade-style: timer (#$12) on 4-frame cadence maps to ~72 frames
 export const SAUCER_SPAWN_MIN_FRAMES = 420; // 7s * 60fps
 export const SAUCER_SPAWN_MAX_FRAMES = 840; // 14s * 60fps
 
@@ -59,6 +60,9 @@ export const CRT_CURVATURE = 0.02;
 // Anti-lurking behavior
 export const LURK_TIME_THRESHOLD_FRAMES = 360; // 6s * 60fps
 export const LURK_SAUCER_SPAWN_FAST_FRAMES = 180; // 3s * 60fps
+
+// Rules version tag — written to tape header byte [5]
+export const RULES_TAG = 3; // "AST3"
 
 // === Q12.4 World dimensions ===
 export const WORLD_WIDTH_Q12_4 = 15360; // 960 * 16

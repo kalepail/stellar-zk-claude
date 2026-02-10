@@ -4,6 +4,7 @@ import {
   DEFAULT_POLL_TIMEOUT_MS,
   DEFAULT_PROVER_HEALTH_CACHE_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+  DEFAULT_SEGMENT_LIMIT_PO2,
   EXPECTED_RULES_DIGEST,
   EXPECTED_RULESET,
   RETRYABLE_JOB_ERROR_CODES,
@@ -70,25 +71,14 @@ interface ProverCreateOptions {
   segmentLimitPo2?: number;
 }
 
-function buildProverCreateUrlWithOptions(env: WorkerEnv, options?: ProverCreateOptions): URL {
+function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOptions): URL {
   const url = buildProverUrl(env, "/api/jobs/prove-tape/raw");
 
-  const receiptKind = env.PROVER_RECEIPT_KIND?.trim();
-  if (receiptKind) {
-    url.searchParams.set("receipt_kind", receiptKind);
-  }
-
   const segmentLimitPo2 =
-    typeof options?.segmentLimitPo2 === "number"
+    typeof options.segmentLimitPo2 === "number"
       ? Math.max(1, Math.floor(options.segmentLimitPo2))
-      : parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 21, 1);
+      : DEFAULT_SEGMENT_LIMIT_PO2;
   url.searchParams.set("segment_limit_po2", String(segmentLimitPo2));
-
-  const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
-  url.searchParams.set("max_frames", String(maxFrames));
-
-  const verifyReceipt = parseBoolean(env.PROVER_VERIFY_RECEIPT, false);
-  url.searchParams.set("verify_receipt", verifyReceipt ? "true" : "false");
 
   return url;
 }
@@ -280,7 +270,7 @@ export async function getValidatedProverHealth(
 export async function submitToProver(
   env: WorkerEnv,
   tapeBytes: Uint8Array,
-  options?: ProverCreateOptions,
+  options: ProverCreateOptions,
 ): Promise<ProverSubmitResult> {
   try {
     await getValidatedProverHealth(env);
@@ -301,7 +291,7 @@ export async function submitToProver(
   const createUrl = buildProverCreateUrlWithOptions(env, options);
   const submittedSegmentLimitPo2 = parseInteger(
     createUrl.searchParams.get("segment_limit_po2") ?? undefined,
-    parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 21, 1),
+    DEFAULT_SEGMENT_LIMIT_PO2,
     1,
   );
 
@@ -378,12 +368,133 @@ export async function submitToProver(
   };
 }
 
-export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
+/**
+ * Single-shot prover status check: one HTTP fetch, parse, return.
+ * Used by `kickAlarm()` for lightweight progress checks and internally
+ * by `pollProver()` for its polling loop.
+ */
+export async function pollProverOnce(
+  env: WorkerEnv,
+  proverJobId: string,
+): Promise<ProverPollResult> {
   const requestTimeoutMs = parseInteger(
     env.PROVER_REQUEST_TIMEOUT_MS,
     DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
     1_000,
   );
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      buildProverStatusUrl(env, proverJobId),
+      {
+        method: "GET",
+        headers: buildProverHeaders(env, false),
+      },
+      requestTimeoutMs,
+    );
+  } catch (error) {
+    return {
+      type: "retry",
+      message: `failed reading prover status: ${safeErrorMessage(error)}`,
+    };
+  }
+
+  if (response.status === 429 || response.status >= 500) {
+    let errorBody: ProverErrorResponse | undefined;
+    try {
+      errorBody = (await response.json()) as ProverErrorResponse;
+    } catch {
+      // Ignore parse errors.
+    }
+    const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
+    const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
+    return {
+      type: "retry",
+      message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
+    };
+  }
+
+  // A 404 means the prover lost the job (crash/restart). The tape is
+  // still valid — clear the prover job ID so the next attempt
+  // re-submits rather than polling a dead job forever.
+  if (response.status === 404) {
+    return {
+      type: "retry",
+      message: "prover job not found (likely prover restart); will re-submit",
+      clearProverJob: true,
+    };
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch {
+      // Ignore parse errors.
+    }
+
+    return {
+      type: "fatal",
+      message: `prover status endpoint returned ${response.status}: ${detail || "no body"}`,
+    };
+  }
+
+  let payload: ProverGetJobResponse;
+  try {
+    payload = await parseJson<ProverGetJobResponse>(response);
+  } catch (error) {
+    return {
+      type: "retry",
+      message: `failed parsing prover status response: ${safeErrorMessage(error)}`,
+    };
+  }
+
+  if (payload.status === "succeeded") {
+    if (!payload.result?.proof || !payload.result.proof.journal || !payload.result.proof.stats) {
+      return {
+        type: "retry",
+        message: "prover reported success but result payload was incomplete; will re-submit",
+        clearProverJob: true,
+      };
+    }
+    return {
+      type: "success",
+      response: payload,
+    };
+  }
+
+  if (payload.status === "failed") {
+    if (payload.error_code && RETRYABLE_JOB_ERROR_CODES.has(payload.error_code)) {
+      return {
+        type: "retry",
+        message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
+        clearProverJob: true,
+      };
+    }
+    const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
+    return {
+      type: "fatal",
+      message: payload.error
+        ? `prover marked job as failed${codePart}: ${payload.error}`
+        : `prover marked job as failed${codePart}`,
+    };
+  }
+
+  if (payload.status !== "queued" && payload.status !== "running") {
+    return {
+      type: "fatal",
+      message: `prover returned unknown job status: ${payload.status}`,
+    };
+  }
+
+  return {
+    type: "running",
+    status: payload.status,
+  };
+}
+
+export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
   const pollTimeoutMs = parseInteger(env.PROVER_POLL_TIMEOUT_MS, DEFAULT_POLL_TIMEOUT_MS, 5_000);
   const pollIntervalMs = parseInteger(env.PROVER_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 500);
   const pollBudgetMs = parseInteger(
@@ -398,116 +509,16 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
   // Polling is intentionally sequential to preserve strict single-job semantics.
   /* eslint-disable no-await-in-loop */
   while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
-        buildProverStatusUrl(env, proverJobId),
-        {
-          method: "GET",
-          headers: buildProverHeaders(env, false),
-        },
-        requestTimeoutMs,
-      );
-    } catch (error) {
-      return {
-        type: "retry",
-        message: `failed reading prover status: ${safeErrorMessage(error)}`,
-      };
+    const result = await pollProverOnce(env, proverJobId);
+
+    // Terminal results (success, retry, fatal) break out immediately.
+    if (result.type !== "running") {
+      return result;
     }
 
-    if (response.status === 429 || response.status >= 500) {
-      let errorBody: ProverErrorResponse | undefined;
-      try {
-        errorBody = (await response.json()) as ProverErrorResponse;
-      } catch {
-        // Ignore parse errors.
-      }
-      const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
-      const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
-      return {
-        type: "retry",
-        message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
-      };
-    }
-
-    // A 404 means the prover lost the job (crash/restart). The tape is
-    // still valid — clear the prover job ID so the next attempt
-    // re-submits rather than polling a dead job forever.
-    if (response.status === 404) {
-      return {
-        type: "retry",
-        message: "prover job not found (likely prover restart); will re-submit",
-        clearProverJob: true,
-      };
-    }
-
-    if (!response.ok) {
-      let detail = "";
-      try {
-        detail = await response.text();
-      } catch {
-        // Ignore parse errors.
-      }
-
-      return {
-        type: "fatal",
-        message: `prover status endpoint returned ${response.status}: ${detail || "no body"}`,
-      };
-    }
-
-    let payload: ProverGetJobResponse;
-    try {
-      payload = await parseJson<ProverGetJobResponse>(response);
-    } catch (error) {
-      return {
-        type: "retry",
-        message: `failed parsing prover status response: ${safeErrorMessage(error)}`,
-      };
-    }
-
-    if (payload.status === "succeeded") {
-      if (!payload.result?.proof || !payload.result.proof.journal || !payload.result.proof.stats) {
-        return {
-          type: "retry",
-          message: "prover reported success but result payload was incomplete; will re-submit",
-          clearProverJob: true,
-        };
-      }
-      return {
-        type: "success",
-        response: payload,
-      };
-    }
-
-    if (payload.status === "failed") {
-      if (payload.error_code && RETRYABLE_JOB_ERROR_CODES.has(payload.error_code)) {
-        return {
-          type: "retry",
-          message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
-          clearProverJob: true,
-        };
-      }
-      const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
-      return {
-        type: "fatal",
-        message: payload.error
-          ? `prover marked job as failed${codePart}: ${payload.error}`
-          : `prover marked job as failed${codePart}`,
-      };
-    }
-
-    if (payload.status !== "queued" && payload.status !== "running") {
-      return {
-        type: "fatal",
-        message: `prover returned unknown job status: ${payload.status}`,
-      };
-    }
-
+    // Still running — if budget is almost exhausted, return as-is.
     if (Date.now() + pollIntervalMs >= budgetDeadline) {
-      return {
-        type: "running",
-        status: payload.status,
-      };
+      return result;
     }
 
     await sleep(pollIntervalMs);
