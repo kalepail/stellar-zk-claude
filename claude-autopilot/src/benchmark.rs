@@ -17,6 +17,7 @@ pub struct RunRecord {
     pub final_lives: i32,
     pub final_wave: i32,
     pub game_over: bool,
+    pub rules_digest: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,6 +116,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<BenchmarkReport> {
             final_lives: r.metrics.final_lives,
             final_wave: r.metrics.final_wave,
             game_over: r.metrics.game_over,
+            rules_digest: r.metrics.rules_digest,
         })
         .collect();
     run_records.sort_by(|a, b| b.final_score.cmp(&a.final_score));
@@ -122,7 +124,12 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<BenchmarkReport> {
     let mut saved_tapes = Vec::new();
     if config.save_top > 0 {
         let mut order: Vec<usize> = (0..runs.len()).collect();
-        order.sort_by(|a, b| runs[*b].metrics.final_score.cmp(&runs[*a].metrics.final_score));
+        order.sort_by(|a, b| {
+            runs[*b]
+                .metrics
+                .final_score
+                .cmp(&runs[*a].metrics.final_score)
+        });
 
         let save_dir = config.out_dir.join("top-tapes");
         fs::create_dir_all(&save_dir)?;
