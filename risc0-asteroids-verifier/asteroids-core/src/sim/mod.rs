@@ -313,9 +313,9 @@ fn validate_transition(
         }
     }
 
-    let ship_speed_sq =
-        (next.ship_vx as i64 * next.ship_vx as i64) + (next.ship_vy as i64 * next.ship_vy as i64);
-    if ship_speed_sq > SHIP_MAX_SPEED_SQ_Q16_16 as i64 {
+    // Keep this in i32 for RV32 guest performance (speed components are tightly bounded).
+    let ship_speed_sq = (next.ship_vx * next.ship_vx) + (next.ship_vy * next.ship_vy);
+    if ship_speed_sq > SHIP_MAX_SPEED_SQ_Q16_16 {
         return Err(RuleCode::ShipSpeedClamp);
     }
 
@@ -338,8 +338,8 @@ fn validate_transition(
         let respawned_this_frame = !prev.ship_can_control && next.ship_can_control;
 
         if prev.ship_can_control {
-            let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4) as i64;
-            let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4) as i64;
+            let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4);
+            let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4);
             let step_sq = (dx * dx) + (dy * dy);
             if step_sq > max_ship_step_sq_q12_4() {
                 return Err(RuleCode::ShipPositionStep);
@@ -382,8 +382,8 @@ fn wave_asteroid_count(wave: i32) -> usize {
 }
 
 #[inline]
-fn max_ship_step_sq_q12_4() -> i64 {
-    (SHIP_MAX_SPEED_SQ_Q16_16 as i64 >> 8) + 4
+fn max_ship_step_sq_q12_4() -> i32 {
+    (SHIP_MAX_SPEED_SQ_Q16_16 >> 8) + 4
 }
 
 #[inline]

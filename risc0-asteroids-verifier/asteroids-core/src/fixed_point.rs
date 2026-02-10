@@ -88,8 +88,10 @@ pub fn apply_drag(v: i32) -> i32 {
 }
 
 pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i32) {
-    let max = max_sq_q16_16 as i64;
-    let mut speed_sq = (vx as i64 * vx as i64) + (vy as i64 * vy as i64);
+    // Kept in i32 for RV32 guest performance. This stays safe because vx/vy are
+    // tightly bounded by the game physics and clamping rules.
+    let max = max_sq_q16_16;
+    let mut speed_sq = (vx * vx) + (vy * vy);
 
     if speed_sq <= max {
         return (vx, vy);
@@ -98,7 +100,7 @@ pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i
     while speed_sq > max {
         vx = (vx * 3) >> 2;
         vy = (vy * 3) >> 2;
-        speed_sq = (vx as i64 * vx as i64) + (vy as i64 * vy as i64);
+        speed_sq = (vx * vx) + (vy * vy);
     }
 
     (vx, vy)
