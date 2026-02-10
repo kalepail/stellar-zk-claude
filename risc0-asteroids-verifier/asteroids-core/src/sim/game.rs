@@ -39,7 +39,6 @@ impl Game {
                 vx: 0,
                 vy: 0,
                 angle: 0,
-                radius: SHIP_RADIUS,
                 can_control: true,
                 fire_cooldown: 0,
                 respawn_timer: 0,
@@ -132,7 +131,7 @@ impl Game {
             vx: ship.vx,
             vy: ship.vy,
             angle: ship.angle,
-            radius: ship.radius,
+            radius: SHIP_RADIUS,
             can_control: ship.can_control,
             fire_cooldown: ship.fire_cooldown,
             respawn_timer: ship.respawn_timer,
@@ -234,7 +233,6 @@ impl Game {
             vx: 0,
             vy: 0,
             angle: 192,
-            radius: SHIP_RADIUS,
             can_control: true,
             fire_cooldown: 0,
             respawn_timer: 0,
@@ -364,7 +362,7 @@ impl Game {
                     asteroid.radius,
                     spawn_x,
                     spawn_y,
-                    self.ship.radius,
+                    SHIP_RADIUS,
                 ),
             );
             if min_clearance_sq < best_known_safety_score {
@@ -381,7 +379,7 @@ impl Game {
                     saucer.radius,
                     spawn_x,
                     spawn_y,
-                    self.ship.radius,
+                    SHIP_RADIUS,
                 ),
             );
             if min_clearance_sq < best_known_safety_score {
@@ -398,7 +396,7 @@ impl Game {
                     BULLET_RADIUS,
                     spawn_x,
                     spawn_y,
-                    self.ship.radius,
+                    SHIP_RADIUS,
                 ),
             );
             if min_clearance_sq < best_known_safety_score {
@@ -415,7 +413,7 @@ impl Game {
                     BULLET_RADIUS,
                     spawn_x,
                     spawn_y,
-                    self.ship.radius,
+                    SHIP_RADIUS,
                 ),
             );
             if min_clearance_sq < best_known_safety_score {
@@ -599,7 +597,7 @@ impl Game {
     }
 
     fn spawn_ship_bullet(&mut self) {
-        let (dx, dy) = displace_q12_4(self.ship.angle, self.ship.radius + 6);
+        let (dx, dy) = displace_q12_4(self.ship.angle, SHIP_RADIUS + 6);
         let start_x = wrap_x_q12_4(self.ship.x + dx);
         let start_y = wrap_y_q12_4(self.ship.y + dy);
 
@@ -959,7 +957,7 @@ impl Game {
                 if collides_q12_4(
                     self.ship.x,
                     self.ship.y,
-                    self.ship.radius,
+                    SHIP_RADIUS,
                     asteroid.x,
                     asteroid.y,
                     adjusted_radius,
@@ -978,7 +976,7 @@ impl Game {
             if collides_q12_4(
                 self.ship.x,
                 self.ship.y,
-                self.ship.radius,
+                SHIP_RADIUS,
                 bullet.x,
                 bullet.y,
                 BULLET_RADIUS,
@@ -998,7 +996,7 @@ impl Game {
             if collides_q12_4(
                 self.ship.x,
                 self.ship.y,
-                self.ship.radius,
+                SHIP_RADIUS,
                 saucer.x,
                 saucer.y,
                 saucer.radius,

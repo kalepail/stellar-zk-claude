@@ -44,7 +44,6 @@ struct Ship {
     vx: i32,
     vy: i32,
     angle: i32,
-    radius: i32,
     can_control: bool,
     fire_cooldown: i32,
     respawn_timer: i32,
