@@ -29,7 +29,7 @@ pub(crate) use config::{
 };
 #[cfg(test)]
 pub(crate) use config::{
-    ProofModePolicy, DEFAULT_MAX_SEGMENT_LIMIT_PO2, DEFAULT_MIN_SEGMENT_LIMIT_PO2,
+    DEFAULT_MAX_SEGMENT_LIMIT_PO2, DEFAULT_MIN_SEGMENT_LIMIT_PO2,
 };
 pub(crate) use handlers::{create_prove_job_raw, delete_job, get_job, health, unauthorized};
 #[cfg(test)]
@@ -81,7 +81,7 @@ async fn main() -> std::io::Result<()> {
     let job_store = JobStore::open(&data_dir).expect("failed to open job store");
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] proof_mode_policy={} http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
+        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] dev_mode={} http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
         bind_addr,
         accelerator(),
         FIXED_PROVER_CONCURRENCY,
@@ -90,7 +90,7 @@ async fn main() -> std::io::Result<()> {
         policy.max_frames,
         policy.min_segment_limit_po2,
         policy.max_segment_limit_po2,
-        policy.proof_mode_policy.as_str(),
+        policy.dev_mode_enabled,
         http_workers,
         http_max_connections,
         http_keep_alive_secs,
@@ -181,7 +181,7 @@ mod tests {
             max_frames: MAX_FRAMES_DEFAULT,
             min_segment_limit_po2: DEFAULT_MIN_SEGMENT_LIMIT_PO2,
             max_segment_limit_po2: DEFAULT_MAX_SEGMENT_LIMIT_PO2,
-            proof_mode_policy: ProofModePolicy::SecureOnly,
+            dev_mode_enabled: false,
         }
     }
 
@@ -229,7 +229,13 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_rejects_zero_score() {
         let zero_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0, 0xAABB_CCDD, b"");
+            asteroids_verifier_core::tape::serialize_tape(
+                0xDEAD_BEEF,
+                &[0x00],
+                0,
+                0xAABB_CCDD,
+                b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            );
         let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
             .expect_err("zero score should be rejected");
         assert_eq!(code, "zero_score_not_allowed");
@@ -238,21 +244,31 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_accepts_positive_score() {
         let positive_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10, 0xAABB_CCDD, b"");
+            asteroids_verifier_core::tape::serialize_tape(
+                0xDEAD_BEEF,
+                &[0x00],
+                10,
+                0xAABB_CCDD,
+                b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            );
         assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }
 
     #[test]
-    fn policy_rejects_proof_mode_dev_when_disabled() {
+    fn policy_sets_proof_mode_secure_when_dev_mode_disabled() {
         let policy = strict_policy();
-        let (msg, code) = policy
-            .to_options(&ProveTapeQuery {
-                proof_mode: Some(ProofMode::Dev),
-                ..Default::default()
-            })
-            .unwrap_err();
-        assert!(msg.contains("proof_mode"));
-        assert_eq!(code, "proof_mode_disabled");
+        let options = policy.to_options(&ProveTapeQuery::default()).unwrap();
+        assert_eq!(options.proof_mode, ProofMode::Secure);
+    }
+
+    #[test]
+    fn policy_sets_proof_mode_dev_when_dev_mode_enabled() {
+        let policy = ServerPolicy {
+            dev_mode_enabled: true,
+            ..strict_policy()
+        };
+        let options = policy.to_options(&ProveTapeQuery::default()).unwrap();
+        assert_eq!(options.proof_mode, ProofMode::Dev);
     }
 
     #[test]

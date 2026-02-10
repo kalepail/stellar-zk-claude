@@ -32,7 +32,7 @@ with `400` and `error_code: "zero_score_not_allowed"`.
 From `risc0-asteroids-verifier/`:
 
 ```bash
-cargo run --release -p api-server
+RISC0_DEV_MODE=1 cargo run --release -p api-server
 ```
 
 Health check:
@@ -85,8 +85,7 @@ Prover concurrency is fixed at `1` in code.
 
 ## Security Defaults
 
-- `PROOF_MODE_POLICY=secure-only`
-- `RISC0_DEV_MODE=0`
+- `RISC0_DEV_MODE=0` in production (secure proving), `RISC0_DEV_MODE=1` only for local/dev
 - `verify_mode` defaults to `policy` (verification happens on-chain)
 
 These defaults keep proving in production-safe mode.

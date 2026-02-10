@@ -219,11 +219,13 @@ echo "Job ID: ${JOB_ID}"
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
 | `segment_limit_po2` | `21` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
-| `proof_mode` | `secure` | `secure` or `dev` (dev only when policy permits) |
 | `verify_mode` | `policy` | `policy` (skip prover-side verification) or `verify` |
 
 Zero-score tapes (`final_score == 0`) are rejected with `400` and
 `error_code: "zero_score_not_allowed"`.
+
+`proof_mode` is not a request parameter: the api-server forces proof mode from
+`RISC0_DEV_MODE` at startup (dev receipts only when `RISC0_DEV_MODE=1`).
 
 ### Poll for completion
 
@@ -292,7 +294,6 @@ See `api-server/.env.example` for all options. Key variables:
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
 | `CORS_ALLOWED_ORIGIN` | _(empty)_ | Optional single allowed browser origin |
-| `PROOF_MODE_POLICY` | `secure-only` | `secure-only` or `secure-and-dev` for `proof_mode` requests |
 
 ## Connecting the Cloudflare Worker
 

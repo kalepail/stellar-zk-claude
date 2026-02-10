@@ -11,8 +11,6 @@ pub(crate) struct ProveTapeQuery {
     #[serde(default)]
     pub(crate) segment_limit_po2: Option<u32>,
     #[serde(default)]
-    pub(crate) proof_mode: Option<ProofMode>,
-    #[serde(default)]
     pub(crate) verify_mode: Option<VerifyMode>,
 }
 

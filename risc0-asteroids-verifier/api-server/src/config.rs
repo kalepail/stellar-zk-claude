@@ -1,7 +1,7 @@
 use std::{env, sync::Arc};
 
 use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
-use host::{ProofMode, ProveOptions, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT};
+use host::{risc0_dev_mode_enabled, ProofMode, ProveOptions, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT};
 use tokio::sync::Semaphore;
 
 use crate::{JobStore, ProveTapeQuery};
@@ -21,54 +21,12 @@ pub(crate) const DEFAULT_HTTP_KEEP_ALIVE_SECS: u64 = 75;
 // so the supervisor can restart the process (prevents a permanently wedged prover).
 pub(crate) const DEFAULT_TIMED_OUT_PROOF_KILL_SECS: u64 = 60;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProofModePolicy {
-    SecureOnly,
-    SecureAndDev,
-}
-
-impl ProofModePolicy {
-    fn from_env(raw: Option<String>) -> Self {
-        match raw
-            .as_deref()
-            .map(str::trim)
-            .map(|value| value.to_ascii_lowercase())
-            .as_deref()
-        {
-            None | Some("secure-only") => Self::SecureOnly,
-            Some("secure-and-dev") => Self::SecureAndDev,
-            Some(other) => {
-                tracing::warn!(
-                    "invalid PROOF_MODE_POLICY='{}'. Expected secure-only|secure-and-dev. Falling back to secure-only.",
-                    other
-                );
-                Self::SecureOnly
-            }
-        }
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::SecureOnly => "secure-only",
-            Self::SecureAndDev => "secure-and-dev",
-        }
-    }
-
-    pub(crate) fn allows(self, mode: ProofMode) -> bool {
-        match (self, mode) {
-            (Self::SecureOnly, ProofMode::Secure) => true,
-            (Self::SecureOnly, ProofMode::Dev) => false,
-            (Self::SecureAndDev, _) => true,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ServerPolicy {
     pub(crate) max_frames: u32,
     pub(crate) min_segment_limit_po2: u32,
     pub(crate) max_segment_limit_po2: u32,
-    pub(crate) proof_mode_policy: ProofModePolicy,
+    pub(crate) dev_mode_enabled: bool,
 }
 
 impl ServerPolicy {
@@ -92,7 +50,7 @@ impl ServerPolicy {
             max_frames: read_env_u32("MAX_FRAMES", MAX_FRAMES_DEFAULT),
             min_segment_limit_po2,
             max_segment_limit_po2,
-            proof_mode_policy: ProofModePolicy::from_env(env::var("PROOF_MODE_POLICY").ok()),
+            dev_mode_enabled: risc0_dev_mode_enabled(),
         }
     }
 
@@ -122,13 +80,14 @@ impl ServerPolicy {
             ));
         }
 
-        let proof_mode = query.proof_mode.unwrap_or(ProofMode::Secure);
-        if !self.proof_mode_policy.allows(proof_mode) {
-            return Err((
-                "proof_mode=dev is disabled by server policy".to_string(),
-                "proof_mode_disabled",
-            ));
-        }
+        // Keep a single proving path:
+        // - Local/dev: RISC0_DEV_MODE=1 forces dev receipts.
+        // - Vast/prod: RISC0_DEV_MODE=0 forces secure proving.
+        let proof_mode = if self.dev_mode_enabled {
+            ProofMode::Dev
+        } else {
+            ProofMode::Secure
+        };
 
         let verify_mode = query.verify_mode.unwrap_or(VerifyMode::Policy);
 

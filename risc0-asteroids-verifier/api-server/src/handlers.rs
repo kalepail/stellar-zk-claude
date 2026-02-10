@@ -4,7 +4,9 @@ use actix_web::{
     HttpResponse, Responder,
 };
 use asteroids_verifier_core::constants::{RULESET_NAME, RULES_DIGEST};
+use asteroids_verifier_core::error::ClaimantAddressError;
 use asteroids_verifier_core::tape::parse_tape;
+use asteroids_verifier_core::VerifyError;
 use host::accelerator;
 use uuid::Uuid;
 
@@ -34,8 +36,15 @@ pub(crate) fn validate_non_zero_score_tape(
     tape_bytes: &[u8],
     max_frames: u32,
 ) -> Result<(), (String, &'static str)> {
-    let tape = parse_tape(tape_bytes, max_frames)
-        .map_err(|err| (format!("invalid tape payload: {err}"), "invalid_tape"))?;
+    let tape = parse_tape(tape_bytes, max_frames).map_err(|err| match err {
+        VerifyError::InvalidClaimantAddress {
+            error: ClaimantAddressError::Empty,
+        } => ("claimant address must be non-empty".to_string(), "empty_claimant"),
+        VerifyError::InvalidClaimantAddress { .. } => {
+            (format!("invalid claimant address: {err}"), "invalid_claimant")
+        }
+        _ => (format!("invalid tape payload: {err}"), "invalid_tape"),
+    })?;
 
     if tape.footer.final_score == 0 {
         return Err((
