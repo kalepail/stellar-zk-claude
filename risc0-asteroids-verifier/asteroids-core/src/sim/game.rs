@@ -285,13 +285,13 @@ impl Game {
         }
 
         let next_extra_life_valid = self.next_extra_life_score > self.score
-            && self.next_extra_life_score >= EXTRA_LIFE_SCORE_STEP
-            && self
-                .next_extra_life_score
-                .is_multiple_of(EXTRA_LIFE_SCORE_STEP);
+            && self.next_extra_life_score >= EXTRA_LIFE_SCORE_STEP;
         if !next_extra_life_valid {
             return Err(RuleCode::GlobalNextExtraLifeScore);
         }
+        debug_assert!(self
+            .next_extra_life_score
+            .is_multiple_of(EXTRA_LIFE_SCORE_STEP));
 
         if (self.ship.x as u32) >= world_width || (self.ship.y as u32) >= world_height {
             return Err(RuleCode::ShipBounds);
