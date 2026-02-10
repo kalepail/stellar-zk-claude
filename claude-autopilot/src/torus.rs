@@ -30,9 +30,16 @@ impl PredictedShip {
 
 pub fn predict_ship(world: &WorldSnapshot, input_byte: u8) -> PredictedShip {
     let ship = &world.ship;
+    predict_ship_from(ship.x, ship.y, ship.vx, ship.vy, ship.angle, ship.radius, ship.fire_cooldown, input_byte)
+}
+
+pub fn predict_ship_from(
+    sx: i32, sy: i32, svx: i32, svy: i32, sangle: i32, sradius: i32, sfire_cooldown: i32,
+    input_byte: u8,
+) -> PredictedShip {
     let input = decode_input_byte(input_byte);
 
-    let mut angle = ship.angle;
+    let mut angle = sangle;
     if input.left {
         angle = (angle - SHIP_TURN_SPEED_BAM) & 0xff;
     }
@@ -40,8 +47,8 @@ pub fn predict_ship(world: &WorldSnapshot, input_byte: u8) -> PredictedShip {
         angle = (angle + SHIP_TURN_SPEED_BAM) & 0xff;
     }
 
-    let mut vx = ship.vx;
-    let mut vy = ship.vy;
+    let mut vx = svx;
+    let mut vy = svy;
     if input.thrust {
         vx += (cos_bam(angle) * SHIP_THRUST_Q8_8) >> 14;
         vy += (sin_bam(angle) * SHIP_THRUST_Q8_8) >> 14;
@@ -50,12 +57,12 @@ pub fn predict_ship(world: &WorldSnapshot, input_byte: u8) -> PredictedShip {
     vy = apply_drag(vy);
     (vx, vy) = clamp_speed_q8_8(vx, vy, SHIP_MAX_SPEED_SQ_Q16_16);
 
-    let x = wrap_x_q12_4(ship.x + (vx >> 4));
-    let y = wrap_y_q12_4(ship.y + (vy >> 4));
-    let fire_cooldown = if ship.fire_cooldown > 0 {
-        ship.fire_cooldown - 1
+    let x = wrap_x_q12_4(sx + (vx >> 4));
+    let y = wrap_y_q12_4(sy + (vy >> 4));
+    let fire_cooldown = if sfire_cooldown > 0 {
+        sfire_cooldown - 1
     } else {
-        ship.fire_cooldown
+        sfire_cooldown
     };
 
     PredictedShip {
@@ -64,9 +71,18 @@ pub fn predict_ship(world: &WorldSnapshot, input_byte: u8) -> PredictedShip {
         vx,
         vy,
         angle,
-        radius: ship.radius,
+        radius: sradius,
         fire_cooldown,
     }
+}
+
+/// Predict ship state after N frames of the same action
+pub fn predict_ship_n(world: &WorldSnapshot, input_byte: u8, n: usize) -> PredictedShip {
+    let mut p = predict_ship(world, input_byte);
+    for _ in 1..n {
+        p = predict_ship_from(p.x, p.y, p.vx, p.vy, p.angle, p.radius, p.fire_cooldown, input_byte);
+    }
+    p
 }
 
 // ── Toroidal math ───────────────────────────────────────────────────
@@ -376,7 +392,8 @@ pub fn estimate_fire_quality(pred: PredictedShip, world: &WorldSnapshot) -> f64 
         if !saucer.alive {
             continue;
         }
-        let mut w = if saucer.small { 2.6 } else { 1.75 };
+        // Higher weights reflect scoring value and threat reduction
+        let mut w = if saucer.small { 3.8 } else { 2.2 };
         let approach = torus_relative_approach(
             pred.x, pred.y, pred.vx, pred.vy, saucer.x, saucer.y, saucer.vx, saucer.vy, 24.0,
         );
@@ -395,9 +412,9 @@ pub fn estimate_fire_quality(pred: PredictedShip, world: &WorldSnapshot) -> f64 
 
 pub fn asteroid_target_weight(size: AsteroidSizeSnapshot) -> f64 {
     match size {
-        AsteroidSizeSnapshot::Large => 0.96,
-        AsteroidSizeSnapshot::Medium => 1.22,
-        AsteroidSizeSnapshot::Small => 1.44,
+        AsteroidSizeSnapshot::Large => 0.88,
+        AsteroidSizeSnapshot::Medium => 1.15,
+        AsteroidSizeSnapshot::Small => 1.4,
     }
 }
 
@@ -417,7 +434,12 @@ pub struct TargetInfo {
     pub is_saucer: bool,
 }
 
-pub fn best_target(world: &WorldSnapshot, pred: PredictedShip) -> Option<TargetInfo> {
+pub fn best_target(
+    world: &WorldSnapshot,
+    pred: PredictedShip,
+    alive_asteroids: usize,
+    any_saucer_alive: bool,
+) -> Option<TargetInfo> {
     let bullet_speed = 8.6 + pred.speed_px() * 0.33;
     let mut best: Option<TargetInfo> = None;
 
@@ -432,8 +454,9 @@ pub fn best_target(world: &WorldSnapshot, pred: PredictedShip) -> Option<TargetI
                 return;
             };
             let angle_error = signed_angle_delta(pred.angle, intercept.aim_angle).abs() as f64;
-            let mut value = weight / (intercept.distance_px + 16.0);
-            value += (1.0 - (angle_error / 128.0)).max(0.0) * 0.6;
+            // Rebalanced: target value matters more relative to alignment
+            let mut value = weight * 1.5 / (intercept.distance_px + 16.0);
+            value += (1.0 - (angle_error / 128.0)).max(0.0) * 0.45;
             value *= 1.0 + (1.0 - (intercept.intercept_frames / 64.0).clamp(0.0, 1.0)) * 0.1;
 
             let candidate = TargetInfo {
@@ -455,13 +478,22 @@ pub fn best_target(world: &WorldSnapshot, pred: PredictedShip) -> Option<TargetI
             }
         };
 
+    // Scale down asteroid targeting when farming (few left + saucer present)
+    let asteroid_farm_scale = if alive_asteroids <= 2 && any_saucer_alive {
+        0.25
+    } else if alive_asteroids <= 1 && !any_saucer_alive {
+        0.4
+    } else {
+        1.0
+    };
+
     for asteroid in &world.asteroids {
         if !asteroid.alive {
             continue;
         }
         consider(
             asteroid.x, asteroid.y, asteroid.vx, asteroid.vy, asteroid.radius,
-            asteroid_target_weight(asteroid.size),
+            asteroid_target_weight(asteroid.size) * asteroid_farm_scale,
             false,
         );
     }
@@ -470,7 +502,8 @@ pub fn best_target(world: &WorldSnapshot, pred: PredictedShip) -> Option<TargetI
         if !saucer.alive {
             continue;
         }
-        let mut w = if saucer.small { 2.6 } else { 1.75 };
+        // Saucers heavily weighted: Large=200pts + bullet source, Small=990pts + deadly bullets
+        let mut w = if saucer.small { 4.0 } else { 2.5 };
         let approach = torus_relative_approach(
             pred.x, pred.y, pred.vx, pred.vy, saucer.x, saucer.y, saucer.vx, saucer.vy, 22.0,
         );

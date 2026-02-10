@@ -1,9 +1,9 @@
 use crate::config::BotConfig;
 use crate::torus::*;
 use asteroids_verifier_core::constants::{
-    SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
+    SAUCER_BULLET_SPEED_Q8_8, SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
 };
-use asteroids_verifier_core::fixed_point::shortest_delta_q12_4;
+use asteroids_verifier_core::fixed_point::{atan2_bam, shortest_delta_q12_4, velocity_q8_8};
 use asteroids_verifier_core::sim::WorldSnapshot;
 use asteroids_verifier_core::tape::{decode_input_byte, encode_input_byte, FrameInput};
 
@@ -59,7 +59,9 @@ impl Bot {
         for action in 0x00u8..=0x0F {
             if fire_locked_base && (action & 0x08) != 0 {
                 let pred_fire = predict_ship(world, action);
-                let target = best_target(world, pred_fire);
+                let alive_ast = world.asteroids.iter().filter(|a| a.alive).count();
+                let any_sauc = world.saucers.iter().any(|s| s.alive);
+                let target = best_target(world, pred_fire, alive_ast, any_sauc);
                 let covered = target
                     .map(|plan| {
                         target_already_covered(
@@ -106,10 +108,32 @@ impl Bot {
         let safe = (pred.radius + radius + 8) as f64;
         let closeness = (safe / (approach.closest_px + 1.0)).powf(2.0);
         let immediate = (safe / (approach.immediate_px + 1.0)).powf(1.35);
-        let closing = if approach.dot < 0.0 { 1.25 } else { 0.92 };
+        let closing = if approach.dot < 0.0 { 1.30 } else { 0.88 };
         let time_boost =
             1.0 + ((self.cfg.lookahead - approach.t_closest) / self.cfg.lookahead) * 0.45;
         weight * (0.78 * closeness + 0.22 * immediate) * closing * time_boost
+    }
+
+    /// Steeper risk curve for saucer bullets — they need earlier reaction.
+    fn bullet_risk(
+        &self,
+        pred: PredictedShip,
+        ex: i32,
+        ey: i32,
+        evx: i32,
+        evy: i32,
+        radius: i32,
+    ) -> f64 {
+        let approach = torus_relative_approach(
+            pred.x, pred.y, pred.vx, pred.vy, ex, ey, evx, evy, self.cfg.lookahead,
+        );
+        let safe = (pred.radius + radius + 8) as f64;
+        let closeness = (safe / (approach.closest_px + 1.0)).powf(2.5);
+        let immediate = (safe / (approach.immediate_px + 1.0)).powf(1.6);
+        let closing = if approach.dot < 0.0 { 1.45 } else { 0.78 };
+        let time_boost =
+            1.0 + ((self.cfg.lookahead - approach.t_closest) / self.cfg.lookahead) * 0.55;
+        self.cfg.risk_weight_bullet * (0.72 * closeness + 0.28 * immediate) * closing * time_boost
     }
 
     fn fire_quality_floor(&self, world: &WorldSnapshot, pred: PredictedShip, aggression: f64) -> f64 {
@@ -165,17 +189,23 @@ impl Bot {
 
     fn action_utility(&self, world: &WorldSnapshot, input_byte: u8) -> f64 {
         let pred = predict_ship(world, input_byte);
+        let pred2 = predict_ship_n(world, input_byte, 2);
+        let pred3 = predict_ship_n(world, input_byte, 3);
+        let pred4 = predict_ship_n(world, input_byte, 4);
+        let pred5 = predict_ship_n(world, input_byte, 5);
         let input = decode_input_byte(input_byte);
 
-        // Risk from entities
-        let mut risk = 0.0;
+        // Risk from entities — blend 1-5 frame predictions
+        let preds = [pred, pred2, pred3, pred4, pred5];
+        let weights = [0.38, 0.22, 0.18, 0.12, 0.10];
+        let mut risk_sum = [0.0f64; 5];
         for asteroid in &world.asteroids {
-            risk += self.entity_risk(
-                pred,
-                asteroid.x, asteroid.y, asteroid.vx, asteroid.vy,
-                asteroid.radius,
-                self.cfg.risk_weight_asteroid,
-            );
+            for (i, p) in preds.iter().enumerate() {
+                risk_sum[i] += self.entity_risk(
+                    *p, asteroid.x, asteroid.y, asteroid.vx, asteroid.vy,
+                    asteroid.radius, self.cfg.risk_weight_asteroid,
+                );
+            }
         }
         for saucer in &world.saucers {
             let w = if saucer.small {
@@ -183,20 +213,38 @@ impl Bot {
             } else {
                 self.cfg.risk_weight_saucer
             };
-            risk += self.entity_risk(
-                pred,
-                saucer.x, saucer.y, saucer.vx, saucer.vy,
-                saucer.radius,
-                w,
-            );
+            for (i, p) in preds.iter().enumerate() {
+                risk_sum[i] += self.entity_risk(
+                    *p, saucer.x, saucer.y, saucer.vx, saucer.vy, saucer.radius, w,
+                );
+            }
         }
         for bullet in &world.saucer_bullets {
-            risk += self.entity_risk(
+            for (i, p) in preds.iter().enumerate() {
+                risk_sum[i] += self.bullet_risk(
+                    *p, bullet.x, bullet.y, bullet.vx, bullet.vy, bullet.radius,
+                );
+            }
+        }
+        let mut risk = risk_sum.iter().zip(weights.iter()).map(|(r, w)| r * w).sum::<f64>();
+        // Preemptive saucer fire avoidance: small saucers aim at the ship.
+        // When fire_cooldown is low, add a mild phantom bullet risk to
+        // encourage the bot to not sit still in the saucer's crosshairs.
+        for saucer in &world.saucers {
+            if !saucer.small || saucer.fire_cooldown > 8 {
+                continue;
+            }
+            let dx = shortest_delta_q12_4(saucer.x, pred.x, WORLD_WIDTH_Q12_4);
+            let dy = shortest_delta_q12_4(saucer.y, pred.y, WORLD_HEIGHT_Q12_4);
+            let aim_angle = atan2_bam(dy, dx);
+            let (bvx, bvy) = velocity_q8_8(aim_angle, SAUCER_BULLET_SPEED_Q8_8);
+            let imminence = (9 - saucer.fire_cooldown).max(1) as f64 / 9.0;
+            let phantom_risk = self.bullet_risk(
                 pred,
-                bullet.x, bullet.y, bullet.vx, bullet.vy,
-                bullet.radius,
-                self.cfg.risk_weight_bullet,
-            );
+                saucer.x, saucer.y, bvx, bvy,
+                2,
+            ) * 0.2 * imminence;
+            risk += phantom_risk;
         }
 
         // Aggression
@@ -217,7 +265,9 @@ impl Bot {
         // Targeting
         let mut attack = 0.0;
         let mut fire_alignment = 0.0;
-        let target_plan = best_target(world, pred);
+        let alive_asteroids = world.asteroids.iter().filter(|a| a.alive).count();
+        let any_saucer_alive = world.saucers.iter().any(|s| s.alive);
+        let target_plan = best_target(world, pred, alive_asteroids, any_saucer_alive);
         if let Some(plan) = target_plan {
             attack += plan.value;
             let angle_error = signed_angle_delta(pred.angle, plan.aim_angle).abs() as f64;
@@ -228,6 +278,11 @@ impl Bot {
             }
             if plan.intercept_frames <= 14.0 {
                 attack += 0.05;
+            }
+            // Saucer attack bonus — saucers are both the highest-value
+            // targets and the source of the deadliest threats
+            if plan.is_saucer {
+                attack += 0.35;
             }
         } else {
             let tangent = (pred.angle + self.orbit_sign * 64) & 0xff;
@@ -255,7 +310,8 @@ impl Bot {
         } else {
             0.0
         };
-        let edge_term = -((140.0 - min_edge).max(0.0) / 140.0) * self.cfg.edge_penalty;
+        // Edge avoidance: steeper curve near edge
+        let edge_term = -((160.0 - min_edge).max(0.0) / 160.0).powf(1.5) * self.cfg.edge_penalty;
 
         let nearest_threat = nearest_threat_distance(world, pred.x, pred.y);
 
@@ -290,7 +346,6 @@ impl Bot {
             );
 
             if !duplicate_target_shot
-                && discipline_ok
                 && (fire_quality >= min_fire_quality || emergency_saucer)
             {
                 let mut fire_bonus = self.cfg.fire_reward * fire_alignment * (0.35 + 0.65 * fire_quality);
@@ -301,7 +356,7 @@ impl Bot {
                     }
                 }
                 fire_term += fire_bonus;
-                fire_term -= self.cfg.shot_penalty * 0.72;
+                fire_term -= self.cfg.shot_penalty * 0.50;
             } else if duplicate_target_shot {
                 fire_term -= self.cfg.shot_penalty * 0.68;
             } else if !discipline_ok {
@@ -314,13 +369,23 @@ impl Bot {
             if world.time_since_last_kill >= self.cfg.lurk_trigger {
                 fire_term += self.cfg.fire_reward * 0.25;
             }
+
+            // Asteroid preservation: when few asteroids remain and wave >= 3,
+            // avoid shooting asteroids to farm saucers instead.
+            if alive_asteroids <= 2
+                && world.wave >= 3
+                && !target_plan.map(|p| p.is_saucer).unwrap_or(false)
+                && nearest_threat > 80.0
+            {
+                fire_term -= self.cfg.fire_reward * 0.7;
+            }
         }
 
         // Control penalties
-        let control_scale = if risk > 3.0 {
-            0.18
-        } else if risk > 1.8 {
-            0.38
+        let control_scale = if risk > 2.0 {
+            0.08
+        } else if risk > 1.2 {
+            0.25
         } else {
             1.0
         };
@@ -346,7 +411,15 @@ impl Bot {
             control_term += self.cfg.action_penalty * 0.18;
         }
 
-        -risk * self.cfg.survival_weight
+        // Wave-adaptive survival: later waves have more threats
+        let wave_factor = 1.0 + (world.wave.max(1) as f64 - 3.0).max(0.0) * 0.05;
+        // Multi-threat compounding: high risk situations need extra caution
+        let compound = if risk > 3.0 { 1.0 + (risk - 3.0) * 0.08 } else { 1.0 };
+        // Low-lives panic: when nearly dead, survival becomes paramount
+        let lives_factor = if world.lives <= 1 { 1.25 } else if world.lives <= 2 { 1.1 } else { 1.0 };
+        let effective_survival = self.cfg.survival_weight * wave_factor * compound * lives_factor;
+
+        -risk * effective_survival
             + attack * aggression
             + fire_term
             + control_term
