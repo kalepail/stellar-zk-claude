@@ -80,6 +80,11 @@ function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOp
       : DEFAULT_SEGMENT_LIMIT_PO2;
   url.searchParams.set("segment_limit_po2", String(segmentLimitPo2));
 
+  // The Stellar on-chain verifier expects Groth16 seals.
+  url.searchParams.set("receipt_kind", "groth16");
+  // Skip prover-side receipt verification; on-chain verification is the source of truth.
+  url.searchParams.set("verify_mode", "policy");
+
   return url;
 }
 

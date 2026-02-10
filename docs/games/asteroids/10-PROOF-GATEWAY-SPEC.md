@@ -1,6 +1,6 @@
 # ZK Asteroids Proof Gateway — System Spec
 
-Last updated: 2026-02-06
+Last updated: 2026-02-10
 
 ## Purpose
 
@@ -94,11 +94,16 @@ RISC0 host + zkVM guest             │  polls prover  │
 `worker/tape.ts` enforces:
 - Non-empty payload, `<= MAX_TAPE_BYTES` (default 2 MiB)
 - Magic = `0x5A4B5450`, version = `1`
-- Exact byte length = header (16) + frameCount + footer (12)
+- Rules tag = `AST3` and header reserved bytes are zero
+- Exact byte length = header (72) + frameCount + footer (12)
 - CRC-32 checksum match
 
 Metadata extracted from the tape and stored with the job record:
 - `seed`, `frameCount`, `finalScore`, `finalRngState`, `checksum`
+
+Note: The 72-byte tape header also embeds the claimant address (56 bytes at offset 16,
+zero-padded, UTF-8/ASCII Stellar strkey). The gateway does not accept a separate
+`claimant_address` parameter — it is baked into the tape and later surfaced in the proof journal.
 
 ### Job state model
 
@@ -119,7 +124,7 @@ queued → dispatching → prover_running → succeeded
 | `queued` | Job created, tape stored in R2, message enqueued |
 | `dispatching` | Queue consumer picked up the message, submitting tape to prover |
 | `prover_running` | Prover accepted the job; DO alarm is polling for completion |
-| `retrying` | Transient failure; DO alarm will retry (backoff with exponential delay, capped 5 min) |
+| `retrying` | Transient failure; DO alarm will retry (backoff with exponential delay, capped 60 s) |
 | `succeeded` | Proof generated, result stored in R2, active slot released |
 | `failed` | Terminal error, active slot released |
 
@@ -195,7 +200,7 @@ After `markProverAccepted()` schedules the first alarm, the DO's `alarm()`
 method drives all subsequent prover polling:
 
 1. Load active job. If terminal or missing, stop.
-2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 12 minutes). Fail if exceeded.
+2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 11 minutes). Fail if exceeded.
 3. Call `pollProver()` (budget-limited polling loop within a single alarm invocation).
 4. **Running**: save updated prover status, schedule next alarm at `PROVER_POLL_INTERVAL_MS`.
 5. **Success**: call `summarizeProof()`, store full prover response in R2 as `result.json`,
@@ -284,12 +289,10 @@ bytes needed for on-chain verification.
 
 | Variable | Value | Notes |
 |----------|-------|-------|
-| `PROVER_RECEIPT_KIND` | `"groth16"` | On-chain-verifiable proof type |
-| `PROVER_SEGMENT_LIMIT_PO2` | `"21"` | Segment size limit (power of 2) |
-| `PROVER_FALLBACK_SEGMENT_LIMIT_PO2` | `"21"` | Auto-downgrade segment target when the prover reports OOM/allocation failure |
-| `PROVER_MAX_FRAMES` | `"18000"` | ~5 minutes at 60fps |
-| `PROVER_PROOF_MODE` | `"secure"` | Secure proofs only (dev proofs disabled in production) |
-| `PROVER_VERIFY_MODE` | `"policy"` | Skip prover-side receipt verification (on-chain verification is the source of truth) |
+| `PROVER_BASE_URL` | `https://replace-with-your-prover.example.com` | Base URL for the prover API (typically a Cloudflare Tunnel URL) |
+| `PROVER_API_KEY` | _(secret)_ | Optional app-level auth for the prover (`wrangler secret put PROVER_API_KEY`) |
+| `PROVER_ACCESS_CLIENT_ID` | _(secret)_ | Optional Cloudflare Access service token ID |
+| `PROVER_ACCESS_CLIENT_SECRET` | _(secret)_ | Optional Cloudflare Access service token secret |
 | `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
 | `PROVER_HEALTH_CACHE_MS` | `"30000"` | Prover health cache TTL in Worker isolate |
 | `PROVER_POLL_INTERVAL_MS` | `"3000"` | Alarm interval between polls |
@@ -297,8 +300,15 @@ bytes needed for on-chain verification.
 | `PROVER_POLL_BUDGET_MS` | `"45000"` | Max polling time per alarm |
 | `PROVER_REQUEST_TIMEOUT_MS` | `"30000"` | HTTP request timeout |
 | `MAX_TAPE_BYTES` | `"2097152"` | 2 MiB tape size limit |
-| `MAX_JOB_WALL_TIME_MS` | `"720000"` | 12 min total job lifetime |
+| `MAX_JOB_WALL_TIME_MS` | `"660000"` | 11 min total job lifetime |
+| `MAX_COMPLETED_JOBS` | `"200"` | Cap for completed job records retained in DO storage |
+| `COMPLETED_JOB_RETENTION_MS` | `"86400000"` | Time-based retention cutoff for terminal jobs in DO storage |
 | `ALLOW_INSECURE_PROVER_URL` | `"0"` | Enforce HTTPS |
+
+Prover submit defaults (hardcoded in `worker/prover/client.ts`):
+- `receipt_kind=groth16` (required for Stellar on-chain verification)
+- `verify_mode=policy` (skip prover-side receipt verification)
+- `segment_limit_po2=21`
 
 Bindings:
 - R2 bucket: `stellar-zk-proof-artifacts`

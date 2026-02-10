@@ -15,7 +15,7 @@ export const DEFAULT_POLL_BUDGET_MS = 45_000;
 export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 // End-to-end job lifetime cap in the gateway (includes queue + polling + storage).
 // Keep slightly above the prover timeout to allow status propagation + artifact writes.
-export const DEFAULT_MAX_JOB_WALL_TIME_MS = 12 * 60_000; // 12 minutes
+export const DEFAULT_MAX_JOB_WALL_TIME_MS = 11 * 60_000; // 11 minutes
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
 export const MAX_PROVER_RECOVERY_ATTEMPTS = 1;

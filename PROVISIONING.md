@@ -50,7 +50,7 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 | Poll interval | **3 s** (3,000 ms) | `PROVER_POLL_INTERVAL_MS` | `constants.ts:9`, `wrangler.jsonc:14` | Sleep between GET status calls inside `pollProver()`. |
 | Poll budget | **45 s** (45,000 ms) | `PROVER_POLL_BUDGET_MS` | `constants.ts:12`, `wrangler.jsonc:16` | Per-alarm-invocation budget. The DO alarm fires, polls for up to 45 s, then yields and reschedules. Keeps each alarm invocation under the CF CPU limit. |
 | HTTP request timeout | **30 s** (30,000 ms) | `PROVER_REQUEST_TIMEOUT_MS` | `constants.ts:11`, `wrangler.jsonc:17` | `fetchWithTimeout` deadline for each individual GET/POST to the prover API. |
-| Wall-time cap | **12 min** (720,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
+| Wall-time cap | **11 min** (660,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
 | Max queue retries | **10** | `MAX_QUEUE_RETRIES` / `max_retries` | `constants.ts:22`, `wrangler.jsonc:42` | Queue delivery attempts before the message goes to the DLQ. Must match in both places. |
 | Retry delay cap | **60 s** | `MAX_RETRY_DELAY_SECONDS` | `constants.ts:17` | Ceiling for exponential backoff: `min(2^(attempt-1), 60)`, floored at 2 s. |
 | Max completed jobs | **200** | `MAX_COMPLETED_JOBS` | `constants.ts:14`, `wrangler.jsonc:20` | DO evicts oldest completed jobs beyond this count. |
@@ -112,14 +112,14 @@ Configuration changes to tighten the pipeline around a 10-minute acceptance wind
 | **New** | `660000` (11 min) |
 | **Rationale** | Keep this above the prover timeout (10 min) to give the worker time to observe the terminal status. 11 minutes provides a small buffer for network jitter and a final poll cycle. |
 
-### 4. Worker: `MAX_JOB_WALL_TIME_MS` — 3600000 → 720000
+### 4. Worker: `MAX_JOB_WALL_TIME_MS` — 3600000 → 660000
 
 | | |
 |---|---|
 | **File** | `wrangler.jsonc:19` |
 | **Old** | `3600000` (60 min) |
-| **New** | `720000` (12 min) |
-| **Rationale** | End-to-end safety net. Set to ~12 minutes = prover timeout (10 min) + poll/R2 overhead + short retry headroom for transient network/prover issues. |
+| **New** | `660000` (11 min) |
+| **Rationale** | End-to-end safety net. Set to ~11 minutes = prover timeout (10 min) + poll/R2 overhead + short retry headroom for transient network/prover issues. |
 
 ### 5. Worker: `PROVER_POLL_BUDGET_MS` — 45000 → 45000 (consider 30000)
 
@@ -268,7 +268,7 @@ Update `wrangler.jsonc`:
 
 ```jsonc
 "PROVER_POLL_TIMEOUT_MS": "660000",
-"MAX_JOB_WALL_TIME_MS": "720000"
+"MAX_JOB_WALL_TIME_MS": "660000"
 ```
 
 Deploy:
@@ -293,10 +293,10 @@ npx wrangler deploy
 
 2. **Submit a known-good tape** — verify it completes well under 10 min:
    ```bash
-   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw?claimant_address=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
+   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw' \
      -H "x-api-key: $API_KEY" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @test-fixtures/test-short.tape
+     --data-binary @test-fixtures/test-medium.tape
    ```
    Poll the returned `status_url` and confirm `"status": "succeeded"` with `elapsed_ms < 600000`.
 
@@ -311,7 +311,7 @@ npx wrangler deploy
    ```bash
    curl -X POST https://your-worker.example.com/api/proofs/jobs \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @test-fixtures/test-short.tape
+     --data-binary @test-fixtures/test-medium.tape
    ```
 
 5. **Verify wrangler vars** — confirm the deployed values:
@@ -343,7 +343,7 @@ npx wrangler deploy
 
 ### 3. Deploy ordering mismatch
 
-**Risk:** If the worker is deployed first with a tight wall-time cap (~12 min) while the prover still allows much longer proofs, a slow proof could be killed by the worker before the prover times it out. The prover would continue working on a proof that nobody is waiting for.
+**Risk:** If the worker is deployed first with a tight wall-time cap (~11 min) while the prover still allows much longer proofs, a slow proof could be killed by the worker before the prover times it out. The prover would continue working on a proof that nobody is waiting for.
 
 **Mitigation:** Deploy prover first (see [Deploy Order](#deploy-order)). Even if the ordering is reversed, the impact is limited: the worker kills its job tracking, but the prover eventually times out and sweeps the orphaned job. No data loss occurs.
 

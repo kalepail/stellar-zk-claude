@@ -304,19 +304,13 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_API_KEY` (secret) | Must match the `API_KEY` on the api-server |
 | `PROVER_ACCESS_CLIENT_ID` (secret) | _(optional)_ Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` (secret) | _(optional)_ Cloudflare Access service token secret |
-| `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
-| `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
-| `PROVER_FALLBACK_SEGMENT_LIMIT_PO2` | `21` by default; auto-downgrade target when prover reports OOM/allocation failure |
-| `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
-| `PROVER_PROOF_MODE` | `secure` by default; use `dev` only for development-only prover runs |
-| `PROVER_VERIFY_MODE` | `policy` by default; on-chain verification is the source of truth |
 | `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
 | `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
 | `PROVER_POLL_TIMEOUT_MS` | Poll-loop safety bound (default `660000` / 11 min) |
 | `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |
 | `PROVER_REQUEST_TIMEOUT_MS` | Timeout for each outbound prover request |
-| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime (default `720000` / 12 min) |
+| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime (default `660000` / 11 min) |
 | `MAX_COMPLETED_JOBS` | Retention cap for terminal jobs in the coordinator DO |
 | `COMPLETED_JOB_RETENTION_MS` | Time-based retention cutoff for terminal jobs in the coordinator DO |
 | `ALLOW_INSECURE_PROVER_URL` | Keep `0` in production; only allow non-HTTPS for local/dev endpoints |
@@ -329,7 +323,7 @@ echo 'your-strong-random-secret' | npx wrangler secret put PROVER_API_KEY
 echo 'https://xyz.trycloudflare.com' | npx wrangler secret put PROVER_BASE_URL
 ```
 
-The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
+The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header and query params `receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21`, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
 
 ## CLI Prover
 
