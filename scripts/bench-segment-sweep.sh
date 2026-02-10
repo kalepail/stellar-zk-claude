@@ -448,7 +448,7 @@ FAIL=0
 
 for tape_entry in "${TAPES[@]}"; do
   IFS='|' read -r tape_label tape_path <<< "$tape_entry"
-  read -r tape_frames tape_score tape_seed tape_bytes <<< "$(read_tape_header "$tape_path")"
+  read -r tape_frames tape_score tape_seed tape_bytes tape_claimant <<< "$(read_tape_header "$tape_path")"
   if [[ "$tape_score" == "0" ]]; then
     echo "WARN: skipping $(basename "$tape_path") because final_score=0 (prover rejects zero-score tapes)"
     continue

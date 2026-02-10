@@ -12,6 +12,7 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
+import { validateClaimantStrKeyFromUserInput } from "../shared/stellar/strkey";
 
 const DEFAULT_MAX_FRAMES = 18_000;
 
@@ -39,10 +40,18 @@ if (!outputPath) {
   outputPath = `asteroids-${seedHex}.tape`;
 }
 
+if (claimant.trim().length === 0) {
+  console.error(
+    "Missing --claimant. Tapes must embed a non-empty Stellar strkey claimant address (G... or C...).",
+  );
+  process.exit(1);
+}
+claimant = validateClaimantStrKeyFromUserInput(claimant);
+
 console.log(`Generating tape:`);
 console.log(`  Seed:       0x${seed.toString(16).padStart(8, "0")}`);
 console.log(`  Max frames: ${maxFrames}`);
-console.log(`  Claimant:   ${claimant || "(none)"}`);
+console.log(`  Claimant:   ${claimant}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();
 
