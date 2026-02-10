@@ -246,24 +246,6 @@ fn invariant_checks_report_expected_rule_codes() {
     );
     assert_invariant_violation(
         |game| {
-            game.bullets.clear();
-            let mut bullet = valid_bullet();
-            bullet.life = 0;
-            game.bullets.push(bullet);
-        },
-        RuleCode::PlayerBulletState,
-    );
-    assert_invariant_violation(
-        |game| {
-            game.saucer_bullets.clear();
-            let mut bullet = valid_bullet();
-            bullet.x = -1;
-            game.saucer_bullets.push(bullet);
-        },
-        RuleCode::SaucerBulletState,
-    );
-    assert_invariant_violation(
-        |game| {
             game.wave = 1;
             game.saucers.clear();
             game.saucers.push(valid_saucer());

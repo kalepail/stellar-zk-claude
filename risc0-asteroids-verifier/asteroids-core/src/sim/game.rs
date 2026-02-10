@@ -326,20 +326,6 @@ impl Game {
         debug_assert!(self.asteroids.iter().all(|entry| entry.alive));
         debug_assert!(self.saucers.iter().all(|entry| entry.alive));
 
-        for bullet in &self.bullets {
-            let in_bounds = (bullet.x as u32) < world_width && (bullet.y as u32) < world_height;
-            if bullet.life <= 0 || !in_bounds {
-                return Err(RuleCode::PlayerBulletState);
-            }
-        }
-
-        for bullet in &self.saucer_bullets {
-            let in_bounds = (bullet.x as u32) < world_width && (bullet.y as u32) < world_height;
-            if bullet.life <= 0 || !in_bounds {
-                return Err(RuleCode::SaucerBulletState);
-            }
-        }
-
         if self.saucers.len() > max_saucers_for_wave(self.wave) as usize {
             return Err(RuleCode::SaucerCap);
         }
