@@ -236,9 +236,11 @@ impl Game {
     }
 
     pub(super) fn step(&mut self, input_byte: u8) {
-        self.frame_count += 1;
+        self.step_decoded(decode_input_byte(input_byte));
+    }
 
-        let input = decode_input_byte(input_byte);
+    pub(super) fn step_decoded(&mut self, input: FrameInput) {
+        self.frame_count += 1;
 
         self.update_ship(input.left, input.right, input.thrust, input.fire);
         self.update_asteroids();
@@ -260,6 +262,9 @@ impl Game {
     }
 
     pub(super) fn validate_invariants(&self) -> Result<(), RuleCode> {
+        let world_width = WORLD_WIDTH_Q12_4 as u32;
+        let world_height = WORLD_HEIGHT_Q12_4 as u32;
+
         if self.wave < 1 {
             return Err(RuleCode::GlobalWaveNonZero);
         }
@@ -281,11 +286,11 @@ impl Game {
             return Err(RuleCode::GlobalNextExtraLifeScore);
         }
 
-        if !in_world_bounds_q12_4(self.ship.x, self.ship.y) {
+        if (self.ship.x as u32) >= world_width || (self.ship.y as u32) >= world_height {
             return Err(RuleCode::ShipBounds);
         }
 
-        if !(0..=255).contains(&self.ship.angle) {
+        if (self.ship.angle & !0xff) != 0 {
             return Err(RuleCode::ShipAngleRange);
         }
 
@@ -305,37 +310,44 @@ impl Game {
             return Err(RuleCode::PlayerBulletLimit);
         }
 
+        if self.saucer_bullets.len() > SAUCER_BULLET_LIMIT {
+            return Err(RuleCode::SaucerBulletLimit);
+        }
+
+        debug_assert!(self.bullets.iter().all(|entry| entry.alive));
+        debug_assert!(self.saucer_bullets.iter().all(|entry| entry.alive));
+        debug_assert!(self.asteroids.iter().all(|entry| entry.alive));
+        debug_assert!(self.saucers.iter().all(|entry| entry.alive));
+
         for bullet in &self.bullets {
-            if !bullet.alive || bullet.life <= 0 || !in_world_bounds_q12_4(bullet.x, bullet.y) {
+            let in_bounds = (bullet.x as u32) < world_width && (bullet.y as u32) < world_height;
+            if bullet.life <= 0 || !in_bounds {
                 return Err(RuleCode::PlayerBulletState);
             }
         }
 
         for bullet in &self.saucer_bullets {
-            if !bullet.alive || bullet.life <= 0 || !in_world_bounds_q12_4(bullet.x, bullet.y) {
+            let in_bounds = (bullet.x as u32) < world_width && (bullet.y as u32) < world_height;
+            if bullet.life <= 0 || !in_bounds {
                 return Err(RuleCode::SaucerBulletState);
             }
         }
 
         for asteroid in &self.asteroids {
-            if !asteroid.alive
-                || !in_world_bounds_q12_4(asteroid.x, asteroid.y)
-                || !(0..=255).contains(&asteroid.angle)
-            {
+            let in_bounds = (asteroid.x as u32) < world_width && (asteroid.y as u32) < world_height;
+            if !in_bounds || (asteroid.angle & !0xff) != 0 {
                 return Err(RuleCode::AsteroidState);
             }
         }
 
-        let max_saucers = max_saucers_for_wave(self.wave);
-        if (self.saucers.len() as i32) > max_saucers {
+        if self.saucers.len() > max_saucers_for_wave(self.wave) as usize {
             return Err(RuleCode::SaucerCap);
         }
 
         for saucer in &self.saucers {
-            if !saucer.alive
-                || saucer.x < SAUCER_CULL_MIN_X_Q12_4
+            if saucer.x < SAUCER_CULL_MIN_X_Q12_4
                 || saucer.x > SAUCER_CULL_MAX_X_Q12_4
-                || !(0..WORLD_HEIGHT_Q12_4).contains(&saucer.y)
+                || (saucer.y as u32) >= world_height
                 || saucer.fire_cooldown < 0
                 || saucer.drift_timer < 0
             {
@@ -360,44 +372,80 @@ impl Game {
         self.ship_fire_latch = false;
     }
 
-    fn spawn_safety_score(&self, spawn_x: i32, spawn_y: i32) -> i64 {
-        let mut min_clearance_sq = i64::MAX;
+    fn spawn_safety_score(&self, spawn_x: i32, spawn_y: i32, best_known_safety_score: i32) -> i32 {
+        debug_assert!(self.asteroids.iter().all(|entry| entry.alive));
+        debug_assert!(self.saucers.iter().all(|entry| entry.alive));
+        debug_assert!(self.bullets.iter().all(|entry| entry.alive));
+        debug_assert!(self.saucer_bullets.iter().all(|entry| entry.alive));
 
-        let mut update_clearance = |hx: i32, hy: i32, hr: i32| {
-            let hit_dist_q12_4 = ((hr + self.ship.radius) << 4) as i64;
-            let dist_sq = collision_dist_sq_q12_4(hx, hy, spawn_x, spawn_y) as i64;
-            let clearance_sq = dist_sq - (hit_dist_q12_4 * hit_dist_q12_4);
-            if clearance_sq < min_clearance_sq {
-                min_clearance_sq = clearance_sq;
-            }
-        };
+        let mut min_clearance_sq = i32::MAX;
 
         for asteroid in &self.asteroids {
-            if !asteroid.alive {
-                continue;
+            min_clearance_sq = core::cmp::min(
+                min_clearance_sq,
+                clearance_sq_q12_4(
+                    asteroid.x,
+                    asteroid.y,
+                    asteroid.radius,
+                    spawn_x,
+                    spawn_y,
+                    self.ship.radius,
+                ),
+            );
+            if min_clearance_sq < best_known_safety_score {
+                return min_clearance_sq;
             }
-            update_clearance(asteroid.x, asteroid.y, asteroid.radius);
         }
 
         for saucer in &self.saucers {
-            if !saucer.alive {
-                continue;
+            min_clearance_sq = core::cmp::min(
+                min_clearance_sq,
+                clearance_sq_q12_4(
+                    saucer.x,
+                    saucer.y,
+                    saucer.radius,
+                    spawn_x,
+                    spawn_y,
+                    self.ship.radius,
+                ),
+            );
+            if min_clearance_sq < best_known_safety_score {
+                return min_clearance_sq;
             }
-            update_clearance(saucer.x, saucer.y, saucer.radius);
         }
 
         for bullet in &self.bullets {
-            if !bullet.alive {
-                continue;
+            min_clearance_sq = core::cmp::min(
+                min_clearance_sq,
+                clearance_sq_q12_4(
+                    bullet.x,
+                    bullet.y,
+                    bullet.radius,
+                    spawn_x,
+                    spawn_y,
+                    self.ship.radius,
+                ),
+            );
+            if min_clearance_sq < best_known_safety_score {
+                return min_clearance_sq;
             }
-            update_clearance(bullet.x, bullet.y, bullet.radius);
         }
 
         for bullet in &self.saucer_bullets {
-            if !bullet.alive {
-                continue;
+            min_clearance_sq = core::cmp::min(
+                min_clearance_sq,
+                clearance_sq_q12_4(
+                    bullet.x,
+                    bullet.y,
+                    bullet.radius,
+                    spawn_x,
+                    spawn_y,
+                    self.ship.radius,
+                ),
+            );
+            if min_clearance_sq < best_known_safety_score {
+                return min_clearance_sq;
             }
-            update_clearance(bullet.x, bullet.y, bullet.radius);
         }
 
         min_clearance_sq
@@ -412,15 +460,15 @@ impl Game {
 
         let mut best_x = center_x;
         let mut best_y = center_y;
-        let mut best_safety_score = i64::MIN;
-        let mut best_center_distance = i64::MAX;
+        let mut best_safety_score = i32::MIN;
+        let mut best_center_distance = i32::MAX;
         let mut y = min_y;
 
         while y <= max_y {
             let mut x = min_x;
             while x <= max_x {
-                let safety_score = self.spawn_safety_score(x, y);
-                let center_distance = collision_dist_sq_q12_4(x, y, center_x, center_y) as i64;
+                let safety_score = self.spawn_safety_score(x, y, best_safety_score);
+                let center_distance = collision_dist_sq_q12_4(x, y, center_x, center_y);
                 if safety_score > best_safety_score
                     || (safety_score == best_safety_score && center_distance < best_center_distance)
                 {
@@ -461,8 +509,8 @@ impl Game {
             let mut y = self.random_int(0, WORLD_HEIGHT_Q12_4);
             let mut guard = 0;
 
-            while collision_dist_sq_q12_4(x, y, avoid_x, avoid_y) < WAVE_SAFE_DIST_SQ_Q24_8
-                && guard < 20
+            while guard < 20
+                && collision_dist_sq_q12_4(x, y, avoid_x, avoid_y) < WAVE_SAFE_DIST_SQ_Q24_8
             {
                 x = self.random_int(0, WORLD_WIDTH_Q12_4);
                 y = self.random_int(0, WORLD_HEIGHT_Q12_4);
@@ -596,11 +644,8 @@ impl Game {
     }
 
     fn update_asteroids(&mut self) {
+        debug_assert!(self.asteroids.iter().all(|entry| entry.alive));
         for asteroid in &mut self.asteroids {
-            if !asteroid.alive {
-                continue;
-            }
-
             asteroid.x = wrap_x_q12_4(asteroid.x + (asteroid.vx >> 4));
             asteroid.y = wrap_y_q12_4(asteroid.y + (asteroid.vy >> 4));
             asteroid.angle = (asteroid.angle + asteroid.spin) & 0xff;
@@ -616,11 +661,8 @@ impl Game {
     }
 
     fn update_projectiles(projectiles: &mut [Bullet]) {
+        debug_assert!(projectiles.iter().all(|entry| entry.alive));
         for bullet in projectiles {
-            if !bullet.alive {
-                continue;
-            }
-
             bullet.life -= 1;
             if bullet.life <= 0 {
                 bullet.alive = false;
@@ -645,7 +687,7 @@ impl Game {
         };
         let max_saucers = max_saucers_for_wave(self.wave);
 
-        if (self.saucers.len() as i32) < max_saucers && self.saucer_spawn_timer <= spawn_threshold {
+        if self.saucers.len() < max_saucers as usize && self.saucer_spawn_timer <= spawn_threshold {
             self.spawn_saucer();
             let (spawn_min, spawn_max) = saucer_spawn_range_for_wave(self.wave);
             self.saucer_spawn_timer = if is_lurking {
@@ -659,10 +701,6 @@ impl Game {
         }
 
         for index in 0..self.saucers.len() {
-            if !self.saucers[index].alive {
-                continue;
-            }
-
             {
                 let saucer = &mut self.saucers[index];
                 saucer.x += saucer.vx >> 4;
@@ -693,7 +731,7 @@ impl Game {
 
             if self.saucers[index].fire_cooldown <= 0 {
                 let saucer = self.saucers[index];
-                self.spawn_saucer_bullet(saucer);
+                self.spawn_saucer_bullet(saucer.x, saucer.y, saucer.radius, saucer.small);
                 let (min_cooldown, max_cooldown) =
                     saucer_fire_cooldown_range(saucer.small, self.wave, self.time_since_last_kill);
                 self.saucers[index].fire_cooldown = self.random_int(min_cooldown, max_cooldown + 1);
@@ -702,7 +740,7 @@ impl Game {
     }
 
     fn spawn_saucer(&mut self) {
-        let enter_from_left = self.rng.next().is_multiple_of(2);
+        let enter_from_left = (self.rng.next() & 1) == 0;
         let is_lurking = self.time_since_last_kill > LURK_TIME_THRESHOLD_FRAMES;
         let small_pct = if is_lurking {
             90
@@ -751,10 +789,20 @@ impl Game {
         });
     }
 
-    fn spawn_saucer_bullet(&mut self, saucer: Saucer) {
-        let shot_angle = if saucer.small {
-            let dx = shortest_delta_q12_4(saucer.x, self.ship.x, WORLD_WIDTH_Q12_4);
-            let dy = shortest_delta_q12_4(saucer.y, self.ship.y, WORLD_HEIGHT_Q12_4);
+    fn spawn_saucer_bullet(
+        &mut self,
+        saucer_x: i32,
+        saucer_y: i32,
+        saucer_radius: i32,
+        saucer_small: bool,
+    ) {
+        if self.saucer_bullets.len() >= SAUCER_BULLET_LIMIT {
+            return;
+        }
+
+        let shot_angle = if saucer_small {
+            let dx = shortest_delta_q12_4(saucer_x, self.ship.x, WORLD_WIDTH_Q12_4);
+            let dy = shortest_delta_q12_4(saucer_y, self.ship.y, WORLD_HEIGHT_Q12_4);
             let target_angle = atan2_bam(dy, dx);
             let error_bam = small_saucer_aim_error_bam(self.wave, self.time_since_last_kill);
             (target_angle + self.random_int(-error_bam, error_bam + 1)) & 0xff
@@ -763,9 +811,9 @@ impl Game {
         };
 
         let (vx, vy) = velocity_q8_8(shot_angle, SAUCER_BULLET_SPEED_Q8_8);
-        let (off_dx, off_dy) = displace_q12_4(shot_angle, saucer.radius + 4);
-        let start_x = wrap_x_q12_4(saucer.x + off_dx);
-        let start_y = wrap_y_q12_4(saucer.y + off_dy);
+        let (off_dx, off_dy) = displace_q12_4(shot_angle, saucer_radius + 4);
+        let start_x = wrap_x_q12_4(saucer_x + off_dx);
+        let start_y = wrap_y_q12_4(saucer_y + off_dy);
 
         self.saucer_bullets.push(Bullet {
             x: start_x,
@@ -779,7 +827,13 @@ impl Game {
     }
 
     fn handle_collisions(&mut self) {
+        let mut alive_asteroids = self.asteroids.len();
+        debug_assert!(self.asteroids.iter().all(|entry| entry.alive));
+
         for bullet_index in 0..self.bullets.len() {
+            if alive_asteroids == 0 {
+                break;
+            }
             if !self.bullets[bullet_index].alive {
                 continue;
             }
@@ -794,19 +848,22 @@ impl Game {
                     continue;
                 }
 
-                let asteroid = self.asteroids[asteroid_index];
-                let hit_dist_q12_4 = (br + asteroid.radius) << 4;
-                if collision_dist_sq_q12_4(bx, by, asteroid.x, asteroid.y)
-                    <= hit_dist_q12_4 * hit_dist_q12_4
-                {
+                let (ax, ay, ar) = {
+                    let asteroid = &self.asteroids[asteroid_index];
+                    (asteroid.x, asteroid.y, asteroid.radius)
+                };
+                if collides_q12_4(bx, by, br, ax, ay, ar) {
                     self.bullets[bullet_index].alive = false;
-                    self.destroy_asteroid(asteroid_index, true);
+                    self.destroy_asteroid(asteroid_index, true, &mut alive_asteroids);
                     break;
                 }
             }
         }
 
         for bullet_index in 0..self.saucer_bullets.len() {
+            if alive_asteroids == 0 {
+                break;
+            }
             if !self.saucer_bullets[bullet_index].alive {
                 continue;
             }
@@ -821,13 +878,13 @@ impl Game {
                     continue;
                 }
 
-                let asteroid = self.asteroids[asteroid_index];
-                let hit_dist_q12_4 = (br + asteroid.radius) << 4;
-                if collision_dist_sq_q12_4(bx, by, asteroid.x, asteroid.y)
-                    <= hit_dist_q12_4 * hit_dist_q12_4
-                {
+                let (ax, ay, ar) = {
+                    let asteroid = &self.asteroids[asteroid_index];
+                    (asteroid.x, asteroid.y, asteroid.radius)
+                };
+                if collides_q12_4(bx, by, br, ax, ay, ar) {
                     self.saucer_bullets[bullet_index].alive = false;
-                    self.destroy_asteroid(asteroid_index, false);
+                    self.destroy_asteroid(asteroid_index, false, &mut alive_asteroids);
                     break;
                 }
             }
@@ -848,14 +905,14 @@ impl Game {
                     continue;
                 }
 
-                let saucer = self.saucers[saucer_index];
-                let hit_dist_q12_4 = (br + saucer.radius) << 4;
-                if collision_dist_sq_q12_4(bx, by, saucer.x, saucer.y)
-                    <= hit_dist_q12_4 * hit_dist_q12_4
-                {
+                let (sx, sy, sr, small) = {
+                    let saucer = &self.saucers[saucer_index];
+                    (saucer.x, saucer.y, saucer.radius, saucer.small)
+                };
+                if collides_q12_4(bx, by, br, sx, sy, sr) {
                     self.bullets[bullet_index].alive = false;
                     self.saucers[saucer_index].alive = false;
-                    self.add_score(if saucer.small {
+                    self.add_score(if small {
                         SCORE_SMALL_SAUCER
                     } else {
                         SCORE_LARGE_SAUCER
@@ -865,23 +922,32 @@ impl Game {
             }
         }
 
-        for saucer_index in 0..self.saucers.len() {
-            if !self.saucers[saucer_index].alive {
-                continue;
-            }
-
-            let saucer = self.saucers[saucer_index];
-            for asteroid in &self.asteroids {
-                if !asteroid.alive {
+        if alive_asteroids > 0 {
+            for saucer_index in 0..self.saucers.len() {
+                if !self.saucers[saucer_index].alive {
                     continue;
                 }
 
-                let hit_dist_q12_4 = (saucer.radius + asteroid.radius) << 4;
-                if collision_dist_sq_q12_4(saucer.x, saucer.y, asteroid.x, asteroid.y)
-                    <= hit_dist_q12_4 * hit_dist_q12_4
-                {
-                    self.saucers[saucer_index].alive = false;
-                    break;
+                let (sx, sy, sr) = {
+                    let saucer = &self.saucers[saucer_index];
+                    (saucer.x, saucer.y, saucer.radius)
+                };
+                for asteroid in &self.asteroids {
+                    if !asteroid.alive {
+                        continue;
+                    }
+
+                    if collides_q12_4(
+                        sx,
+                        sy,
+                        sr,
+                        asteroid.x,
+                        asteroid.y,
+                        asteroid.radius,
+                    ) {
+                        self.saucers[saucer_index].alive = false;
+                        break;
+                    }
                 }
             }
         }
@@ -890,18 +956,24 @@ impl Game {
             return;
         }
 
-        for asteroid in &self.asteroids {
-            if !asteroid.alive {
-                continue;
-            }
+        if alive_asteroids > 0 {
+            for asteroid in &self.asteroids {
+                if !asteroid.alive {
+                    continue;
+                }
 
-            let adjusted_radius = (asteroid.radius * 225) >> 8;
-            let hit_dist_q12_4 = (self.ship.radius + adjusted_radius) << 4;
-            if collision_dist_sq_q12_4(self.ship.x, self.ship.y, asteroid.x, asteroid.y)
-                <= hit_dist_q12_4 * hit_dist_q12_4
-            {
-                self.destroy_ship();
-                return;
+                let adjusted_radius = (asteroid.radius * 225) >> 8;
+                if collides_q12_4(
+                    self.ship.x,
+                    self.ship.y,
+                    self.ship.radius,
+                    asteroid.x,
+                    asteroid.y,
+                    adjusted_radius,
+                ) {
+                    self.destroy_ship();
+                    return;
+                }
             }
         }
 
@@ -910,10 +982,14 @@ impl Game {
                 continue;
             }
 
-            let hit_dist_q12_4 = (self.ship.radius + bullet.radius) << 4;
-            if collision_dist_sq_q12_4(self.ship.x, self.ship.y, bullet.x, bullet.y)
-                <= hit_dist_q12_4 * hit_dist_q12_4
-            {
+            if collides_q12_4(
+                self.ship.x,
+                self.ship.y,
+                self.ship.radius,
+                bullet.x,
+                bullet.y,
+                bullet.radius,
+            ) {
                 bullet.alive = false;
                 self.destroy_ship();
                 return;
@@ -925,10 +1001,14 @@ impl Game {
                 continue;
             }
 
-            let hit_dist_q12_4 = (self.ship.radius + saucer.radius) << 4;
-            if collision_dist_sq_q12_4(self.ship.x, self.ship.y, saucer.x, saucer.y)
-                <= hit_dist_q12_4 * hit_dist_q12_4
-            {
+            if collides_q12_4(
+                self.ship.x,
+                self.ship.y,
+                self.ship.radius,
+                saucer.x,
+                saucer.y,
+                saucer.radius,
+            ) {
                 saucer.alive = false;
                 self.destroy_ship();
                 return;
@@ -936,7 +1016,12 @@ impl Game {
         }
     }
 
-    fn destroy_asteroid(&mut self, asteroid_index: usize, award_score: bool) {
+    fn destroy_asteroid(
+        &mut self,
+        asteroid_index: usize,
+        award_score: bool,
+        alive_asteroids: &mut usize,
+    ) {
         if asteroid_index >= self.asteroids.len() {
             return;
         }
@@ -947,6 +1032,7 @@ impl Game {
                 return;
             }
             asteroid.alive = false;
+            *alive_asteroids = alive_asteroids.saturating_sub(1);
             (
                 asteroid.size,
                 asteroid.x,
@@ -975,8 +1061,7 @@ impl Game {
             AsteroidSize::Small
         };
 
-        let alive_after_destroy = self.asteroids.iter().filter(|entry| entry.alive).count();
-        let free_slots = ASTEROID_CAP.saturating_sub(alive_after_destroy);
+        let free_slots = ASTEROID_CAP.saturating_sub(*alive_asteroids);
         let split_count = core::cmp::min(2, free_slots);
 
         for _ in 0..split_count {
@@ -984,6 +1069,7 @@ impl Game {
             child.vx += (vx * 46) >> 8;
             child.vy += (vy * 46) >> 8;
             self.asteroids.push(child);
+            *alive_asteroids += 1;
         }
     }
 
@@ -1013,6 +1099,30 @@ impl Game {
         self.saucers.retain(|entry| entry.alive);
         self.saucer_bullets.retain(|entry| entry.alive);
     }
+}
+
+#[inline]
+fn collides_q12_4(ax: i32, ay: i32, ar: i32, bx: i32, by: i32, br: i32) -> bool {
+    let hit_dist_q12_4 = (ar + br) << 4;
+    let neg_hit_dist_q12_4 = -hit_dist_q12_4;
+    let dx = shortest_delta_q12_4(ax, bx, WORLD_WIDTH_Q12_4);
+    if dx < neg_hit_dist_q12_4 || dx > hit_dist_q12_4 {
+        return false;
+    }
+    let dy = shortest_delta_q12_4(ay, by, WORLD_HEIGHT_Q12_4);
+    if dy < neg_hit_dist_q12_4 || dy > hit_dist_q12_4 {
+        return false;
+    }
+    let hit_dist_sq_q24_8 = hit_dist_q12_4 * hit_dist_q12_4;
+    (dx * dx + dy * dy) <= hit_dist_sq_q24_8
+}
+
+#[inline]
+fn clearance_sq_q12_4(hx: i32, hy: i32, hr: i32, sx: i32, sy: i32, sr: i32) -> i32 {
+    let hit_dist_q12_4 = (hr + sr) << 4;
+    let dx = shortest_delta_q12_4(hx, sx, WORLD_WIDTH_Q12_4);
+    let dy = shortest_delta_q12_4(hy, sy, WORLD_HEIGHT_Q12_4);
+    (dx * dx + dy * dy) - (hit_dist_q12_4 * hit_dist_q12_4)
 }
 
 #[cfg(test)]

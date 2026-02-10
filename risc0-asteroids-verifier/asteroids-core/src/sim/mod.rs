@@ -4,10 +4,10 @@ use crate::constants::{
     ASTEROID_CAP, ASTEROID_RADIUS_LARGE, ASTEROID_RADIUS_MEDIUM, ASTEROID_RADIUS_SMALL,
     ASTEROID_SPEED_LARGE_Q8_8, ASTEROID_SPEED_MEDIUM_Q8_8, ASTEROID_SPEED_SMALL_Q8_8,
     EXTRA_LIFE_SCORE_STEP, LURK_SAUCER_SPAWN_FAST_FRAMES, LURK_TIME_THRESHOLD_FRAMES,
-    SAUCER_BULLET_LIFETIME_FRAMES, SAUCER_BULLET_SPEED_Q8_8, SAUCER_RADIUS_LARGE,
-    SAUCER_RADIUS_SMALL, SAUCER_SPAWN_MAX_FRAMES, SAUCER_SPAWN_MIN_FRAMES, SAUCER_SPEED_LARGE_Q8_8,
-    SAUCER_SPEED_SMALL_Q8_8, SCORE_LARGE_ASTEROID, SCORE_LARGE_SAUCER, SCORE_MEDIUM_ASTEROID,
-    SCORE_SMALL_ASTEROID, SCORE_SMALL_SAUCER, SHIP_BULLET_COOLDOWN_FRAMES,
+    SAUCER_BULLET_LIFETIME_FRAMES, SAUCER_BULLET_LIMIT, SAUCER_BULLET_SPEED_Q8_8,
+    SAUCER_RADIUS_LARGE, SAUCER_RADIUS_SMALL, SAUCER_SPAWN_MAX_FRAMES, SAUCER_SPAWN_MIN_FRAMES,
+    SAUCER_SPEED_LARGE_Q8_8, SAUCER_SPEED_SMALL_Q8_8, SCORE_LARGE_ASTEROID, SCORE_LARGE_SAUCER,
+    SCORE_MEDIUM_ASTEROID, SCORE_SMALL_ASTEROID, SCORE_SMALL_SAUCER, SHIP_BULLET_COOLDOWN_FRAMES,
     SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, SHIP_BULLET_SPEED_Q8_8,
     SHIP_MAX_SPEED_SQ_Q16_16, SHIP_RADIUS, SHIP_RESPAWN_FRAMES, SHIP_SPAWN_INVULNERABLE_FRAMES,
     SHIP_THRUST_Q8_8, SHIP_TURN_SPEED_BAM, STARTING_LIVES, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
@@ -239,7 +239,7 @@ const SAUCER_CULL_MAX_X_Q12_4: i32 = 16_640;
 const ASTEROID_VEC_CAPACITY: usize = ASTEROID_CAP + 16;
 const SHIP_BULLET_VEC_CAPACITY: usize = SHIP_BULLET_LIMIT;
 const SAUCER_VEC_CAPACITY: usize = 4;
-const SAUCER_BULLET_VEC_CAPACITY: usize = 16;
+const SAUCER_BULLET_VEC_CAPACITY: usize = SAUCER_BULLET_LIMIT;
 const MAX_SCORE_DELTA_PER_FRAME: u32 = (SHIP_BULLET_LIMIT as u32) * SCORE_SMALL_SAUCER;
 const LEGAL_SCORE_DELTA_TABLE_SIZE: usize = MAX_SCORE_DELTA_PER_FRAME as usize + 1;
 const SCORE_EVENT_VALUES: [u32; 5] = [
@@ -269,13 +269,16 @@ pub fn replay_strict(seed: u32, inputs: &[u8]) -> Result<ReplayResult, ReplayVio
     })?;
 
     for input in inputs {
+        let frame_input = decode_input_byte(*input);
         let before_step = game.transition_state();
-        game.step(*input);
+        game.step_decoded(frame_input);
         let after_step = game.transition_state();
 
-        validate_transition(&before_step, &after_step, *input).map_err(|rule| ReplayViolation {
-            frame_count: game.frame_count(),
-            rule,
+        validate_transition(&before_step, &after_step, frame_input).map_err(|rule| {
+            ReplayViolation {
+                frame_count: game.frame_count(),
+                rule,
+            }
         })?;
 
         game.validate_invariants().map_err(|rule| ReplayViolation {
@@ -290,7 +293,7 @@ pub fn replay_strict(seed: u32, inputs: &[u8]) -> Result<ReplayResult, ReplayVio
 fn validate_transition(
     prev: &TransitionState,
     next: &TransitionState,
-    input_byte: u8,
+    input: FrameInput,
 ) -> Result<(), RuleCode> {
     if next.score < prev.score {
         return Err(RuleCode::ProgressionScoreDelta);
@@ -316,7 +319,6 @@ fn validate_transition(
         return Err(RuleCode::ShipSpeedClamp);
     }
 
-    let input = decode_input_byte(input_byte);
     let turn_delta = (next.ship_angle - prev.ship_angle) & 0xff;
     if !wave_advanced_this_frame {
         if prev.ship_can_control {
@@ -333,17 +335,21 @@ fn validate_transition(
         && !next.ship_can_control
         && next.ship_respawn_timer >= SHIP_RESPAWN_FRAMES;
     if !wave_advanced_this_frame {
-        let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4) as i64;
-        let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4) as i64;
         let respawned_this_frame = !prev.ship_can_control && next.ship_can_control;
 
         if prev.ship_can_control {
+            let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4) as i64;
+            let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4) as i64;
             let step_sq = (dx * dx) + (dy * dy);
             if step_sq > max_ship_step_sq_q12_4() {
                 return Err(RuleCode::ShipPositionStep);
             }
-        } else if !respawned_this_frame && (dx != 0 || dy != 0) {
-            return Err(RuleCode::ShipPositionStep);
+        } else if !respawned_this_frame {
+            let dx = shortest_delta_q12_4(prev.ship_x, next.ship_x, WORLD_WIDTH_Q12_4);
+            let dy = shortest_delta_q12_4(prev.ship_y, next.ship_y, WORLD_HEIGHT_Q12_4);
+            if dx != 0 || dy != 0 {
+                return Err(RuleCode::ShipPositionStep);
+            }
         }
     }
 
@@ -530,10 +536,11 @@ impl LiveGame {
     pub fn can_step_strict(&self, input_byte: u8) -> Result<(), RuleCode> {
         let before_step = self.game.transition_state();
         let mut next = self.game.clone();
-        next.step(input_byte);
+        let frame_input = decode_input_byte(input_byte);
+        next.step_decoded(frame_input);
         let after_step = next.transition_state();
 
-        validate_transition(&before_step, &after_step, input_byte)?;
+        validate_transition(&before_step, &after_step, frame_input)?;
         next.validate_invariants()?;
         Ok(())
     }
@@ -633,9 +640,4 @@ fn small_saucer_aim_error_bam(wave: i32, time_since_last_kill: i32) -> i32 {
         min_error,
         base_error,
     )
-}
-
-#[inline]
-fn in_world_bounds_q12_4(x: i32, y: i32) -> bool {
-    (0..WORLD_WIDTH_Q12_4).contains(&x) && (0..WORLD_HEIGHT_Q12_4).contains(&y)
 }

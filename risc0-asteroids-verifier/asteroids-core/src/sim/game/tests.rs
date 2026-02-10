@@ -30,7 +30,8 @@ fn assert_transition_violation_at_frame(
             }
         }
 
-        if let Err(rule) = validate_transition(&before_step, &after_step, *input) {
+        if let Err(rule) = validate_transition(&before_step, &after_step, decode_input_byte(*input))
+        {
             assert_eq!(after_step.frame_count, frame_to_mutate);
             assert_eq!(rule, expected);
             return;
@@ -236,6 +237,15 @@ fn invariant_checks_report_expected_rule_codes() {
     );
     assert_invariant_violation(
         |game| {
+            game.saucer_bullets.clear();
+            for _ in 0..(SAUCER_BULLET_LIMIT + 1) {
+                game.saucer_bullets.push(valid_bullet());
+            }
+        },
+        RuleCode::SaucerBulletLimit,
+    );
+    assert_invariant_violation(
+        |game| {
             game.bullets.clear();
             let mut bullet = valid_bullet();
             bullet.life = 0;
@@ -363,7 +373,8 @@ fn strict_transition_validator_matches_downloads_fixture() {
         let before_step = game.transition_state();
         game.step(*input);
         let after_step = game.transition_state();
-        if let Err(rule) = validate_transition(&before_step, &after_step, *input) {
+        if let Err(rule) = validate_transition(&before_step, &after_step, decode_input_byte(*input))
+        {
             panic!(
                 "transition violation at frame {} rule {:?} input=0x{:02x} before={:?} after={:?}",
                 idx + 1,
@@ -651,4 +662,17 @@ fn asteroid_cap_is_never_exceeded_after_split() {
 
     assert_eq!(medium_count, 0);
     assert_eq!(alive_count, ASTEROID_CAP);
+}
+
+#[test]
+fn saucer_bullet_cap_blocks_extra_spawn() {
+    let mut game = Game::new(0xDEAD_BEEF);
+    game.saucer_bullets.clear();
+    for _ in 0..SAUCER_BULLET_LIMIT {
+        game.saucer_bullets.push(valid_bullet());
+    }
+
+    let saucer = valid_saucer();
+    game.spawn_saucer_bullet(saucer.x, saucer.y, saucer.radius, saucer.small);
+    assert_eq!(game.saucer_bullets.len(), SAUCER_BULLET_LIMIT);
 }
