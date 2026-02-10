@@ -12,12 +12,18 @@ pub(super) struct Game {
     bullets: Vec<Bullet>,
     saucers: Vec<Saucer>,
     saucer_bullets: Vec<Bullet>,
+    prune_mask: u8,
     saucer_spawn_timer: i32,
     ship_fire_latch: bool,
     time_since_last_kill: i32,
     frame_count: u32,
     rng: SeededRng,
 }
+
+const PRUNE_ASTEROIDS: u8 = 1 << 0;
+const PRUNE_BULLETS: u8 = 1 << 1;
+const PRUNE_SAUCERS: u8 = 1 << 2;
+const PRUNE_SAUCER_BULLETS: u8 = 1 << 3;
 
 impl Game {
     pub(super) fn new(seed: u32) -> Self {
@@ -43,6 +49,7 @@ impl Game {
             bullets: Vec::with_capacity(SHIP_BULLET_VEC_CAPACITY),
             saucers: Vec::with_capacity(SAUCER_VEC_CAPACITY),
             saucer_bullets: Vec::with_capacity(SAUCER_BULLET_VEC_CAPACITY),
+            prune_mask: 0,
             saucer_spawn_timer: 0,
             ship_fire_latch: false,
             time_since_last_kill: 0,
@@ -653,25 +660,33 @@ impl Game {
     }
 
     fn update_bullets(&mut self) {
-        Self::update_projectiles(&mut self.bullets);
+        if Self::update_projectiles(&mut self.bullets) {
+            self.prune_mask |= PRUNE_BULLETS;
+        }
     }
 
     fn update_saucer_bullets(&mut self) {
-        Self::update_projectiles(&mut self.saucer_bullets);
+        if Self::update_projectiles(&mut self.saucer_bullets) {
+            self.prune_mask |= PRUNE_SAUCER_BULLETS;
+        }
     }
 
-    fn update_projectiles(projectiles: &mut [Bullet]) {
+    fn update_projectiles(projectiles: &mut [Bullet]) -> bool {
         debug_assert!(projectiles.iter().all(|entry| entry.alive));
+        let mut killed_any = false;
         for bullet in projectiles {
             bullet.life -= 1;
             if bullet.life <= 0 {
                 bullet.alive = false;
+                killed_any = true;
                 continue;
             }
 
             bullet.x = wrap_x_q12_4(bullet.x + (bullet.vx >> 4));
             bullet.y = wrap_y_q12_4(bullet.y + (bullet.vy >> 4));
         }
+
+        killed_any
     }
 
     fn update_saucers(&mut self) {
@@ -700,7 +715,9 @@ impl Game {
             };
         }
 
-        for index in 0..self.saucers.len() {
+        let saucer_count = self.saucers.len();
+        for index in 0..saucer_count {
+            let mut killed_this_frame = false;
             {
                 let saucer = &mut self.saucers[index];
                 saucer.x += saucer.vx >> 4;
@@ -708,12 +725,15 @@ impl Game {
 
                 if saucer.x < SAUCER_CULL_MIN_X_Q12_4 || saucer.x > SAUCER_CULL_MAX_X_Q12_4 {
                     saucer.alive = false;
-                    continue;
-                }
-
-                if saucer.drift_timer > 0 {
+                    killed_this_frame = true;
+                } else if saucer.drift_timer > 0 {
                     saucer.drift_timer -= 1;
                 }
+            }
+
+            if killed_this_frame {
+                self.prune_mask |= PRUNE_SAUCERS;
+                continue;
             }
 
             if !self.saucers[index].alive {
@@ -730,10 +750,13 @@ impl Game {
             }
 
             if self.saucers[index].fire_cooldown <= 0 {
-                let saucer = self.saucers[index];
-                self.spawn_saucer_bullet(saucer.x, saucer.y, saucer.radius, saucer.small);
+                let (sx, sy, sr, small) = {
+                    let saucer = &self.saucers[index];
+                    (saucer.x, saucer.y, saucer.radius, saucer.small)
+                };
+                self.spawn_saucer_bullet(sx, sy, sr, small);
                 let (min_cooldown, max_cooldown) =
-                    saucer_fire_cooldown_range(saucer.small, self.wave, self.time_since_last_kill);
+                    saucer_fire_cooldown_range(small, self.wave, self.time_since_last_kill);
                 self.saucers[index].fire_cooldown = self.random_int(min_cooldown, max_cooldown + 1);
             }
         }
@@ -854,6 +877,7 @@ impl Game {
                 };
                 if collides_q12_4(bx, by, br, ax, ay, ar) {
                     self.bullets[bullet_index].alive = false;
+                    self.prune_mask |= PRUNE_BULLETS;
                     self.destroy_asteroid(asteroid_index, true, &mut alive_asteroids);
                     break;
                 }
@@ -884,6 +908,7 @@ impl Game {
                 };
                 if collides_q12_4(bx, by, br, ax, ay, ar) {
                     self.saucer_bullets[bullet_index].alive = false;
+                    self.prune_mask |= PRUNE_SAUCER_BULLETS;
                     self.destroy_asteroid(asteroid_index, false, &mut alive_asteroids);
                     break;
                 }
@@ -912,6 +937,7 @@ impl Game {
                 if collides_q12_4(bx, by, br, sx, sy, sr) {
                     self.bullets[bullet_index].alive = false;
                     self.saucers[saucer_index].alive = false;
+                    self.prune_mask |= PRUNE_BULLETS | PRUNE_SAUCERS;
                     self.add_score(if small {
                         SCORE_SMALL_SAUCER
                     } else {
@@ -946,6 +972,7 @@ impl Game {
                         asteroid.radius,
                     ) {
                         self.saucers[saucer_index].alive = false;
+                        self.prune_mask |= PRUNE_SAUCERS;
                         break;
                     }
                 }
@@ -991,6 +1018,7 @@ impl Game {
                 bullet.radius,
             ) {
                 bullet.alive = false;
+                self.prune_mask |= PRUNE_SAUCER_BULLETS;
                 self.destroy_ship();
                 return;
             }
@@ -1010,6 +1038,7 @@ impl Game {
                 saucer.radius,
             ) {
                 saucer.alive = false;
+                self.prune_mask |= PRUNE_SAUCERS;
                 self.destroy_ship();
                 return;
             }
@@ -1041,6 +1070,7 @@ impl Game {
                 asteroid.vy,
             )
         };
+        self.prune_mask |= PRUNE_ASTEROIDS;
 
         if award_score {
             self.time_since_last_kill = 0;
@@ -1094,10 +1124,24 @@ impl Game {
     }
 
     fn prune_destroyed_entities(&mut self) {
-        self.asteroids.retain(|entry| entry.alive);
-        self.bullets.retain(|entry| entry.alive);
-        self.saucers.retain(|entry| entry.alive);
-        self.saucer_bullets.retain(|entry| entry.alive);
+        if self.prune_mask == 0 {
+            return;
+        }
+
+        if (self.prune_mask & PRUNE_ASTEROIDS) != 0 {
+            self.asteroids.retain(|entry| entry.alive);
+        }
+        if (self.prune_mask & PRUNE_BULLETS) != 0 {
+            self.bullets.retain(|entry| entry.alive);
+        }
+        if (self.prune_mask & PRUNE_SAUCERS) != 0 {
+            self.saucers.retain(|entry| entry.alive);
+        }
+        if (self.prune_mask & PRUNE_SAUCER_BULLETS) != 0 {
+            self.saucer_bullets.retain(|entry| entry.alive);
+        }
+
+        self.prune_mask = 0;
     }
 }
 
