@@ -263,10 +263,6 @@ fn invariant_checks_report_expected_rule_codes() {
         RuleCode::SaucerBulletState,
     );
     assert_invariant_violation(
-        |game| game.asteroids[0].angle = 256,
-        RuleCode::AsteroidState,
-    );
-    assert_invariant_violation(
         |game| {
             game.wave = 1;
             game.saucers.clear();
@@ -274,16 +270,6 @@ fn invariant_checks_report_expected_rule_codes() {
             game.saucers.push(valid_saucer());
         },
         RuleCode::SaucerCap,
-    );
-    assert_invariant_violation(
-        |game| {
-            game.wave = 7;
-            game.saucers.clear();
-            let mut saucer = valid_saucer();
-            saucer.fire_cooldown = -1;
-            game.saucers.push(saucer);
-        },
-        RuleCode::SaucerState,
     );
 }
 

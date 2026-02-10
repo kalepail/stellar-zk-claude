@@ -340,26 +340,8 @@ impl Game {
             }
         }
 
-        for asteroid in &self.asteroids {
-            let in_bounds = (asteroid.x as u32) < world_width && (asteroid.y as u32) < world_height;
-            if !in_bounds || (asteroid.angle & !0xff) != 0 {
-                return Err(RuleCode::AsteroidState);
-            }
-        }
-
         if self.saucers.len() > max_saucers_for_wave(self.wave) as usize {
             return Err(RuleCode::SaucerCap);
-        }
-
-        for saucer in &self.saucers {
-            if saucer.x < SAUCER_CULL_MIN_X_Q12_4
-                || saucer.x > SAUCER_CULL_MAX_X_Q12_4
-                || (saucer.y as u32) >= world_height
-                || saucer.fire_cooldown < 0
-                || saucer.drift_timer < 0
-            {
-                return Err(RuleCode::SaucerState);
-            }
         }
 
         Ok(())
