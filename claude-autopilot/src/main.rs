@@ -9,7 +9,10 @@ use claude_autopilot::evolution;
 use claude_autopilot::runner;
 
 #[derive(Parser)]
-#[command(name = "claude-autopilot", about = "Action-search autopilot with built-in evolution")]
+#[command(
+    name = "claude-autopilot",
+    about = "Action-search autopilot with built-in evolution"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -24,7 +27,7 @@ enum Command {
         seed: String,
 
         /// Maximum frames to run
-        #[arg(long, default_value = "54000")]
+        #[arg(long, default_value = "108000")]
         max_frames: u32,
 
         /// Config file path (JSON)
@@ -51,7 +54,7 @@ enum Command {
         base_seed: String,
 
         /// Maximum frames per run
-        #[arg(long, default_value = "54000")]
+        #[arg(long, default_value = "108000")]
         max_frames: u32,
 
         /// Config file path (JSON)
@@ -90,7 +93,7 @@ enum Command {
         base_seed: String,
 
         /// Maximum frames per run
-        #[arg(long, default_value = "54000")]
+        #[arg(long, default_value = "108000")]
         max_frames: u32,
 
         /// Initial config file (JSON)
@@ -135,13 +138,14 @@ fn main() -> Result<()> {
             let artifact = runner::run(&mut bot, seed_val, max_frames)?;
 
             eprintln!(
-                "seed={:#010x} score={} frames={} lives={} wave={} game_over={}",
+                "seed={:#010x} score={} frames={} lives={} wave={} game_over={} rules_digest={:#010x}",
                 seed_val,
                 artifact.metrics.final_score,
                 artifact.metrics.frame_count,
                 artifact.metrics.final_lives,
                 artifact.metrics.final_wave,
                 artifact.metrics.game_over,
+                artifact.metrics.rules_digest,
             );
 
             if let Some(path) = output {
@@ -206,7 +210,8 @@ fn main() -> Result<()> {
                 cfg.id, generations, seed_count, max_frames
             );
 
-            let reports = evolution::run_evolution(&cfg, &seeds, max_frames, generations, &out_dir)?;
+            let reports =
+                evolution::run_evolution(&cfg, &seeds, max_frames, generations, &out_dir)?;
 
             eprintln!("\n=== Evolution Summary ===");
             for report in &reports {
@@ -245,8 +250,12 @@ fn load_config(path: Option<PathBuf>, preset: Option<String>) -> Result<BotConfi
         let cfg: BotConfig = serde_json::from_slice(&data)?;
         Ok(cfg)
     } else if let Some(name) = preset {
-        BotConfig::preset(&name)
-            .ok_or_else(|| anyhow!("unknown preset '{}' (try: marathon, hunter, supernova)", name))
+        BotConfig::preset(&name).ok_or_else(|| {
+            anyhow!(
+                "unknown preset '{}' (try: marathon, hunter, supernova)",
+                name
+            )
+        })
     } else {
         Ok(BotConfig::default())
     }

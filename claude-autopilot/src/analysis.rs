@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use asteroids_verifier_core::constants::{
-    SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4, WORLD_WIDTH_Q12_4,
+    SCORE_LARGE_ASTEROID, SCORE_LARGE_SAUCER, SCORE_MEDIUM_ASTEROID, SCORE_SMALL_ASTEROID,
+    SCORE_SMALL_SAUCER, SHIP_BULLET_LIFETIME_FRAMES, SHIP_BULLET_LIMIT, WORLD_HEIGHT_Q12_4,
+    WORLD_WIDTH_Q12_4,
 };
 use asteroids_verifier_core::fixed_point::shortest_delta_q12_4;
 use asteroids_verifier_core::sim::{LiveGame, WorldSnapshot};
@@ -67,7 +69,12 @@ struct ThreatSample {
     distance_px: f64,
 }
 
-pub fn analyze_run(metrics: RunMetrics, inputs: &[u8], seed: u32, max_frames: u32) -> Result<RunAnalysis> {
+pub fn analyze_run(
+    metrics: RunMetrics,
+    inputs: &[u8],
+    seed: u32,
+    max_frames: u32,
+) -> Result<RunAnalysis> {
     let mut game = LiveGame::new(seed);
     game.validate()
         .map_err(|rule| anyhow!("initial invariant failure for analysis: {rule:?}"))?;
@@ -217,7 +224,12 @@ fn probable_killer(world: &WorldSnapshot) -> ThreatSample {
     };
 
     for asteroid in &world.asteroids {
-        consider(asteroid.x, asteroid.y, asteroid.radius, DeathCause::Asteroid);
+        consider(
+            asteroid.x,
+            asteroid.y,
+            asteroid.radius,
+            DeathCause::Asteroid,
+        );
     }
     for saucer in &world.saucers {
         consider(saucer.x, saucer.y, saucer.radius, DeathCause::Saucer);
@@ -277,7 +289,13 @@ fn estimate_hit_events(score_delta: u32) -> u32 {
         return 0;
     }
 
-    const EVENTS: [u32; 5] = [20, 50, 100, 200, 1000];
+    const EVENTS: [u32; 5] = [
+        SCORE_LARGE_ASTEROID,
+        SCORE_MEDIUM_ASTEROID,
+        SCORE_SMALL_ASTEROID,
+        SCORE_LARGE_SAUCER,
+        SCORE_SMALL_SAUCER,
+    ];
     for count in 1..=4u32 {
         if can_make_score_delta(score_delta, count as usize, &EVENTS) {
             return count;
