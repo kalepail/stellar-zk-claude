@@ -29,3 +29,6 @@ bun-debug.log*
 
 # Batch test output
 batch-results/
+
+# Autopilot artifacts
+*-autopilot/
