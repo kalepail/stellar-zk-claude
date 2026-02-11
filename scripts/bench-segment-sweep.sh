@@ -10,11 +10,11 @@ set -euo pipefail
 # Example:
 #   bash scripts/bench-segment-sweep.sh http://127.0.0.1:8080 \
 #     --seg-floor 19 --seg-ceiling 22 \
-#     --receipts composite,succinct \
+#     --receipts groth16 \
 #     --repeat 2 --tapes all
 #   bash scripts/bench-segment-sweep.sh https://your-prover.example.com \
 #     --seg-floor 19 --seg-ceiling 22 \
-#     --receipts composite,succinct \
+#     --receipts groth16 \
 #     --repeat 2 --tapes all
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +32,7 @@ TAPES_CSV="short,medium"
 MAX_FRAMES=""
 BOUNDS_MODE="clamp"
 CSV_OUT=""
-RECEIPTS_CSV="composite,succinct"
+RECEIPTS_CSV="groth16"
 declare -a RECEIPTS=()
 
 usage() {
@@ -47,7 +47,7 @@ Options:
                              strict = fail when requested range exceeds policy
   --receipts <csv>           Comma-separated receipt kinds to benchmark.
                              Values: composite|succinct|groth16
-                             Default: composite + succinct
+                             Default: groth16
   --tapes <csv>              Comma-separated tape labels to benchmark.
                              Values: short|medium|real|all
                              Default: short,medium
@@ -68,7 +68,7 @@ Notes:
 
 Examples:
   bash scripts/bench-segment-sweep.sh
-  bash scripts/bench-segment-sweep.sh http://127.0.0.1:8080 --receipts composite,succinct
+  bash scripts/bench-segment-sweep.sh http://127.0.0.1:8080 --receipts groth16
   bash scripts/bench-segment-sweep.sh https://<vast-host>:<port> --seg-floor 19 --seg-ceiling 22
 USAGE_EOF
 }

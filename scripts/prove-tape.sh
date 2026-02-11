@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Options (passed as query params):
 #   --seg <n>          segment_limit_po2 (default: 21)
-#   --receipt <kind>   composite|succinct|groth16 (default: composite)
+#   --receipt <kind>   composite|succinct|groth16 (default: groth16)
 #   --poll <seconds>   Poll interval (default: 5)
 #   --cleanup-mode <m> delete|keep (default: delete)
 #   -h, --help         Show this help
@@ -26,7 +26,7 @@ Usage: scripts/prove-tape.sh [prover-url] <tape-file> [options]
 
 Options:
   --seg <n>          segment_limit_po2 (default: 21)
-  --receipt <kind>   composite|succinct|groth16 (default: composite)
+  --receipt <kind>   composite|succinct|groth16 (default: groth16)
   --poll <seconds>   Poll interval (default: 5)
   --cleanup-mode <m> delete|keep (default: delete)
   -h, --help         Show this help
@@ -64,7 +64,7 @@ TAPE_FILE="$1"
 shift
 
 SEG=21
-RECEIPT="composite"
+RECEIPT="groth16"
 POLL_INTERVAL=5
 CLEANUP_MODE="delete"
 

@@ -137,6 +137,13 @@ FAIL=0
 WARN=0
 TESTS_RUN=0
 JOBS_TO_CLEAN=()
+declare -a ACCUMULATED_IDS=()
+GARBAGE_REJECTED_AT_SUBMIT=0
+LAST_GARBAGE_ID=""
+LAST_GARBAGE_HTTP=""
+LAST_GARBAGE_ERROR_CODE=""
+LONG_JOB_ID=""
+LONG_JOB_PERSISTED=0
 
 pass() { PASS=$((PASS + 1)); TESTS_RUN=$((TESTS_RUN + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); TESTS_RUN=$((TESTS_RUN + 1)); echo "  FAIL: $1"; }
@@ -173,13 +180,27 @@ submit_garbage_and_wait() {
   body=$(echo "$resp_raw" | sed '$d')
   rm -f "$gfile"
 
+  LAST_GARBAGE_ID=""
+  LAST_GARBAGE_HTTP="$http_code"
+  LAST_GARBAGE_ERROR_CODE="$(echo "$body" | json_field error_code)"
+
+  # Current API behavior rejects malformed tapes before enqueue.
+  if [[ "$http_code" == "400" && "$LAST_GARBAGE_ERROR_CODE" == "invalid_tape" ]]; then
+    GARBAGE_REJECTED_AT_SUBMIT=$((GARBAGE_REJECTED_AT_SUBMIT + 1))
+    info "$label: rejected at submit with invalid_tape"
+    return 0
+  fi
+
   if [[ "$http_code" != "202" ]]; then
     info "$label: rejected with $http_code (expected 202)"
-    LAST_GARBAGE_ID=""
     return 1
   fi
 
   LAST_GARBAGE_ID=$(echo "$body" | json_field job_id)
+  if [[ -z "$LAST_GARBAGE_ID" ]]; then
+    info "$label: accepted but missing job_id"
+    return 1
+  fi
   JOBS_TO_CLEAN+=("$LAST_GARBAGE_ID")
 
   # Wait for failure
@@ -346,6 +367,10 @@ if [[ -n "$GARBAGE_JOB_1" ]]; then
   else
     fail "finished_at_unix_s is missing on failed job"
   fi
+elif [[ "$LAST_GARBAGE_HTTP" == "400" && "$LAST_GARBAGE_ERROR_CODE" == "invalid_tape" ]]; then
+  pass "garbage tape rejected pre-enqueue with invalid_tape"
+else
+  fail "garbage tape handling unexpected (HTTP ${LAST_GARBAGE_HTTP:-unknown}, error_code=${LAST_GARBAGE_ERROR_CODE:-none})"
 fi
 
 # Test 2d: Invalid job ID format → 404 or 400
@@ -409,11 +434,17 @@ echo ""
 # Check stored_jobs count increased
 health_resp=$(curl -sf "$PROVER_URL/health" 2>/dev/null)
 stored_now=$(echo "$health_resp" | json_field stored_jobs)
-# We have: initial + garbage_1 + 5 accumulated = initial + 6
-expected_min=$((INITIAL_STORED + 6))
+accumulated_count=${#ACCUMULATED_IDS[@]}
+persisted_garbage_jobs="$accumulated_count"
+if [[ -n "${GARBAGE_JOB_1:-}" ]]; then
+  persisted_garbage_jobs=$((persisted_garbage_jobs + 1))
+fi
+expected_min=$((INITIAL_STORED + persisted_garbage_jobs))
 info "stored_jobs now: $stored_now (started at $INITIAL_STORED, expect >= $expected_min)"
 
-if [[ "$stored_now" -ge "$expected_min" ]]; then
+if [[ "$persisted_garbage_jobs" -eq 0 ]]; then
+  pass "garbage tapes rejected at submit (invalid_tape); no failed jobs persisted by design"
+elif [[ "$stored_now" -ge "$expected_min" ]]; then
   pass "stored_jobs reflects accumulated failed jobs ($stored_now >= $expected_min)"
 else
   fail "stored_jobs too low: $stored_now (expected >= $expected_min)"
@@ -422,20 +453,24 @@ fi
 # Verify all accumulated jobs are still individually retrievable
 echo ""
 echo "[3b] Verify all accumulated jobs are retrievable"
-all_retrievable=true
-for jid in "${ACCUMULATED_IDS[@]}"; do
-  jr=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null) || { all_retrievable=false; break; }
-  s=$(echo "$jr" | json_field status)
-  if [[ "$s" != "failed" ]]; then
-    all_retrievable=false
-    break
-  fi
-done
-
-if [[ "$all_retrievable" == "true" ]]; then
-  pass "all ${#ACCUMULATED_IDS[@]} accumulated failed jobs retrievable with correct status"
+if [[ "$accumulated_count" -eq 0 ]]; then
+  pass "no accumulated failed jobs to retrieve (all invalid tapes rejected pre-enqueue)"
 else
-  fail "some accumulated jobs not retrievable or wrong status"
+  all_retrievable=true
+  for jid in "${ACCUMULATED_IDS[@]}"; do
+    jr=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null) || { all_retrievable=false; break; }
+    s=$(echo "$jr" | json_field status)
+    if [[ "$s" != "failed" ]]; then
+      all_retrievable=false
+      break
+    fi
+  done
+
+  if [[ "$all_retrievable" == "true" ]]; then
+    pass "all ${#ACCUMULATED_IDS[@]} accumulated failed jobs retrievable with correct status"
+  else
+    fail "some accumulated jobs not retrievable or wrong status"
+  fi
 fi
 
 echo ""
@@ -451,7 +486,7 @@ echo "[4a] Submit medium tape for proving"
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 info "tape: $(basename "$TAPE_FILE") ($tape_size bytes)"
 
-submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy"
+submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
 resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${submit_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream" 2>&1)
 
@@ -490,9 +525,9 @@ for attempt in $(seq 1 10); do
 done
 
 # Now try to submit a second job while the prover is busy
-busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy"
+busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${busy_query}" \
-  --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
+  --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
 
@@ -625,7 +660,7 @@ if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
   long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
   info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
 
-  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=composite&verify_mode=policy"
+  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
   resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${long_query}" \
     --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
 
@@ -633,7 +668,10 @@ if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
     fail "failed to submit long tape"
   else
     LONG_JOB_ID=$(echo "$resp" | json_field job_id)
-    JOBS_TO_CLEAN+=("$LONG_JOB_ID")
+    if [[ -n "$LONG_JOB_ID" ]]; then
+      JOBS_TO_CLEAN+=("$LONG_JOB_ID")
+      LONG_JOB_PERSISTED=1
+    fi
 
     if [[ -n "$LONG_JOB_ID" ]]; then
       pass "long tape submitted, job_id=$LONG_JOB_ID"
@@ -770,7 +808,12 @@ else
 fi
 
 # stored should be initial + garbage_1 + 5 accumulated + medium proof (+ long proof if run) = initial + 7 or 8
-expected_stored=$((INITIAL_STORED + 7))
+stored_garbage_jobs=${#ACCUMULATED_IDS[@]}
+if [[ -n "${GARBAGE_JOB_1:-}" ]]; then
+  stored_garbage_jobs=$((stored_garbage_jobs + 1))
+fi
+# +1 for medium proof job, +1 for long proof job if submitted.
+expected_stored=$((INITIAL_STORED + stored_garbage_jobs + 1 + LONG_JOB_PERSISTED))
 if [[ "$stored" -ge "$expected_stored" ]]; then
   pass "stored_jobs count accurate ($stored >= $expected_stored)"
 else
@@ -858,27 +901,31 @@ echo ""
 echo "[8b] GET all accumulated failed jobs after ${DELAY_MINUTES} minute delay"
 failed_still_ok=0
 failed_missing=0
-for jid in "${ACCUMULATED_IDS[@]}"; do
-  jr_d=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null)
-  if [[ $? -eq 0 ]]; then
-    s=$(echo "$jr_d" | json_field status)
-    e=$(echo "$jr_d" | json_field error)
-    if [[ "$s" == "failed" && -n "$e" && "$e" != "" && "$e" != "None" ]]; then
-      failed_still_ok=$((failed_still_ok + 1))
+if [[ "${#ACCUMULATED_IDS[@]}" -eq 0 ]]; then
+  pass "no accumulated failed jobs to re-check after delay (invalid tapes rejected pre-enqueue)"
+else
+  for jid in "${ACCUMULATED_IDS[@]}"; do
+    jr_d=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null)
+    if [[ $? -eq 0 ]]; then
+      s=$(echo "$jr_d" | json_field status)
+      e=$(echo "$jr_d" | json_field error)
+      if [[ "$s" == "failed" && -n "$e" && "$e" != "" && "$e" != "None" ]]; then
+        failed_still_ok=$((failed_still_ok + 1))
+      else
+        failed_missing=$((failed_missing + 1))
+      fi
     else
       failed_missing=$((failed_missing + 1))
     fi
+  done
+
+  info "$failed_still_ok/${#ACCUMULATED_IDS[@]} failed jobs still intact with error messages"
+
+  if [[ $failed_missing -eq 0 ]]; then
+    pass "all ${#ACCUMULATED_IDS[@]} failed jobs persist with errors after ${DELAY_MINUTES} min"
   else
-    failed_missing=$((failed_missing + 1))
+    fail "$failed_missing/${#ACCUMULATED_IDS[@]} failed jobs missing or corrupted after delay"
   fi
-done
-
-info "$failed_still_ok/${#ACCUMULATED_IDS[@]} failed jobs still intact with error messages"
-
-if [[ $failed_missing -eq 0 ]]; then
-  pass "all ${#ACCUMULATED_IDS[@]} failed jobs persist with errors after ${DELAY_MINUTES} min"
-else
-  fail "$failed_missing/${#ACCUMULATED_IDS[@]} failed jobs missing or corrupted after delay"
 fi
 
 # Re-check the very first garbage job

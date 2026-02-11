@@ -10,7 +10,7 @@ set -euo pipefail
 # Examples:
 #   bash scripts/smoke-test-prover.sh
 #   bash scripts/smoke-test-prover.sh --tape test-fixtures/test-short.tape
-#   bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts composite,groth16
+#   bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts groth16
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -21,19 +21,19 @@ Usage: scripts/smoke-test-prover.sh [options]
 Defaults:
   --url       http://127.0.0.1:8080
   --tape      test-fixtures/test-real-game.tape
-  --receipts  composite
+  --receipts  groth16
   --poll      5
 
 Examples:
   bash scripts/smoke-test-prover.sh
   bash scripts/smoke-test-prover.sh --tape test-fixtures/test-short.tape
-  bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts composite,groth16
+  bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts groth16
 USAGE_EOF
 }
 
 PROVER_URL="http://127.0.0.1:8080"
 TAPE_FILE="$ROOT_DIR/test-fixtures/test-real-game.tape"
-RECEIPTS_CSV="composite"
+RECEIPTS_CSV="groth16"
 POLL_INTERVAL=5
 declare -a RECEIPTS=()
 

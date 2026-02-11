@@ -9,21 +9,21 @@ set -euo pipefail
 #
 # Options:
 #   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
-#   --receipts <csv>       composite,groth16 (default: composite)
+#   --receipts <csv>       groth16 (default: groth16)
 #   --poll <seconds>       Poll interval (default: 5)
 #   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
 #   -h, --help             Show this help
 #
 # Examples:
 #   bash scripts/batch-smoke-test.sh test-fixtures/
-#   bash scripts/batch-smoke-test.sh --receipts composite test-fixtures/test-short.tape test-fixtures/test-medium.tape
+#   bash scripts/batch-smoke-test.sh --receipts groth16 test-fixtures/test-short.tape test-fixtures/test-medium.tape
 #   bash scripts/batch-smoke-test.sh --url http://localhost:8080 --out results/ test-fixtures/
 #   bash scripts/batch-smoke-test.sh --url https://<vast-host>:<port> --out results/ test-fixtures/
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 PROVER_URL="http://127.0.0.1:8080"
-RECEIPTS_CSV="composite"
+RECEIPTS_CSV="groth16"
 POLL_INTERVAL=5
 OUT_DIR=""
 TAPE_ARGS=()
@@ -37,7 +37,7 @@ Options:
   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
   --receipts <csv>       Comma-separated list of receipt kinds to run.
                          Allowed values: composite|groth16
-                         Default: composite
+                         Default: groth16
   --poll <seconds>       Poll interval (default: 5)
   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
   -h, --help             Show this help
