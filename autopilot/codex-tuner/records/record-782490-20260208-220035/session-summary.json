@@ -6,9 +6,9 @@
   "max_frames": 108000,
   "jobs": 8,
   "selection_metric": "insane",
-  "seeds_file": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/seeds/ultra-hunt-seeds.txt",
+  "seeds_file": "autopilot/codex-tuner/seeds/ultra-hunt-seeds.txt",
   "random_seed": 2026020910,
-  "start_profile": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/profiles/champion.json",
+  "start_profile": "autopilot/codex-tuner/profiles/champion.json",
   "best": {
     "objective_value": 79940.93999999999,
     "avg_score": 78171.15384615384,

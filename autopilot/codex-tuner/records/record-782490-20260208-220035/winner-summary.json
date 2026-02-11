@@ -925,7 +925,7 @@
       "score": 782490,
       "frames": 108000,
       "lives": 3,
-      "path": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/runs/session-20260209-025521/iter-008/cand-14/top-objective/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/session-20260209-025521/iter-008/cand-14/top-objective/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
     },
     {
       "rank": 1,
@@ -937,7 +937,7 @@
       "score": 782490,
       "frames": 108000,
       "lives": 3,
-      "path": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/runs/session-20260209-025521/iter-008/cand-14/top-score/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/session-20260209-025521/iter-008/cand-14/top-score/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
     },
     {
       "rank": 1,
@@ -949,7 +949,7 @@
       "score": 782490,
       "frames": 108000,
       "lives": 3,
-      "path": "/Users/kalepail/Desktop/stellar-zk/codex-autopilot/runs/session-20260209-025521/iter-008/cand-14/top-survival/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/session-20260209-025521/iter-008/cand-14/top-survival/rank01-codex-potential-adaptive-seed7624d842-score782490-frames108000.tape"
     }
   ]
 }

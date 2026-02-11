@@ -3,7 +3,7 @@ Record lock for Codex autopilot.
 Top score: 719970
 Seed: 0x5384545b
 Frames: 106426
-Session: codex-autopilot/runs/session-20260209-024941
+Session: autopilot/codex-tuner/runs/session-20260209-024941
 Winner: iter-006/cand-07
 Captured at: 20260208-215305
 

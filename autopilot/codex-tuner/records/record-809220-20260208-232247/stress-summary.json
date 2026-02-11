@@ -245,7 +245,7 @@
       "score": 224000,
       "frames": 47803,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
     },
     {
       "rank": 2,
@@ -257,7 +257,7 @@
       "score": 154590,
       "frames": 37050,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
     },
     {
       "rank": 3,
@@ -269,7 +269,7 @@
       "score": 46490,
       "frames": 14767,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
     },
     {
       "rank": 4,
@@ -281,7 +281,7 @@
       "score": 31820,
       "frames": 12790,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank04-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank04-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
     },
     {
       "rank": 5,
@@ -293,7 +293,7 @@
       "score": 29300,
       "frames": 13044,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
     },
     {
       "rank": 6,
@@ -305,7 +305,7 @@
       "score": 28310,
       "frames": 13263,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank06-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank06-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
     },
     {
       "rank": 7,
@@ -317,7 +317,7 @@
       "score": 25470,
       "frames": 12062,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
     },
     {
       "rank": 8,
@@ -329,7 +329,7 @@
       "score": 18650,
       "frames": 9636,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
     },
     {
       "rank": 9,
@@ -341,7 +341,7 @@
       "score": 14740,
       "frames": 8914,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank09-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank09-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
     },
     {
       "rank": 10,
@@ -353,7 +353,7 @@
       "score": 13470,
       "frames": 9316,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-objective/rank10-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-objective/rank10-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
     },
     {
       "rank": 1,
@@ -365,7 +365,7 @@
       "score": 224000,
       "frames": 47803,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
     },
     {
       "rank": 2,
@@ -377,7 +377,7 @@
       "score": 154590,
       "frames": 37050,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
     },
     {
       "rank": 3,
@@ -389,7 +389,7 @@
       "score": 46490,
       "frames": 14767,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
     },
     {
       "rank": 4,
@@ -401,7 +401,7 @@
       "score": 31820,
       "frames": 12790,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank04-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank04-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
     },
     {
       "rank": 5,
@@ -413,7 +413,7 @@
       "score": 29300,
       "frames": 13044,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
     },
     {
       "rank": 6,
@@ -425,7 +425,7 @@
       "score": 28310,
       "frames": 13263,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank06-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank06-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
     },
     {
       "rank": 7,
@@ -437,7 +437,7 @@
       "score": 25470,
       "frames": 12062,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
     },
     {
       "rank": 8,
@@ -449,7 +449,7 @@
       "score": 18650,
       "frames": 9636,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
     },
     {
       "rank": 9,
@@ -461,7 +461,7 @@
       "score": 14740,
       "frames": 8914,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank09-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank09-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
     },
     {
       "rank": 10,
@@ -473,7 +473,7 @@
       "score": 13470,
       "frames": 9316,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-score/rank10-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-score/rank10-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
     },
     {
       "rank": 1,
@@ -485,7 +485,7 @@
       "score": 224000,
       "frames": 47803,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank01-codex-potential-adaptive-seedb54cda8f-score224000-frames47803.tape"
     },
     {
       "rank": 2,
@@ -497,7 +497,7 @@
       "score": 154590,
       "frames": 37050,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank02-codex-potential-adaptive-seedcc623b8b-score154590-frames37050.tape"
     },
     {
       "rank": 3,
@@ -509,7 +509,7 @@
       "score": 46490,
       "frames": 14767,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank03-codex-potential-adaptive-seed171560c3-score46490-frames14767.tape"
     },
     {
       "rank": 4,
@@ -521,7 +521,7 @@
       "score": 28310,
       "frames": 13263,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank04-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank04-codex-potential-adaptive-seeddaa66d2b-score28310-frames13263.tape"
     },
     {
       "rank": 5,
@@ -533,7 +533,7 @@
       "score": 29300,
       "frames": 13044,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank05-codex-potential-adaptive-seedf1bbce27-score29300-frames13044.tape"
     },
     {
       "rank": 6,
@@ -545,7 +545,7 @@
       "score": 31820,
       "frames": 12790,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank06-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank06-codex-potential-adaptive-seed8ff347f3-score31820-frames12790.tape"
     },
     {
       "rank": 7,
@@ -557,7 +557,7 @@
       "score": 25470,
       "frames": 12062,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank07-codex-potential-adaptive-seed78dde6f7-score25470-frames12062.tape"
     },
     {
       "rank": 8,
@@ -569,7 +569,7 @@
       "score": 18650,
       "frames": 9636,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank08-codex-potential-adaptive-seed00000001-score18650-frames9636.tape"
     },
     {
       "rank": 9,
@@ -581,7 +581,7 @@
       "score": 13470,
       "frames": 9316,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank09-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank09-codex-potential-adaptive-seed5384545b-score13470-frames9316.tape"
     },
     {
       "rank": 10,
@@ -593,7 +593,7 @@
       "score": 14740,
       "frames": 8914,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-stress-20260208-232208/top-survival/rank10-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-stress-20260208-232208/top-survival/rank10-codex-potential-adaptive-seed6a99b557-score14740-frames8914.tape"
     }
   ]
 }

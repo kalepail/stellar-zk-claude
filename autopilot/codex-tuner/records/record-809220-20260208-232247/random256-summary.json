@@ -4393,7 +4393,7 @@
       "score": 809220,
       "frames": 108000,
       "lives": 8,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
     },
     {
       "rank": 2,
@@ -4405,7 +4405,7 @@
       "score": 688990,
       "frames": 99572,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank02-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank02-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
     },
     {
       "rank": 3,
@@ -4417,7 +4417,7 @@
       "score": 639290,
       "frames": 108000,
       "lives": 4,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank03-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank03-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
     },
     {
       "rank": 4,
@@ -4429,7 +4429,7 @@
       "score": 423320,
       "frames": 69114,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank04-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank04-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
     },
     {
       "rank": 5,
@@ -4441,7 +4441,7 @@
       "score": 418080,
       "frames": 75768,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank05-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank05-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
     },
     {
       "rank": 6,
@@ -4453,7 +4453,7 @@
       "score": 398150,
       "frames": 69324,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank06-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank06-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
     },
     {
       "rank": 7,
@@ -4465,7 +4465,7 @@
       "score": 389790,
       "frames": 65829,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
     },
     {
       "rank": 8,
@@ -4477,7 +4477,7 @@
       "score": 326170,
       "frames": 55482,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank08-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank08-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
     },
     {
       "rank": 9,
@@ -4489,7 +4489,7 @@
       "score": 277360,
       "frames": 59158,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank09-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank09-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
     },
     {
       "rank": 10,
@@ -4501,7 +4501,7 @@
       "score": 277080,
       "frames": 54632,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-objective/rank10-codex-potential-adaptive-seed217b35be-score277080-frames54632.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-objective/rank10-codex-potential-adaptive-seed217b35be-score277080-frames54632.tape"
     },
     {
       "rank": 1,
@@ -4513,7 +4513,7 @@
       "score": 809220,
       "frames": 108000,
       "lives": 8,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
     },
     {
       "rank": 2,
@@ -4525,7 +4525,7 @@
       "score": 688990,
       "frames": 99572,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank02-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank02-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
     },
     {
       "rank": 3,
@@ -4537,7 +4537,7 @@
       "score": 639290,
       "frames": 108000,
       "lives": 4,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank03-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank03-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
     },
     {
       "rank": 4,
@@ -4549,7 +4549,7 @@
       "score": 423320,
       "frames": 69114,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank04-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank04-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
     },
     {
       "rank": 5,
@@ -4561,7 +4561,7 @@
       "score": 418080,
       "frames": 75768,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank05-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank05-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
     },
     {
       "rank": 6,
@@ -4573,7 +4573,7 @@
       "score": 398150,
       "frames": 69324,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank06-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank06-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
     },
     {
       "rank": 7,
@@ -4585,7 +4585,7 @@
       "score": 389790,
       "frames": 65829,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
     },
     {
       "rank": 8,
@@ -4597,7 +4597,7 @@
       "score": 326170,
       "frames": 55482,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank08-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank08-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
     },
     {
       "rank": 9,
@@ -4609,7 +4609,7 @@
       "score": 277360,
       "frames": 59158,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank09-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank09-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
     },
     {
       "rank": 10,
@@ -4621,7 +4621,7 @@
       "score": 277080,
       "frames": 54632,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-score/rank10-codex-potential-adaptive-seed217b35be-score277080-frames54632.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-score/rank10-codex-potential-adaptive-seed217b35be-score277080-frames54632.tape"
     },
     {
       "rank": 1,
@@ -4633,7 +4633,7 @@
       "score": 809220,
       "frames": 108000,
       "lives": 8,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank01-codex-potential-adaptive-seed7624d842-score809220-frames108000.tape"
     },
     {
       "rank": 2,
@@ -4645,7 +4645,7 @@
       "score": 639290,
       "frames": 108000,
       "lives": 4,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank02-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank02-codex-potential-adaptive-seed52326114-score639290-frames108000.tape"
     },
     {
       "rank": 3,
@@ -4657,7 +4657,7 @@
       "score": 688990,
       "frames": 99572,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank03-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank03-codex-potential-adaptive-seed2a6e8bee-score688990-frames99572.tape"
     },
     {
       "rank": 4,
@@ -4669,7 +4669,7 @@
       "score": 418080,
       "frames": 75768,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank04-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank04-codex-potential-adaptive-seed7b3a92ff-score418080-frames75768.tape"
     },
     {
       "rank": 5,
@@ -4681,7 +4681,7 @@
       "score": 398150,
       "frames": 69324,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank05-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank05-codex-potential-adaptive-seede2109b22-score398150-frames69324.tape"
     },
     {
       "rank": 6,
@@ -4693,7 +4693,7 @@
       "score": 423320,
       "frames": 69114,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank06-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank06-codex-potential-adaptive-seed8843db68-score423320-frames69114.tape"
     },
     {
       "rank": 7,
@@ -4705,7 +4705,7 @@
       "score": 389790,
       "frames": 65829,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank07-codex-potential-adaptive-seed748d8bdd-score389790-frames65829.tape"
     },
     {
       "rank": 8,
@@ -4717,7 +4717,7 @@
       "score": 277360,
       "frames": 59158,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank08-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank08-codex-potential-adaptive-seed92fb1daa-score277360-frames59158.tape"
     },
     {
       "rank": 9,
@@ -4729,7 +4729,7 @@
       "score": 248820,
       "frames": 58729,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank09-codex-potential-adaptive-seed7287d2a8-score248820-frames58729.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank09-codex-potential-adaptive-seed7287d2a8-score248820-frames58729.tape"
     },
     {
       "rank": 10,
@@ -4741,7 +4741,7 @@
       "score": 326170,
       "frames": 55482,
       "lives": 0,
-      "path": "codex-autopilot/runs/post-tweak-random256-20260208-232208/top-survival/rank10-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
+      "path": "autopilot/codex-tuner/runs/post-tweak-random256-20260208-232208/top-survival/rank10-codex-potential-adaptive-seedcc814570-score326170-frames55482.tape"
     }
   ]
 }

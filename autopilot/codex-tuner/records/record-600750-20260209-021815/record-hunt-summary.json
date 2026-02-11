@@ -585,7 +585,7 @@
       "score": 600750,
       "frames": 108000,
       "lives": 3,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
     },
     {
       "rank": 2,
@@ -597,7 +597,7 @@
       "score": 427230,
       "frames": 96174,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
     },
     {
       "rank": 3,
@@ -609,7 +609,7 @@
       "score": 157660,
       "frames": 39284,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank03-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank03-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
     },
     {
       "rank": 4,
@@ -621,7 +621,7 @@
       "score": 147070,
       "frames": 42093,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank04-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank04-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
     },
     {
       "rank": 5,
@@ -633,7 +633,7 @@
       "score": 139860,
       "frames": 38551,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
     },
     {
       "rank": 6,
@@ -645,7 +645,7 @@
       "score": 129980,
       "frames": 34601,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank06-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank06-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
     },
     {
       "rank": 7,
@@ -657,7 +657,7 @@
       "score": 127570,
       "frames": 34999,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank07-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank07-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
     },
     {
       "rank": 8,
@@ -669,7 +669,7 @@
       "score": 99710,
       "frames": 28271,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank08-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank08-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
     },
     {
       "rank": 9,
@@ -681,7 +681,7 @@
       "score": 88040,
       "frames": 21211,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank09-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank09-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
     },
     {
       "rank": 10,
@@ -693,7 +693,7 @@
       "score": 85210,
       "frames": 28674,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank10-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank10-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
     },
     {
       "rank": 11,
@@ -705,7 +705,7 @@
       "score": 83090,
       "frames": 25772,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank11-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank11-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
     },
     {
       "rank": 12,
@@ -717,7 +717,7 @@
       "score": 77840,
       "frames": 24289,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank12-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank12-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
     },
     {
       "rank": 13,
@@ -729,7 +729,7 @@
       "score": 72270,
       "frames": 23707,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank13-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank13-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
     },
     {
       "rank": 14,
@@ -741,7 +741,7 @@
       "score": 55880,
       "frames": 20621,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank14-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank14-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
     },
     {
       "rank": 15,
@@ -753,7 +753,7 @@
       "score": 55860,
       "frames": 18652,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank15-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank15-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
     },
     {
       "rank": 16,
@@ -765,7 +765,7 @@
       "score": 54600,
       "frames": 18627,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank16-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank16-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
     },
     {
       "rank": 17,
@@ -777,7 +777,7 @@
       "score": 53470,
       "frames": 22109,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank17-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank17-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
     },
     {
       "rank": 18,
@@ -789,7 +789,7 @@
       "score": 53530,
       "frames": 18973,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank18-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank18-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
     },
     {
       "rank": 19,
@@ -801,7 +801,7 @@
       "score": 47790,
       "frames": 13010,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank19-codex-potential-adaptive-seed29d40295-score47790-frames13010.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank19-codex-potential-adaptive-seed29d40295-score47790-frames13010.tape"
     },
     {
       "rank": 20,
@@ -813,7 +813,7 @@
       "score": 44030,
       "frames": 15794,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-objective/rank20-codex-potential-adaptive-seedf9f94f2a-score44030-frames15794.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-objective/rank20-codex-potential-adaptive-seedf9f94f2a-score44030-frames15794.tape"
     },
     {
       "rank": 1,
@@ -825,7 +825,7 @@
       "score": 600750,
       "frames": 108000,
       "lives": 3,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
     },
     {
       "rank": 2,
@@ -837,7 +837,7 @@
       "score": 427230,
       "frames": 96174,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
     },
     {
       "rank": 3,
@@ -849,7 +849,7 @@
       "score": 157660,
       "frames": 39284,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank03-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank03-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
     },
     {
       "rank": 4,
@@ -861,7 +861,7 @@
       "score": 147070,
       "frames": 42093,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank04-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank04-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
     },
     {
       "rank": 5,
@@ -873,7 +873,7 @@
       "score": 139860,
       "frames": 38551,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
     },
     {
       "rank": 6,
@@ -885,7 +885,7 @@
       "score": 129980,
       "frames": 34601,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank06-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank06-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
     },
     {
       "rank": 7,
@@ -897,7 +897,7 @@
       "score": 127570,
       "frames": 34999,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank07-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank07-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
     },
     {
       "rank": 8,
@@ -909,7 +909,7 @@
       "score": 99710,
       "frames": 28271,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank08-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank08-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
     },
     {
       "rank": 9,
@@ -921,7 +921,7 @@
       "score": 88040,
       "frames": 21211,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank09-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank09-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
     },
     {
       "rank": 10,
@@ -933,7 +933,7 @@
       "score": 85210,
       "frames": 28674,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank10-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank10-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
     },
     {
       "rank": 11,
@@ -945,7 +945,7 @@
       "score": 83090,
       "frames": 25772,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank11-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank11-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
     },
     {
       "rank": 12,
@@ -957,7 +957,7 @@
       "score": 77840,
       "frames": 24289,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank12-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank12-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
     },
     {
       "rank": 13,
@@ -969,7 +969,7 @@
       "score": 72270,
       "frames": 23707,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank13-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank13-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
     },
     {
       "rank": 14,
@@ -981,7 +981,7 @@
       "score": 55880,
       "frames": 20621,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank14-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank14-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
     },
     {
       "rank": 15,
@@ -993,7 +993,7 @@
       "score": 55860,
       "frames": 18652,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank15-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank15-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
     },
     {
       "rank": 16,
@@ -1005,7 +1005,7 @@
       "score": 54600,
       "frames": 18627,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank16-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank16-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
     },
     {
       "rank": 17,
@@ -1017,7 +1017,7 @@
       "score": 53530,
       "frames": 18973,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank17-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank17-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
     },
     {
       "rank": 18,
@@ -1029,7 +1029,7 @@
       "score": 53470,
       "frames": 22109,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank18-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank18-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
     },
     {
       "rank": 19,
@@ -1041,7 +1041,7 @@
       "score": 47790,
       "frames": 13010,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank19-codex-potential-adaptive-seed29d40295-score47790-frames13010.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank19-codex-potential-adaptive-seed29d40295-score47790-frames13010.tape"
     },
     {
       "rank": 20,
@@ -1053,7 +1053,7 @@
       "score": 44030,
       "frames": 15794,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-score/rank20-codex-potential-adaptive-seedf9f94f2a-score44030-frames15794.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-score/rank20-codex-potential-adaptive-seedf9f94f2a-score44030-frames15794.tape"
     },
     {
       "rank": 1,
@@ -1065,7 +1065,7 @@
       "score": 600750,
       "frames": 108000,
       "lives": 3,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank01-codex-potential-adaptive-seed8b769f9a-score600750-frames108000.tape"
     },
     {
       "rank": 2,
@@ -1077,7 +1077,7 @@
       "score": 427230,
       "frames": 96174,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank02-codex-potential-adaptive-seed6718faad-score427230-frames96174.tape"
     },
     {
       "rank": 3,
@@ -1089,7 +1089,7 @@
       "score": 147070,
       "frames": 42093,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank03-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank03-codex-potential-adaptive-seed6efc146d-score147070-frames42093.tape"
     },
     {
       "rank": 4,
@@ -1101,7 +1101,7 @@
       "score": 157660,
       "frames": 39284,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank04-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank04-codex-potential-adaptive-seed171560c3-score157660-frames39284.tape"
     },
     {
       "rank": 5,
@@ -1113,7 +1113,7 @@
       "score": 139860,
       "frames": 38551,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank05-codex-potential-adaptive-seeddaf6794d-score139860-frames38551.tape"
     },
     {
       "rank": 6,
@@ -1125,7 +1125,7 @@
       "score": 127570,
       "frames": 34999,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank06-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank06-codex-potential-adaptive-seed90005d69-score127570-frames34999.tape"
     },
     {
       "rank": 7,
@@ -1137,7 +1137,7 @@
       "score": 129980,
       "frames": 34601,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank07-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank07-codex-potential-adaptive-seed8cf7af6e-score129980-frames34601.tape"
     },
     {
       "rank": 8,
@@ -1149,7 +1149,7 @@
       "score": 85210,
       "frames": 28674,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank08-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank08-codex-potential-adaptive-seedb742fa1b-score85210-frames28674.tape"
     },
     {
       "rank": 9,
@@ -1161,7 +1161,7 @@
       "score": 99710,
       "frames": 28271,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank09-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank09-codex-potential-adaptive-seede04096a0-score99710-frames28271.tape"
     },
     {
       "rank": 10,
@@ -1173,7 +1173,7 @@
       "score": 83090,
       "frames": 25772,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank10-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank10-codex-potential-adaptive-seed8ff347f3-score83090-frames25772.tape"
     },
     {
       "rank": 11,
@@ -1185,7 +1185,7 @@
       "score": 77840,
       "frames": 24289,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank11-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank11-codex-potential-adaptive-seed5384545b-score77840-frames24289.tape"
     },
     {
       "rank": 12,
@@ -1197,7 +1197,7 @@
       "score": 72270,
       "frames": 23707,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank12-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank12-codex-potential-adaptive-seeddaa66d2b-score72270-frames23707.tape"
     },
     {
       "rank": 13,
@@ -1209,7 +1209,7 @@
       "score": 53470,
       "frames": 22109,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank13-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank13-codex-potential-adaptive-seed98c4774f-score53470-frames22109.tape"
     },
     {
       "rank": 14,
@@ -1221,7 +1221,7 @@
       "score": 88040,
       "frames": 21211,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank14-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank14-codex-potential-adaptive-seed36a6aff5-score88040-frames21211.tape"
     },
     {
       "rank": 15,
@@ -1233,7 +1233,7 @@
       "score": 55880,
       "frames": 20621,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank15-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank15-codex-potential-adaptive-seedc6ef3947-score55880-frames20621.tape"
     },
     {
       "rank": 16,
@@ -1245,7 +1245,7 @@
       "score": 53530,
       "frames": 18973,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank16-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank16-codex-potential-adaptive-seed1e072633-score53530-frames18973.tape"
     },
     {
       "rank": 17,
@@ -1257,7 +1257,7 @@
       "score": 55860,
       "frames": 18652,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank17-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank17-codex-potential-adaptive-seedf998fb17-score55860-frames18652.tape"
     },
     {
       "rank": 18,
@@ -1269,7 +1269,7 @@
       "score": 54600,
       "frames": 18627,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank18-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank18-codex-potential-adaptive-seed609a7b29-score54600-frames18627.tape"
     },
     {
       "rank": 19,
@@ -1281,7 +1281,7 @@
       "score": 37930,
       "frames": 16928,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank19-codex-potential-adaptive-seed28b7bf7b-score37930-frames16928.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank19-codex-potential-adaptive-seed28b7bf7b-score37930-frames16928.tape"
     },
     {
       "rank": 20,
@@ -1293,7 +1293,7 @@
       "score": 43140,
       "frames": 16774,
       "lives": 0,
-      "path": "codex-autopilot/runs/record-hunt-recheck-20260209-021815/top-survival/rank20-codex-potential-adaptive-seed774f4ad7-score43140-frames16774.tape"
+      "path": "autopilot/codex-tuner/runs/record-hunt-recheck-20260209-021815/top-survival/rank20-codex-potential-adaptive-seed774f4ad7-score43140-frames16774.tape"
     }
   ]
 }

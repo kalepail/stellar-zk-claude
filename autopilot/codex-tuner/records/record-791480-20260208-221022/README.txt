@@ -4,7 +4,7 @@ Top score: 791480
 Seed: 0x7624d842
 Frames: 108000
 Search mode: micro-hillclimb around prior 782490 champion
-Source run: codex-autopilot/runs/micro-jackpot-20260209-1
+Source run: autopilot/codex-tuner/runs/micro-jackpot-20260209-1
 Captured at: 20260208-221022
 
 Files:
