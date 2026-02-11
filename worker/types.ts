@@ -12,6 +12,10 @@ export interface ProofQueueMessage {
   jobId: string;
 }
 
+export interface ClaimQueueMessage {
+  jobId: string;
+}
+
 export interface TapeMetadata {
   seed: number;
   frameCount: number;
@@ -67,8 +71,23 @@ export interface ProverTracking {
   jobId: string | null;
   status: ProverJobStatus | null;
   statusUrl: string | null;
+  segmentLimitPo2: number | null;
   lastPolledAt: string | null;
   pollingErrors: number;
+  recoveryAttempts: number;
+}
+
+export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
+
+export interface ClaimTracking {
+  claimantAddress: string;
+  status: ClaimStatus;
+  attempts: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  submittedAt: string | null;
+  txHash: string | null;
 }
 
 export interface ProofJobRecord {
@@ -81,6 +100,7 @@ export interface ProofJobRecord {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
@@ -99,6 +119,7 @@ export interface PublicProofJob {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
@@ -123,6 +144,13 @@ export interface ProverCreateJobResponse {
   error?: string;
 }
 
+export interface ProverHealthResponse {
+  status: string;
+  image_id?: string;
+  rules_digest?: number;
+  ruleset?: string;
+}
+
 export interface ProverJobResultEnvelope {
   proof: {
     journal: ProofJournal;
@@ -145,8 +173,8 @@ export interface ProverGetJobResponse {
     max_frames: number;
     receipt_kind: string;
     segment_limit_po2: number;
-    allow_dev_mode: boolean;
-    verify_receipt: boolean;
+    proof_mode: "secure" | "dev";
+    verify_mode: "policy" | "verify";
     accelerator: string;
   };
   result?: ProverJobResultEnvelope;
@@ -161,7 +189,7 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string }
+  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

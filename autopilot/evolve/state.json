@@ -1,0 +1,257 @@
+{
+  "iteration": 30,
+  "best_iteration": 10,
+  "best_avg_score": 55712.5,
+  "best_max_score": 175710,
+  "best_avg_frames": 18077.6,
+  "best_avg_lives": 0,
+  "last_avg_score": 33328.333333333336,
+  "last_max_score": 59220,
+  "last_avg_frames": 13836.166666666666,
+  "baseline_bot": "omega-marathon",
+  "baseline_avg_score": 10417.5,
+  "evolve_bot": "evolve-candidate",
+  "consecutive_regressions": 20,
+  "total_improvements": 3,
+  "total_regressions": 27,
+  "total_neutral": 1,
+  "harness": "codex",
+  "history": [
+    {
+      "iteration": 1,
+      "avg_score": 48592.5,
+      "max_score": 101780,
+      "avg_frames": 17145.5,
+      "improved": true,
+      "change": "thrust_penalty 0.009→0.005: bot was idle 74-94% before deaths, needed more mobility. +67.5% avg_score."
+    },
+    {
+      "iteration": 2,
+      "avg_score": 29835,
+      "max_score": 69620,
+      "avg_frames": 13652.7,
+      "improved": false,
+      "change": "fire_reward 1.5→1.7: attempted to reduce saucer bullet deaths via faster shooting. -38.6% avg_score. REVERTED."
+    },
+    {
+      "iteration": 3,
+      "avg_score": 40042.5,
+      "max_score": 99050,
+      "avg_frames": 16014.4,
+      "improved": false,
+      "change": "edge_penalty 0.70→0.80: attempted to reduce edge deaths (3/9 near edge). -17.6% avg_score. Helped 3 worst seeds (+427-444%) but hurt 7 others (-7% to -61%). REVERTED."
+    },
+    {
+      "iteration": 4,
+      "avg_score": 16796.7,
+      "max_score": 37270,
+      "avg_frames": 9081.5,
+      "improved": false,
+      "change": "lookahead_frames 22→24: attempted longer planning horizon for earlier threat detection. -65.4% avg_score. CATASTROPHIC — bot became paralyzed by too many simultaneous threats, lost 51% thrust and 54% fire. REVERTED."
+    },
+    {
+      "iteration": 5,
+      "avg_score": 27200,
+      "max_score": 64910,
+      "avg_frames": 11662.6,
+      "improved": false,
+      "change": "action_penalty 0.009→0.007: attempted to reduce idleness (75-87%) by lowering cost of all actions. -44.0% avg_score. Paradoxically reduced activity by 32-38%. Same pattern: chaotic trio improved (+948%, +314%) while 7 seeds collapsed (-58% to -92%). REVERTED."
+    },
+    {
+      "iteration": 6,
+      "avg_score": 24809.2,
+      "max_score": 56240,
+      "avg_frames": 12329.8,
+      "improved": false,
+      "change": "risk_weight_saucer 2.8→3.0: attempted to reduce saucer bullet deaths (82% of all deaths) by increasing saucer body avoidance. -49.0% avg_score. Same pattern: activity dropped 34-39%, chaotic trio improved (+415%, +63%, +32%), 8 good seeds collapsed (-13% to -81%). REVERTED."
+    },
+    {
+      "iteration": 7,
+      "avg_score": 32384.2,
+      "max_score": 58930,
+      "avg_frames": 14674,
+      "improved": false,
+      "change": "Coordinated: risk_weight_asteroid 2.2→1.9 + turn_penalty 0.011→0.008. First multi-param attempt. Mildest regression yet (-33.4%) but still regressed. Turn_penalty change worked (more turning) but asteroid avoidance reduction hurt positioning. REVERTED."
+    },
+    {
+      "iteration": 8,
+      "avg_score": 49629.2,
+      "max_score": 154540,
+      "avg_frames": 18018.6,
+      "improved": true,
+      "change": "turn_penalty 0.011→0.008: isolated the successful component from iter-007's failed 2-param attempt. First improvement since iter-001. +2.1% avg_score, +52% max_score. Bot turns ~97% more, thrusts 9% more, fires same. 5 seeds massively improved (+52% to +500%), 2 collapsed (-90% to -95%). NEW best."
+    },
+    {
+      "iteration": 9,
+      "avg_score": 46808.3,
+      "max_score": 147060,
+      "avg_frames": 16195.9,
+      "improved": false,
+      "change": "survival_weight 3.2→3.4: attempted universal defensive boost without changing threat priorities. -5.7% avg_score. Activity dropped 11.4%. Dramatic seed shuffle: 0xBAAAAAAD +1030%, 0xE35B682C +640%, but 0x6046C93D -71%, 0x8BADF00D -79%. REVERTED."
+    },
+    {
+      "iteration": 10,
+      "avg_score": 55712.5,
+      "max_score": 175710,
+      "avg_frames": 18077.6,
+      "improved": true,
+      "change": "speed_soft_cap 3.8→3.5: lower max speed for better edge control and turning synergy. +12.2% avg_score, +14% max_score. 7 seeds improved, 3 regressed, 2 unchanged. 0xDEADBEEF +805% (19K→176K). No activity paradox — activity unchanged (+0.5%). NEW best."
+    },
+    {
+      "iteration": 11,
+      "avg_score": 34118.333333333336,
+      "improved": false,
+      "change": "fire_tolerance_bam 8->9 (regressed -38.8%, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 12,
+      "avg_score": 38615,
+      "improved": false,
+      "change": "speed_soft_cap 3.5->3.4 (regressed -30.7% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 13,
+      "avg_score": 36959.166666666664,
+      "improved": false,
+      "change": "turn_penalty 0.008->0.0075 (regressed -33.7% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 14,
+      "avg_score": 31295.833333333332,
+      "improved": false,
+      "change": "fire_distance_px 300.0->340.0 (regressed -43.8% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 15,
+      "avg_score": 38950,
+      "improved": false,
+      "change": "speed_soft_cap 3.5->3.55 (regressed -30.1% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 16,
+      "avg_score": 48846.666666666664,
+      "improved": false,
+      "change": "lookahead_frames 22.0->21.5 (regressed -12.3% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 17,
+      "avg_score": 29522.5,
+      "improved": false,
+      "change": "lookahead_frames 22.0->21.8 (regressed -47.0% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 18,
+      "avg_score": 34355,
+      "improved": false,
+      "change": "turn_penalty 0.008->0.0078 (regressed -38.3% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 19,
+      "avg_score": 45366.666666666664,
+      "improved": false,
+      "change": "thrust_penalty 0.005->0.0045 (regressed -18.6% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 20,
+      "avg_score": 48808.333333333336,
+      "improved": false,
+      "change": "thrust_penalty 0.005->0.00495 (regressed -12.4% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 21,
+      "avg_score": 41271.666666666664,
+      "improved": false,
+      "change": "lurk_trigger_frames 250->240 + lurk_aggression_boost 1.8->1.9 (regressed -25.9% vs best, reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 22,
+      "avg_score": 55712.5,
+      "max_score": 175710,
+      "avg_frames": 18077.583333333332,
+      "improved": false,
+      "change": "risk_weight_bullet 4.8->4.5 (restored best baseline performance; neutral vs best, +35.0% vs iter-021)"
+    },
+    {
+      "iteration": 23,
+      "avg_score": 33540.0,
+      "max_score": 88090,
+      "avg_frames": 13771.416666666666,
+      "improved": false,
+      "change": "turn_penalty 0.008->0.0085 (regressed -39.8% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 24,
+      "avg_score": 54487.5,
+      "max_score": 175710,
+      "avg_frames": 17974.916666666668,
+      "improved": false,
+      "change": "miss_fire_penalty 1.0->0.95 (regressed -2.2% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 25,
+      "avg_score": 34272.5,
+      "max_score": 59820,
+      "avg_frames": 13673.166666666666,
+      "improved": false,
+      "change": "lurk_trigger_frames 250->245 + lurk_aggression_boost 1.8->1.85 (regressed -38.5% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 26,
+      "avg_score": 49663.333333333336,
+      "max_score": 105950,
+      "avg_frames": 17315.583333333332,
+      "improved": false,
+      "change": "center_weight 0.85->0.95 (regressed -10.9% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 26,
+      "avg_score": 47194.166666666664,
+      "max_score": 119410,
+      "avg_frames": 16661.0,
+      "improved": false,
+      "change": "fire_tolerance_bam 8->7 (regressed -15.3% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 28,
+      "avg_score": 35235.833333333336,
+      "improved": false,
+      "change": "shot_penalty 0.75->0.70 (regressed -36.75% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 29,
+      "avg_score": 0,
+      "improved": false,
+      "change": "FAILED: OpenAI Codex CLI did not complete iteration"
+    },
+    {
+      "iteration": 27,
+      "avg_score": 37986.666666666664,
+      "max_score": 94890,
+      "avg_frames": 15462.833333333334,
+      "improved": false,
+      "change": "risk_weight_asteroid 2.2->2.3 (regressed -31.8% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 28,
+      "avg_score": 0,
+      "improved": false,
+      "change": "FAILED: OpenAI Codex CLI did not complete iteration"
+    },
+    {
+      "iteration": 30,
+      "avg_score": 34566.666666666664,
+      "max_score": 79070,
+      "avg_frames": 13411.666666666666,
+      "improved": false,
+      "change": "speed_soft_cap 3.5->3.48 (regressed -38.0% vs best; reverted to iteration-010 config)"
+    },
+    {
+      "iteration": 30,
+      "avg_score": 33328.333333333336,
+      "max_score": 59220,
+      "avg_frames": 13836.166666666666,
+      "improved": false,
+      "change": "aggression_weight 0.65->0.67 (regressed -40.2% vs best; reverted to iteration-010 config)"
+    }
+  ]
+}

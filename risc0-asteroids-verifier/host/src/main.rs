@@ -1,7 +1,9 @@
 use std::{env, fs, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
-use host::{prove_tape, ProveOptions, ReceiptKind, SEGMENT_LIMIT_PO2_DEFAULT};
+use host::{
+    prove_tape, ProofMode, ProveOptions, ReceiptKind, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT,
+};
 
 #[derive(Debug)]
 struct Cli {
@@ -10,7 +12,8 @@ struct Cli {
     journal_out: Option<PathBuf>,
     segment_limit_po2: u32,
     receipt_kind: ReceiptKind,
-    allow_dev_mode: bool,
+    proof_mode: ProofMode,
+    verify_mode: VerifyMode,
 }
 
 impl Cli {
@@ -22,7 +25,8 @@ impl Cli {
         let mut journal_out: Option<PathBuf> = None;
         let mut segment_limit_po2 = SEGMENT_LIMIT_PO2_DEFAULT;
         let mut receipt_kind = ReceiptKind::Composite;
-        let mut allow_dev_mode = false;
+        let mut proof_mode = ProofMode::Secure;
+        let mut verify_mode = VerifyMode::Verify;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -60,12 +64,21 @@ impl Cli {
                         .ok_or_else(|| anyhow!("--receipt-kind requires a value"))?;
                     receipt_kind = ReceiptKind::from_str(&value)?;
                 }
-                "--allow-dev-mode" => {
-                    allow_dev_mode = true;
+                "--proof-mode" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow!("--proof-mode requires a value"))?;
+                    proof_mode = ProofMode::from_str(&value)?;
+                }
+                "--verify-mode" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| anyhow!("--verify-mode requires a value"))?;
+                    verify_mode = VerifyMode::from_str(&value)?;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Usage: cargo run --release -- --tape <file.tape> [--max-frames <n>] [--journal-out <file.json>] [--segment-limit-po2 <n>] [--receipt-kind composite|succinct|groth16] [--allow-dev-mode]\nDefault --segment-limit-po2: {SEGMENT_LIMIT_PO2_DEFAULT}"
+                        "Usage: cargo run --release -- --tape <file.tape> [--max-frames <n>] [--journal-out <file.json>] [--segment-limit-po2 <n>] [--receipt-kind composite|succinct|groth16] [--proof-mode secure|dev] [--verify-mode verify|policy]\nDefault --segment-limit-po2: {SEGMENT_LIMIT_PO2_DEFAULT}"
                     );
                     std::process::exit(0);
                 }
@@ -81,7 +94,8 @@ impl Cli {
             journal_out,
             segment_limit_po2,
             receipt_kind,
-            allow_dev_mode,
+            proof_mode,
+            verify_mode,
         })
     }
 }
@@ -101,8 +115,8 @@ fn main() -> Result<()> {
             max_frames: cli.max_frames,
             segment_limit_po2: cli.segment_limit_po2,
             receipt_kind: cli.receipt_kind,
-            allow_dev_mode: cli.allow_dev_mode,
-            verify_receipt: true,
+            proof_mode: cli.proof_mode,
+            verify_mode: cli.verify_mode,
         },
     )?;
 

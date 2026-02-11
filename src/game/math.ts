@@ -91,13 +91,14 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 export function wrapXQ12_4(x: number): number {
+  // Fast-path: positions are almost always already in-range.
+  if (x >>> 0 < WORLD_WIDTH_Q12_4) return x;
   if (x < 0) return x + WORLD_WIDTH_Q12_4;
-  if (x >= WORLD_WIDTH_Q12_4) return x - WORLD_WIDTH_Q12_4;
-  return x;
+  return x - WORLD_WIDTH_Q12_4;
 }
 
 export function wrapYQ12_4(y: number): number {
+  if (y >>> 0 < WORLD_HEIGHT_Q12_4) return y;
   if (y < 0) return y + WORLD_HEIGHT_Q12_4;
-  if (y >= WORLD_HEIGHT_Q12_4) return y - WORLD_HEIGHT_Q12_4;
-  return y;
+  return y - WORLD_HEIGHT_Q12_4;
 }

@@ -1,11 +1,24 @@
-import { TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION } from "./constants";
+import {
+  EXPECTED_RULES_TAG,
+  TAPE_FOOTER_SIZE,
+  TAPE_HEADER_SIZE,
+  TAPE_MAGIC,
+  TAPE_VERSION,
+} from "./constants";
 import type { TapeMetadata } from "./types";
 
-function crc32(data: Uint8Array): number {
+function crc32AndValidateInputs(data: Uint8Array, inputsStart: number, inputsEnd: number): number {
   let crc = 0xffffffff;
 
-  for (let index = 0; index < data.length; index += 1) {
-    crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
+  for (let index = 0; index < inputsEnd; index += 1) {
+    const byte = data[index];
+    if (index >= inputsStart && (byte & 0xf0) !== 0) {
+      const frame = index - inputsStart;
+      throw new Error(
+        `tape input reserved bits set at frame ${frame}: 0x${byte.toString(16).padStart(2, "0")}`,
+      );
+    }
+    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   }
 
   return (crc ^ 0xffffffff) >>> 0;
@@ -35,6 +48,14 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
     throw new Error(`unsupported tape version: ${version}`);
   }
 
+  const rulesTag = view.getUint8(5);
+  if (rulesTag !== EXPECTED_RULES_TAG) {
+    throw new Error(`unknown rules tag: ${rulesTag} (expected ${EXPECTED_RULES_TAG})`);
+  }
+  if (view.getUint8(6) !== 0 || view.getUint8(7) !== 0) {
+    throw new Error("tape header reserved bytes [6..7] are non-zero");
+  }
+
   const seed = view.getUint32(8, true);
   const frameCount = view.getUint32(12, true);
   const expectedLength = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
@@ -48,7 +69,11 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
   const finalRngState = view.getUint32(footerOffset + 4, true);
   const checksum = view.getUint32(footerOffset + 8, true);
 
-  const computedChecksum = crc32(bytes.subarray(0, footerOffset));
+  if (finalScore === 0) {
+    throw new Error("tape final_score must be greater than zero");
+  }
+
+  const computedChecksum = crc32AndValidateInputs(bytes, TAPE_HEADER_SIZE, footerOffset);
   if (checksum >>> 0 !== computedChecksum >>> 0) {
     throw new Error(
       `tape checksum mismatch: expected 0x${checksum.toString(16)}, computed 0x${computedChecksum.toString(16)}`,

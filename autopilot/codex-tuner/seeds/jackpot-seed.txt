@@ -1,0 +1,2 @@
+# jackpot seed hunt (single-seed max-score overfit)
+0xefe73ac5

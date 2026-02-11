@@ -44,7 +44,7 @@ Any reorder is invalid.
 - `TAPE_*`: parsing, limits, checksum, reserved bits.
 - `GLOBAL_*`: frame monotonicity, mode transitions, RNG consistency.
 - `SHIP_*`: turn/thrust/drag/clamp/position step.
-- `PLAYER_BULLET_*`: cap/cooldown/spawn/lifetime.
+- `PLAYER_BULLET_*`: cap/fire-gate/spawn/lifetime.
 - `ASTEROID_*`: motion/split/caps/wave spawn count.
 - `SAUCER_*`: spawn cadence/count/fire behavior.
 - `COLLISION_*`: canonical collision order and side effects.

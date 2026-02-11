@@ -5,7 +5,9 @@ edition = "2021"
 default-run = "host"
 
 [features]
-default = ["cuda"]
+# Local/dev should be CPU-only by default. Enable CUDA explicitly for Vast/prod:
+#   cargo build -p host --release --features cuda
+default = []
 cuda = ["risc0-zkvm/cuda"]
 
 [dependencies]

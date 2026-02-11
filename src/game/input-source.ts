@@ -53,8 +53,12 @@ export class LiveInputSource implements InputSource {
  */
 export class TapeInputSource implements InputSource {
   private cursor = 0;
+  private completed = false;
 
-  constructor(private readonly inputs: Uint8Array) {}
+  constructor(
+    private readonly inputs: Uint8Array,
+    private readonly onComplete?: () => void,
+  ) {}
 
   getFrameInput(): FrameInput {
     if (this.cursor >= this.inputs.length) {
@@ -66,6 +70,10 @@ export class TapeInputSource implements InputSource {
   advance(): void {
     if (this.cursor < this.inputs.length) {
       this.cursor++;
+      if (this.cursor >= this.inputs.length && !this.completed) {
+        this.completed = true;
+        this.onComplete?.();
+      }
     }
   }
 

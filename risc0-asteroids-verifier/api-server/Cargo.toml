@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["cuda"]
+# Local/dev should be CPU-only by default. Enable CUDA explicitly for Vast/prod:
+#   cargo build -p api-server --release --features cuda
+default = []
 cuda = ["host/cuda"]
 
 [dependencies]

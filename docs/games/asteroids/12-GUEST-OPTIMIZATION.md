@@ -73,7 +73,7 @@ cargo build --release -p host
 # 3. Run with dev mode + info logging to get cycle counts
 RISC0_DEV_MODE=1 RISC0_INFO=1 cargo run --release -p host -- \
   --tape ../test-fixtures/test-short.tape \
-  --allow-dev-mode
+  --proof-mode dev
 
 # The output will show:
 #   Total cycles:  <N>
@@ -100,7 +100,7 @@ RISC0_INFO=1 time cargo run --release -p host -- \
 # Requires Go installed (for pprof viewer)
 RISC0_PPROF_OUT=./profile.pb RISC0_DEV_MODE=1 cargo run --release -p host -- \
   --tape ../test-fixtures/test-short.tape \
-  --allow-dev-mode
+  --proof-mode dev
 
 # View flamegraph in browser
 go tool pprof -http=127.0.0.1:8000 profile.pb

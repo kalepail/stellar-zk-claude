@@ -27,9 +27,11 @@
   "dependencies": {
     "@fontsource/monaspace-krypton": "^5.2.5",
     "@fontsource/monaspace-neon": "^5.2.5",
+    "@openzeppelin/relayer-plugin-channels": "^0.7.0",
     "hono": "^4.11.8",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "smart-account-kit": "^0.2.9"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.23.1",

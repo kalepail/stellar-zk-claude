@@ -5,11 +5,10 @@ import {
   FIXED_TIMESTEP,
   LURK_SAUCER_SPAWN_FAST_FRAMES,
   LURK_TIME_THRESHOLD_FRAMES,
-  MAX_DEBRIS,
   MAX_FRAME_DELTA,
-  MAX_PARTICLES,
   MAX_SUBSTEPS,
   SAUCER_BULLET_LIFETIME_FRAMES,
+  SAUCER_BULLET_LIMIT,
   SAUCER_BULLET_SPEED_Q8_8,
   SAUCER_SPAWN_MAX_FRAMES,
   SAUCER_SPAWN_MIN_FRAMES,
@@ -20,12 +19,11 @@ import {
   SCORE_MEDIUM_ASTEROID,
   SCORE_SMALL_ASTEROID,
   SCORE_SMALL_SAUCER,
-  SHAKE_DECAY,
   SHAKE_INTENSITY_LARGE,
   SHAKE_INTENSITY_MEDIUM,
   SHAKE_INTENSITY_SMALL,
-  SHIP_BULLET_COOLDOWN_FRAMES,
   SHIP_BULLET_LIFETIME_FRAMES,
+  SHIP_BULLET_COOLDOWN_FRAMES,
   SHIP_BULLET_LIMIT,
   SHIP_BULLET_SPEED_Q8_8,
   SHIP_FACING_UP_BAM,
@@ -57,6 +55,7 @@ import {
   toQ12_4,
   velocityQ8_8,
 } from "./fixed-point";
+import { GameRenderer, type GameRenderState } from "./GameRenderer";
 import { InputController } from "./input";
 import type { InputSource } from "./input-source";
 import { LiveInputSource, TapeInputSource } from "./input-source";
@@ -66,25 +65,11 @@ import {
   getGameRngState,
   randomInt,
   setGameSeed,
-  visualRandomInt,
-  visualRandomRange,
-  wrapX,
   wrapXQ12_4,
-  wrapY,
   wrapYQ12_4,
 } from "./math";
 import { deserializeTape, serializeTape, TapeRecorder } from "./tape";
-import type {
-  Asteroid,
-  AsteroidSize,
-  Bullet,
-  Debris,
-  GameMode,
-  Particle,
-  Saucer,
-  Ship,
-  Star,
-} from "./types";
+import type { Asteroid, AsteroidSize, Bullet, GameMode, Saucer, Ship } from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
   large: 48,
@@ -94,37 +79,88 @@ const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
 
 const SAUCER_RADIUS_LARGE = 22;
 const SAUCER_RADIUS_SMALL = 16;
+const SHIP_RESPAWN_EDGE_PADDING_Q12_4 = 1536; // 96px
+const SHIP_RESPAWN_GRID_STEP_Q12_4 = 1024; // 64px
+const SAUCER_START_X_LEFT_Q12_4 = -480;
+const SAUCER_START_X_RIGHT_Q12_4 = 15840;
+const SAUCER_START_Y_MIN_Q12_4 = 1152;
+const SAUCER_START_Y_MAX_Q12_4 = 10368;
+const SAUCER_CULL_MIN_X_Q12_4 = -1280;
+const SAUCER_CULL_MAX_X_Q12_4 = 16640;
+const WAVE_SAFE_DIST_SQ_Q24_8 = 2880 * 2880;
+
+function waveLargeAsteroidCount(wave: number): number {
+  if (wave <= 4) {
+    return 4 + (wave - 1) * 2;
+  }
+  return Math.min(16, 10 + (wave - 4));
+}
+
+function maxSaucersForWave(wave: number): number {
+  if (wave < 4) {
+    return 1;
+  }
+  if (wave < 7) {
+    return 2;
+  }
+  return 3;
+}
 
 function shortestDeltaQ12_4(from: number, to: number, size: number): number {
   let delta = to - from;
   const half = size >> 1;
   if (delta > half) delta -= size;
-  if (delta < -half) delta += size;
+  else if (delta < -half) delta += size;
   return delta;
 }
 
+function shortestDeltaWorldXQ12_4(from: number, to: number): number {
+  return shortestDeltaQ12_4(from, to, WORLD_WIDTH_Q12_4);
+}
+
+function shortestDeltaWorldYQ12_4(from: number, to: number): number {
+  return shortestDeltaQ12_4(from, to, WORLD_HEIGHT_Q12_4);
+}
+
 function collisionDistSqQ12_4(ax: number, ay: number, bx: number, by: number): number {
-  const dx = shortestDeltaQ12_4(ax, bx, WORLD_WIDTH_Q12_4);
-  const dy = shortestDeltaQ12_4(ay, by, WORLD_HEIGHT_Q12_4);
+  const dx = shortestDeltaWorldXQ12_4(ax, bx);
+  const dy = shortestDeltaWorldYQ12_4(ay, by);
   return dx * dx + dy * dy;
 }
 
-// Linear interpolation with wrap-around handling
-function lerpWrap(prev: number, curr: number, alpha: number, size: number): number {
-  let delta = curr - prev;
-  if (delta > size / 2) delta -= size;
-  if (delta < -size / 2) delta += size;
-  let result = prev + delta * alpha;
-  if (result < 0) result += size;
-  if (result >= size) result -= size;
-  return result;
+function collidesQ12_4(
+  ax: number,
+  ay: number,
+  ar: number,
+  bx: number,
+  by: number,
+  br: number,
+): boolean {
+  const hitDistQ12_4 = (ar + br) << 4;
+  const negHitDistQ12_4 = -hitDistQ12_4;
+  const dx = shortestDeltaWorldXQ12_4(ax, bx);
+  if (dx < negHitDistQ12_4 || dx > hitDistQ12_4) {
+    return false;
+  }
+  const dy = shortestDeltaWorldYQ12_4(ay, by);
+  if (dy < negHitDistQ12_4 || dy > hitDistQ12_4) {
+    return false;
+  }
+  return dx * dx + dy * dy <= hitDistQ12_4 * hitDistQ12_4;
 }
 
-function lerpAngle(prev: number, curr: number, alpha: number): number {
-  let delta = curr - prev;
-  while (delta > Math.PI) delta -= Math.PI * 2;
-  while (delta < -Math.PI) delta += Math.PI * 2;
-  return prev + delta * alpha;
+function clearanceSqQ12_4(
+  hazardX: number,
+  hazardY: number,
+  hazardRadius: number,
+  spawnX: number,
+  spawnY: number,
+  spawnRadius: number,
+): number {
+  const hitDistQ12_4 = (hazardRadius + spawnRadius) << 4;
+  const dx = shortestDeltaWorldXQ12_4(hazardX, spawnX);
+  const dy = shortestDeltaWorldYQ12_4(hazardY, spawnY);
+  return dx * dx + dy * dy - hitDistQ12_4 * hitDistQ12_4;
 }
 
 export interface GameConfig {
@@ -133,24 +169,23 @@ export interface GameConfig {
   seed?: number;
 }
 
+export interface GameRunRecord {
+  seed: number;
+  inputs: Uint8Array;
+  finalScore: number;
+  finalRngState: number;
+}
+
 export class AsteroidsGame {
   private readonly canvas: HTMLCanvasElement | null;
 
-  private ctx: CanvasRenderingContext2D | null;
+  private readonly renderer: GameRenderer | null;
 
   private readonly input = new InputController();
 
   private readonly audio = new AudioSystem();
 
   private readonly autopilot = new Autopilot();
-
-  private readonly headless: boolean;
-
-  private readonly stars: Star[] = [];
-
-  private particles: Particle[] = [];
-
-  private debris: Debris[] = [];
 
   private mode: GameMode = "menu";
 
@@ -188,24 +223,6 @@ export class AsteroidsGame {
 
   private pauseFromHidden = false;
 
-  private cssWidth = WORLD_WIDTH;
-
-  private cssHeight = WORLD_HEIGHT;
-
-  private dpr = 1;
-
-  private viewScale = 1;
-
-  private viewOffsetX = 0;
-
-  private viewOffsetY = 0;
-
-  // Screen shake
-  private shakeX = 0;
-  private shakeY = 0;
-  private shakeIntensity = 0;
-  private shakeRotation = 0;
-
   // Thrust timing (frame-count based)
   private thrustParticleTimer = 0;
 
@@ -239,6 +256,8 @@ export class AsteroidsGame {
     thrust: false,
     fire: false,
   };
+
+  private shipFireLatch = false;
 
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyDown(event);
@@ -282,22 +301,15 @@ export class AsteroidsGame {
     this.rafId = window.requestAnimationFrame(this.frameHandler);
   };
 
-  constructor(config: GameConfig | HTMLCanvasElement) {
-    // Backward compatible: accept raw canvas or config object
-    const cfg: GameConfig =
-      typeof HTMLCanvasElement !== "undefined" && config instanceof HTMLCanvasElement
-        ? { canvas: config }
-        : (config as GameConfig);
-
-    this.headless = cfg.headless === true;
-    this.canvas = cfg.canvas ?? null;
-    this.ctx = null;
+  constructor(config: GameConfig) {
+    this.canvas = config.canvas ?? null;
     this.ship = this.createShip();
 
-    if (this.headless) {
+    if (config.headless === true) {
       // Headless mode: no rendering, no events, no audio
-      if (cfg.seed !== undefined) {
-        this.gameSeed = cfg.seed;
+      this.renderer = null;
+      if (config.seed !== undefined) {
+        this.gameSeed = config.seed;
         setGameSeed(this.gameSeed);
       }
       return;
@@ -311,16 +323,12 @@ export class AsteroidsGame {
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute("aria-label", "Asteroids game canvas");
 
-    const ctx = this.canvas.getContext("2d", { alpha: false });
-    if (!ctx) {
-      throw new Error("Unable to create 2D context.");
-    }
-    this.ctx = ctx;
+    this.renderer = new GameRenderer(this.canvas);
 
     this.loadHighScore();
-    this.seedStars(120);
+    this.renderer.seedStars(120);
     this.attachEvents();
-    this.resize();
+    this.renderer.resize();
 
     this.rafId = window.requestAnimationFrame(this.frameHandler);
   }
@@ -333,7 +341,7 @@ export class AsteroidsGame {
       this.rafId = null;
     }
 
-    if (!this.headless) {
+    if (this.renderer) {
       this.detachEvents();
     }
   }
@@ -355,28 +363,7 @@ export class AsteroidsGame {
   }
 
   private resize(): void {
-    const canvas = this.canvas;
-    const ctx = this.ctx;
-    if (!canvas || !ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(320, rect.width || WORLD_WIDTH);
-    const height = Math.max(320, rect.height || WORLD_HEIGHT);
-    const dpr = window.devicePixelRatio || 1;
-    this.dpr = dpr;
-
-    this.cssWidth = width;
-    this.cssHeight = height;
-
-    canvas.width = Math.floor(width * dpr);
-    canvas.height = Math.floor(height * dpr);
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-
-    this.viewScale = Math.min(width / WORLD_WIDTH, height / WORLD_HEIGHT);
-    this.viewOffsetX = (width - WORLD_WIDTH * this.viewScale) * 0.5;
-    this.viewOffsetY = (height - WORLD_HEIGHT * this.viewScale) * 0.5;
+    this.renderer?.resize();
   }
 
   private updateFrame(timestampMs: number): void {
@@ -445,7 +432,9 @@ export class AsteroidsGame {
     }
 
     const alpha = this.accumulator / FIXED_TIMESTEP;
-    this.render(alpha);
+    if (this.renderer) {
+      this.renderer.render(this.buildRenderState(), alpha);
+    }
     this.input.clearPressed();
   }
 
@@ -517,13 +506,9 @@ export class AsteroidsGame {
       this.bullets = [];
       this.saucers = [];
       this.saucerBullets = [];
-      this.particles = [];
-      this.debris = [];
       this.ship = this.createShip();
-      this.shakeIntensity = 0;
-      this.shakeX = 0;
-      this.shakeY = 0;
-      this.shakeRotation = 0;
+      this.shipFireLatch = false;
+      this.renderer?.reset();
       this.autopilot.setEnabled(false);
       this.replayTapeSource = null;
       this.inputSource = null;
@@ -544,12 +529,12 @@ export class AsteroidsGame {
     this.bullets = [];
     this.saucers = [];
     this.saucerBullets = [];
-    this.particles = [];
-    this.debris = [];
     this.timeSinceLastKill = 0;
     this.frameCount = 0;
+    this.gameTime = 0;
     this.ship = this.createShip();
-    this.shakeIntensity = 0;
+    this.shipFireLatch = false;
+    this.renderer?.reset();
     this.autopilot.setEnabled(false);
 
     // Set up recording
@@ -622,11 +607,7 @@ export class AsteroidsGame {
     this.updateSaucers();
     this.updateSaucerBullets();
 
-    if (!this.headless) {
-      this.updateParticles(dt);
-      this.updateDebris(dt);
-      this.updateScreenShake();
-    }
+    this.renderer?.updateVisuals(dt);
 
     this.handleCollisions();
     this.pruneDestroyedEntities();
@@ -683,42 +664,89 @@ export class AsteroidsGame {
     this.ship.vy = 0;
     this.ship.fireCooldown = 0;
     this.ship.invulnerableTimer = 0;
+    this.shipFireLatch = false;
   }
 
-  private isShipSpawnAreaClear(spawnX: number, spawnY: number, clearRadiusQ12_4 = 1920): boolean {
-    const blockedByAsteroid = this.asteroids.some((asteroid) => {
-      const hitDist = (asteroid.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(asteroid.x, asteroid.y, spawnX, spawnY) < hitDist * hitDist;
-    });
+  private spawnSafetyScore(spawnX: number, spawnY: number, bestKnownSafetyScore: number): number {
+    let minClearanceSq = Number.MAX_SAFE_INTEGER;
 
-    if (blockedByAsteroid) {
-      return false;
+    for (const asteroid of this.asteroids) {
+      minClearanceSq = Math.min(
+        minClearanceSq,
+        clearanceSqQ12_4(asteroid.x, asteroid.y, asteroid.radius, spawnX, spawnY, this.ship.radius),
+      );
+      if (minClearanceSq < bestKnownSafetyScore) {
+        return minClearanceSq;
+      }
     }
 
-    const blockedBySaucer = this.saucers.some((saucer) => {
-      if (!saucer.alive) return false;
-      const hitDist = (saucer.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(saucer.x, saucer.y, spawnX, spawnY) < hitDist * hitDist;
-    });
-
-    if (blockedBySaucer) {
-      return false;
+    for (const saucer of this.saucers) {
+      minClearanceSq = Math.min(
+        minClearanceSq,
+        clearanceSqQ12_4(saucer.x, saucer.y, saucer.radius, spawnX, spawnY, this.ship.radius),
+      );
+      if (minClearanceSq < bestKnownSafetyScore) {
+        return minClearanceSq;
+      }
     }
 
-    return !this.saucerBullets.some((bullet) => {
-      if (!bullet.alive) return false;
-      const hitDist = (bullet.radius << 4) + clearRadiusQ12_4;
-      return collisionDistSqQ12_4(bullet.x, bullet.y, spawnX, spawnY) < hitDist * hitDist;
-    });
+    for (const bullet of this.bullets) {
+      minClearanceSq = Math.min(
+        minClearanceSq,
+        clearanceSqQ12_4(bullet.x, bullet.y, bullet.radius, spawnX, spawnY, this.ship.radius),
+      );
+      if (minClearanceSq < bestKnownSafetyScore) {
+        return minClearanceSq;
+      }
+    }
+
+    for (const bullet of this.saucerBullets) {
+      minClearanceSq = Math.min(
+        minClearanceSq,
+        clearanceSqQ12_4(bullet.x, bullet.y, bullet.radius, spawnX, spawnY, this.ship.radius),
+      );
+      if (minClearanceSq < bestKnownSafetyScore) {
+        return minClearanceSq;
+      }
+    }
+
+    return minClearanceSq;
   }
 
-  private trySpawnShipAtCenter(): boolean {
-    const { x: spawnX, y: spawnY } = this.getShipSpawnPoint();
+  private findBestShipSpawnPoint(): { x: number; y: number } {
+    const { x: centerX, y: centerY } = this.getShipSpawnPoint();
 
-    if (!this.isShipSpawnAreaClear(spawnX, spawnY)) {
-      return false;
+    const minX = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const maxX = WORLD_WIDTH_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const minY = SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+    const maxY = WORLD_HEIGHT_Q12_4 - SHIP_RESPAWN_EDGE_PADDING_Q12_4;
+
+    let bestX = centerX;
+    let bestY = centerY;
+    let bestSafetyScore = Number.NEGATIVE_INFINITY;
+    let bestCenterDistance = Number.MAX_SAFE_INTEGER;
+
+    for (let y = minY; y <= maxY; y += SHIP_RESPAWN_GRID_STEP_Q12_4) {
+      for (let x = minX; x <= maxX; x += SHIP_RESPAWN_GRID_STEP_Q12_4) {
+        const safetyScore = this.spawnSafetyScore(x, y, bestSafetyScore);
+        const centerDistance = collisionDistSqQ12_4(x, y, centerX, centerY);
+        if (
+          safetyScore > bestSafetyScore ||
+          (safetyScore === bestSafetyScore && centerDistance < bestCenterDistance)
+        ) {
+          bestX = x;
+          bestY = y;
+          bestSafetyScore = safetyScore;
+          bestCenterDistance = centerDistance;
+        }
+      }
     }
 
+    return { x: bestX, y: bestY };
+  }
+
+  private spawnShipAtBestOpenPoint(): void {
+    const { x: spawnX, y: spawnY } = this.findBestShipSpawnPoint();
     this.ship.x = spawnX;
     this.ship.y = spawnY;
     this.ship.prevX = spawnX;
@@ -729,17 +757,14 @@ export class AsteroidsGame {
     this.ship.prevAngle = SHIP_FACING_UP_BAM;
     this.ship.canControl = true;
     this.ship.invulnerableTimer = SHIP_SPAWN_INVULNERABLE_FRAMES;
-    return true;
   }
 
   private spawnWave(): void {
     this.wave += 1;
     this.timeSinceLastKill = 0;
 
-    const largeCount = Math.min(16, 4 + (this.wave - 1) * 2);
+    const largeCount = waveLargeAsteroidCount(this.wave);
     const { x: avoidX, y: avoidY } = this.getShipSpawnPoint();
-    // 180px in Q12.4 = 2880; squared = 8,294,400
-    const safeDistSq = 2880 * 2880;
 
     for (let i = 0; i < largeCount; i += 1) {
       let x = randomInt(0, WORLD_WIDTH_Q12_4);
@@ -747,7 +772,7 @@ export class AsteroidsGame {
 
       let guard = 0;
 
-      while (collisionDistSqQ12_4(x, y, avoidX, avoidY) < safeDistSq && guard < 20) {
+      while (guard < 20 && collisionDistSqQ12_4(x, y, avoidX, avoidY) < WAVE_SAFE_DIST_SQ_Q24_8) {
         x = randomInt(0, WORLD_WIDTH_Q12_4);
         y = randomInt(0, WORLD_HEIGHT_Q12_4);
         guard += 1;
@@ -756,9 +781,9 @@ export class AsteroidsGame {
       this.asteroids.push(this.createAsteroid("large", x, y));
     }
 
-    // Use the same spawn policy as death-respawn: ship enters only when center is safe.
+    // Ship always respawns after delay using deterministic "most-open-area" selection.
     this.queueShipRespawn(0);
-    this.trySpawnShipAtCenter();
+    this.spawnShipAtBestOpenPoint();
   }
 
   private createAsteroid(size: AsteroidSize, x: number, y: number): Asteroid {
@@ -769,7 +794,7 @@ export class AsteroidsGame {
     // Integer: speed + speed * min(128, (wave-1)*15) >> 8
     speed = speed + ((speed * Math.min(128, (this.wave - 1) * 15)) >> 8);
     const { vx, vy } = velocityQ8_8(moveAngle, speed);
-    const vertices = this.createAsteroidVertices();
+    const vertices = this.renderer?.createAsteroidVertices() ?? [];
     const startAngle = randomInt(0, 256); // BAM
     // spin: +-3 BAM/frame (was +-0.7 rad/s -> +-0.7/60/(2pi/256) ~ +-0.47 -> +-1-3)
     const spin = randomInt(-3, 4);
@@ -792,41 +817,43 @@ export class AsteroidsGame {
     };
   }
 
-  private createAsteroidVertices(): number[] {
-    // Vertices are visual-only; use visual RNG
-    const vertexCount = visualRandomInt(9, 14);
-    const vertices: number[] = [];
-
-    for (let i = 0; i < vertexCount; i += 1) {
-      vertices.push(visualRandomRange(0.72, 1.2));
-    }
-
-    return vertices;
-  }
-
   private updateShip(_dt: number): void {
     const ship = this.ship;
+    const frameInput = this.currentFrameInput;
+    const fire = frameInput.fire;
 
-    if (ship.fireCooldown > 0) ship.fireCooldown--;
+    if (ship.fireCooldown > 0) {
+      ship.fireCooldown--;
+    }
+
+    if (!fire) {
+      this.shipFireLatch = false;
+    }
 
     if (!ship.canControl) {
-      if (ship.respawnTimer > 0) ship.respawnTimer--;
+      if (ship.respawnTimer > 0) {
+        ship.respawnTimer--;
+      }
 
       if (ship.respawnTimer <= 0) {
-        this.trySpawnShipAtCenter();
+        this.spawnShipAtBestOpenPoint();
+      }
+
+      if (fire) {
+        this.shipFireLatch = true;
       }
 
       return;
     }
 
-    if (ship.invulnerableTimer > 0) ship.invulnerableTimer--;
+    if (ship.invulnerableTimer > 0) {
+      ship.invulnerableTimer--;
+    }
 
     // Get input from the current frame input (already read+recorded in updateSimulation)
-    const frameInput = this.currentFrameInput;
     const turnLeft = frameInput.left;
     const turnRight = frameInput.right;
     const thrust = frameInput.thrust;
-    const fire = frameInput.fire;
 
     if (turnLeft) {
       ship.angle = (ship.angle - SHIP_TURN_SPEED_BAM) & 0xff;
@@ -842,12 +869,14 @@ export class AsteroidsGame {
       ship.vx += accelVx;
       ship.vy += accelVy;
 
-      // Thrust particles and sound (every 5 frames)
-      this.thrustParticleTimer++;
-      if (this.thrustParticleTimer >= 5) {
-        this.spawnThrustParticles(ship);
-        this.audio.playThrust();
-        this.thrustParticleTimer = 0;
+      if (this.renderer) {
+        // Thrust particles and sound (every 5 frames)
+        this.thrustParticleTimer++;
+        if (this.thrustParticleTimer >= 5) {
+          this.renderer.onThrustFrame(ship);
+          this.audio.playThrust();
+          this.thrustParticleTimer = 0;
+        }
       }
     }
 
@@ -856,9 +885,14 @@ export class AsteroidsGame {
 
     ({ vx: ship.vx, vy: ship.vy } = clampSpeedQ8_8(ship.vx, ship.vy, SHIP_MAX_SPEED_SQ_Q16_16));
 
-    if (fire && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
+    const firePressedThisFrame = fire && !this.shipFireLatch;
+    if (firePressedThisFrame && ship.fireCooldown <= 0 && this.bullets.length < SHIP_BULLET_LIMIT) {
       this.spawnShipBullet();
       ship.fireCooldown = SHIP_BULLET_COOLDOWN_FRAMES;
+    }
+
+    if (fire) {
+      this.shipFireLatch = true;
     }
 
     // Q8.8 velocity >> 4 -> Q12.4 displacement
@@ -898,6 +932,9 @@ export class AsteroidsGame {
       saucers: this.saucers.filter((s) => s.alive).map((s) => toFloat(s) as Saucer),
       bullets: this.bullets.filter((b) => b.alive).map((b) => toFloat(b) as Bullet),
       saucerBullets: this.saucerBullets.filter((b) => b.alive).map((b) => toFloat(b) as Bullet),
+      wave: this.wave,
+      lives: this.lives,
+      timeSinceLastKill: this.timeSinceLastKill,
     };
   }
 
@@ -931,19 +968,15 @@ export class AsteroidsGame {
     };
 
     this.bullets.push(bullet);
-    this.audio.playShoot();
-
-    // Muzzle flash at slightly further offset
-    const { dx: mfDx, dy: mfDy } = displaceQ12_4(ship.angle, ship.radius + 8);
-    this.spawnMuzzleFlash(fromQ12_4(ship.x + mfDx), fromQ12_4(ship.y + mfDy));
+    if (this.renderer) {
+      this.audio.playShoot();
+      const { dx: mfDx, dy: mfDy } = displaceQ12_4(ship.angle, ship.radius + 8);
+      this.renderer.onBulletFired(fromQ12_4(ship.x + mfDx), fromQ12_4(ship.y + mfDy));
+    }
   }
 
   private updateAsteroids(): void {
     for (const asteroid of this.asteroids) {
-      if (!asteroid.alive) {
-        continue;
-      }
-
       asteroid.x = wrapXQ12_4(asteroid.x + (asteroid.vx >> 4));
       asteroid.y = wrapYQ12_4(asteroid.y + (asteroid.vy >> 4));
       asteroid.angle = (asteroid.angle + asteroid.spin) & 0xff;
@@ -952,10 +985,6 @@ export class AsteroidsGame {
 
   private updateBullets(): void {
     for (const bullet of this.bullets) {
-      if (!bullet.alive) {
-        continue;
-      }
-
       bullet.life--;
 
       if (bullet.life <= 0) {
@@ -970,10 +999,6 @@ export class AsteroidsGame {
 
   private updateSaucerBullets(): void {
     for (const bullet of this.saucerBullets) {
-      if (!bullet.alive) {
-        continue;
-      }
-
       bullet.life--;
 
       if (bullet.life <= 0) {
@@ -986,80 +1011,111 @@ export class AsteroidsGame {
     }
   }
 
-  private updateSaucers(): void {
-    if (this.saucerSpawnTimer > 0) this.saucerSpawnTimer--;
+  private saucerWavePressurePct(): number {
+    return clamp((this.wave - 1) * 8, 0, 100);
+  }
 
-    // Anti-lurking: spawn saucers faster if player isn't killing asteroids
+  private saucerLurkPressurePct(): number {
+    const over = Math.max(0, this.timeSinceLastKill - LURK_TIME_THRESHOLD_FRAMES);
+    return clamp(Math.trunc((over * 100) / (LURK_TIME_THRESHOLD_FRAMES * 2)), 0, 100);
+  }
+
+  private saucerPressurePct(): number {
+    const wavePressure = this.saucerWavePressurePct();
+    const lurkPressure = this.saucerLurkPressurePct();
+    return Math.min(100, wavePressure + Math.trunc((lurkPressure * 50) / 100));
+  }
+
+  private saucerFireCooldownRange(small: boolean): { min: number; max: number } {
+    const pressure = this.saucerPressurePct();
+    const [baseMin, baseMax, floorMin, floorMax] = small ? [42, 68, 22, 40] : [66, 96, 36, 56];
+    const min = baseMin - Math.trunc(((baseMin - floorMin) * pressure) / 100);
+    const max = baseMax - Math.trunc(((baseMax - floorMax) * pressure) / 100);
+    return max > min ? { min, max } : { min, max: min };
+  }
+
+  private getSmallSaucerAimErrorBAM(): number {
+    const pressurePct = this.saucerPressurePct();
+    const baseErrorBAM = 22;
+    const minErrorBAM = 3;
+    const errorRange = baseErrorBAM - minErrorBAM;
+    return clamp(
+      baseErrorBAM - (((errorRange * pressurePct) / 100) | 0),
+      minErrorBAM,
+      baseErrorBAM,
+    );
+  }
+
+  private updateSaucers(): void {
+    if (this.saucerSpawnTimer > 0) {
+      this.saucerSpawnTimer--;
+    }
+
     const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
     const spawnThreshold = isLurking ? LURK_SAUCER_SPAWN_FAST_FRAMES : 0;
-
-    const maxSaucers = this.wave < 4 ? 1 : this.wave < 7 ? 2 : 3;
+    const maxSaucers = maxSaucersForWave(this.wave);
     if (this.saucers.length < maxSaucers && this.saucerSpawnTimer <= spawnThreshold) {
       this.spawnSaucer();
-      // waveSpawnMult as integer percentage: max(40, 100 - (wave-1)*8)
       const waveMultPct = Math.max(40, 100 - (this.wave - 1) * 8);
-      const spawnMin = ((SAUCER_SPAWN_MIN_FRAMES * waveMultPct) / 100) | 0;
-      const spawnMax = ((SAUCER_SPAWN_MAX_FRAMES * waveMultPct) / 100) | 0;
+      const spawnMin = Math.trunc((SAUCER_SPAWN_MIN_FRAMES * waveMultPct) / 100);
+      const spawnMax = Math.trunc((SAUCER_SPAWN_MAX_FRAMES * waveMultPct) / 100);
       this.saucerSpawnTimer = isLurking
         ? randomInt(LURK_SAUCER_SPAWN_FAST_FRAMES, LURK_SAUCER_SPAWN_FAST_FRAMES + 120)
         : randomInt(spawnMin, spawnMax);
     }
 
-    for (const saucer of this.saucers) {
-      if (!saucer.alive) {
-        continue;
-      }
+    for (let index = 0; index < this.saucers.length; index += 1) {
+      const saucer = this.saucers[index];
+      if (!saucer) continue;
 
-      // Saucer doesn't wrap X (exits screen)
       saucer.x = saucer.x + (saucer.vx >> 4);
       saucer.y = wrapYQ12_4(saucer.y + (saucer.vy >> 4));
 
-      // Off-screen check in Q12.4
-      if (saucer.x < toQ12_4(-80) || saucer.x > toQ12_4(WORLD_WIDTH + 80)) {
+      if (saucer.x < SAUCER_CULL_MIN_X_Q12_4 || saucer.x > SAUCER_CULL_MAX_X_Q12_4) {
         saucer.alive = false;
         continue;
       }
 
-      if (saucer.driftTimer > 0) saucer.driftTimer--;
+      if (saucer.driftTimer > 0) {
+        saucer.driftTimer--;
+      }
       if (saucer.driftTimer <= 0) {
         saucer.driftTimer = randomInt(48, 120);
-        // drift vy: +-38 px/s -> +-38/60*256 ~ +-163 Q8.8
         saucer.vy = randomInt(-163, 164);
       }
 
-      if (saucer.fireCooldown > 0) saucer.fireCooldown--;
+      if (saucer.fireCooldown > 0) {
+        saucer.fireCooldown--;
+      }
 
       if (saucer.fireCooldown <= 0) {
         this.spawnSaucerBullet(saucer);
-        saucer.fireCooldown = saucer.small
-          ? isLurking
-            ? randomInt(27, 46)
-            : randomInt(39, 66)
-          : isLurking
-            ? randomInt(46, 67)
-            : randomInt(66, 96);
+        const { min, max } = this.saucerFireCooldownRange(saucer.small);
+        saucer.fireCooldown = randomInt(min, max + 1);
       }
     }
   }
 
   private spawnSaucer(): void {
-    const enterFromLeft = getGameRng().next() % 2 === 0;
-    // Anti-lurking: more likely to spawn small (deadly) saucer when lurking
+    const enterFromLeft = (getGameRng().next() & 1) === 0;
     const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
     const smallPct = isLurking ? 90 : this.score > 4000 ? 70 : 22;
     const small = getGameRng().next() % 100 < smallPct;
     const speedQ8_8 = small ? SAUCER_SPEED_SMALL_Q8_8 : SAUCER_SPEED_LARGE_Q8_8;
 
-    const startX = toQ12_4(enterFromLeft ? -30 : WORLD_WIDTH + 30);
-    const startY = randomInt(toQ12_4(72), toQ12_4(WORLD_HEIGHT - 72));
+    const startX = enterFromLeft ? SAUCER_START_X_LEFT_Q12_4 : SAUCER_START_X_RIGHT_Q12_4;
+    const startY = randomInt(SAUCER_START_Y_MIN_Q12_4, SAUCER_START_Y_MAX_Q12_4);
+    const vy = randomInt(-94, 95);
+    const { min: cooldownMin, max: cooldownMax } = this.saucerFireCooldownRange(small);
+    const fireCooldown = randomInt(cooldownMin, cooldownMax + 1);
+    const driftTimer = randomInt(48, 120);
 
     const saucer: Saucer = {
       id: this.nextId++,
       x: startX,
       y: startY,
       vx: enterFromLeft ? speedQ8_8 : -speedQ8_8,
-      // +-22 px/s -> +-22/60*256 ~ +-94 Q8.8
-      vy: randomInt(-94, 95),
+      vy,
       angle: 0,
       alive: true,
       radius: small ? SAUCER_RADIUS_SMALL : SAUCER_RADIUS_LARGE,
@@ -1067,28 +1123,29 @@ export class AsteroidsGame {
       prevY: startY,
       prevAngle: 0,
       small,
-      fireCooldown: randomInt(18, 48),
-      driftTimer: randomInt(48, 120),
+      fireCooldown,
+      driftTimer,
     };
 
     this.saucers.push(saucer);
-    this.audio.playSaucer(small);
+    if (this.renderer) {
+      this.audio.playSaucer(small);
+    }
   }
 
   private spawnSaucerBullet(saucer: Saucer): void {
+    if (this.saucerBullets.length >= SAUCER_BULLET_LIMIT) {
+      return;
+    }
+
     let shotAngle: number;
 
     if (saucer.small) {
       // Aimed shot using atan2BAM
-      const dx = shortestDeltaQ12_4(saucer.x, this.ship.x, WORLD_WIDTH_Q12_4);
-      const dy = shortestDeltaQ12_4(saucer.y, this.ship.y, WORLD_HEIGHT_Q12_4);
+      const dx = shortestDeltaWorldXQ12_4(saucer.x, this.ship.x);
+      const dy = shortestDeltaWorldYQ12_4(saucer.y, this.ship.y);
       const targetAngle = atan2BAM(dy, dx);
-      // Error in BAM: 30deg ~ 21 BAM, 15deg ~ 11 BAM, 4deg ~ 3 BAM
-      const isLurking = this.timeSinceLastKill > LURK_TIME_THRESHOLD_FRAMES;
-      const baseErrorBAM = isLurking ? 11 : 21;
-      const scoreBonus = (this.score / 2500) | 0; // integer division
-      const waveBonus = Math.min(11, this.wave * 1); // ~ wave*2 deg -> wave*1.4 BAM ~ wave*1
-      const errorBAM = clamp(baseErrorBAM - scoreBonus - waveBonus, 3, baseErrorBAM);
+      const errorBAM = this.getSmallSaucerAimErrorBAM();
       shotAngle = (targetAngle + randomInt(-errorBAM, errorBAM + 1)) & 0xff;
     } else {
       // Random shot
@@ -1120,20 +1177,21 @@ export class AsteroidsGame {
   }
 
   private handleCollisions(): void {
+    let aliveAsteroids = this.asteroids.length;
+
     // Bullet-asteroid collisions
     for (const bullet of this.bullets) {
+      if (aliveAsteroids === 0) break;
       if (!bullet.alive) continue;
 
       for (const asteroid of this.asteroids) {
         if (!asteroid.alive) continue;
 
-        const hitDistQ12_4 = (bullet.radius + asteroid.radius) << 4;
         if (
-          collisionDistSqQ12_4(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
-          hitDistQ12_4 * hitDistQ12_4
+          collidesQ12_4(bullet.x, bullet.y, bullet.radius, asteroid.x, asteroid.y, asteroid.radius)
         ) {
           bullet.alive = false;
-          this.destroyAsteroid(asteroid, true);
+          aliveAsteroids = this.destroyAsteroid(asteroid, true, aliveAsteroids);
           break;
         }
       }
@@ -1141,18 +1199,16 @@ export class AsteroidsGame {
 
     // Saucer bullet-asteroid collisions
     for (const bullet of this.saucerBullets) {
+      if (aliveAsteroids === 0) break;
       if (!bullet.alive) continue;
 
       for (const asteroid of this.asteroids) {
         if (!asteroid.alive) continue;
-
-        const hitDistQ12_4 = (bullet.radius + asteroid.radius) << 4;
         if (
-          collisionDistSqQ12_4(bullet.x, bullet.y, asteroid.x, asteroid.y) <=
-          hitDistQ12_4 * hitDistQ12_4
+          collidesQ12_4(bullet.x, bullet.y, bullet.radius, asteroid.x, asteroid.y, asteroid.radius)
         ) {
           bullet.alive = false;
-          this.destroyAsteroid(asteroid, false);
+          aliveAsteroids = this.destroyAsteroid(asteroid, false, aliveAsteroids);
           break;
         }
       }
@@ -1164,23 +1220,51 @@ export class AsteroidsGame {
 
       for (const saucer of this.saucers) {
         if (!saucer.alive) continue;
-
-        const hitDistQ12_4 = (bullet.radius + saucer.radius) << 4;
-        if (
-          collisionDistSqQ12_4(bullet.x, bullet.y, saucer.x, saucer.y) <=
-          hitDistQ12_4 * hitDistQ12_4
-        ) {
+        if (collidesQ12_4(bullet.x, bullet.y, bullet.radius, saucer.x, saucer.y, saucer.radius)) {
           bullet.alive = false;
           saucer.alive = false;
           this.addScore(saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER);
-          this.spawnExplosion(
-            fromQ12_4(saucer.x),
-            fromQ12_4(saucer.y),
-            saucer.small ? "medium" : "large",
-          );
-          this.addScreenShake(saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE);
-          this.audio.playExplosion(saucer.small ? "medium" : "large");
+          if (this.renderer) {
+            const sSize = saucer.small ? ("medium" as const) : ("large" as const);
+            this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
+            this.renderer.addScreenShake(
+              saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
+            );
+            this.audio.playExplosion(sSize);
+          }
           break;
+        }
+      }
+    }
+
+    // Saucer-asteroid collisions (arcade-faithful: saucer is destroyed)
+    if (aliveAsteroids > 0) {
+      for (const saucer of this.saucers) {
+        if (!saucer.alive) continue;
+
+        for (const asteroid of this.asteroids) {
+          if (!asteroid.alive) continue;
+          if (
+            collidesQ12_4(
+              saucer.x,
+              saucer.y,
+              saucer.radius,
+              asteroid.x,
+              asteroid.y,
+              asteroid.radius,
+            )
+          ) {
+            saucer.alive = false;
+            if (this.renderer) {
+              const sSize = saucer.small ? ("medium" as const) : ("large" as const);
+              this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
+              this.renderer.addScreenShake(
+                saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
+              );
+              this.audio.playExplosion(sSize);
+            }
+            break;
+          }
         }
       }
     }
@@ -1192,26 +1276,22 @@ export class AsteroidsGame {
     const ship = this.ship;
 
     // Ship-asteroid collisions (fudge factor: radius * 0.88 -> (radius * 225) >> 8)
-    for (const asteroid of this.asteroids) {
-      if (!asteroid.alive) continue;
+    if (aliveAsteroids > 0) {
+      for (const asteroid of this.asteroids) {
+        if (!asteroid.alive) continue;
 
-      const adjustedRadius = (asteroid.radius * 225) >> 8;
-      const hitDistQ12_4 = (ship.radius + adjustedRadius) << 4;
-      if (
-        collisionDistSqQ12_4(ship.x, ship.y, asteroid.x, asteroid.y) <=
-        hitDistQ12_4 * hitDistQ12_4
-      ) {
-        this.destroyShip();
-        return;
+        const adjustedRadius = (asteroid.radius * 225) >> 8;
+        if (collidesQ12_4(ship.x, ship.y, ship.radius, asteroid.x, asteroid.y, adjustedRadius)) {
+          this.destroyShip();
+          return;
+        }
       }
     }
 
     // Ship-saucer bullet collisions
     for (const bullet of this.saucerBullets) {
       if (!bullet.alive) continue;
-
-      const hitDistQ12_4 = (ship.radius + bullet.radius) << 4;
-      if (collisionDistSqQ12_4(ship.x, ship.y, bullet.x, bullet.y) <= hitDistQ12_4 * hitDistQ12_4) {
+      if (collidesQ12_4(ship.x, ship.y, ship.radius, bullet.x, bullet.y, bullet.radius)) {
         bullet.alive = false;
         this.destroyShip();
         return;
@@ -1221,9 +1301,7 @@ export class AsteroidsGame {
     // Ship-saucer collisions
     for (const saucer of this.saucers) {
       if (!saucer.alive) continue;
-
-      const hitDistQ12_4 = (ship.radius + saucer.radius) << 4;
-      if (collisionDistSqQ12_4(ship.x, ship.y, saucer.x, saucer.y) <= hitDistQ12_4 * hitDistQ12_4) {
+      if (collidesQ12_4(ship.x, ship.y, ship.radius, saucer.x, saucer.y, saucer.radius)) {
         saucer.alive = false;
         this.destroyShip();
         return;
@@ -1231,8 +1309,13 @@ export class AsteroidsGame {
     }
   }
 
-  private destroyAsteroid(asteroid: Asteroid, awardScore: boolean): void {
+  private destroyAsteroid(asteroid: Asteroid, awardScore: boolean, aliveAsteroids: number): number {
+    if (!asteroid.alive) {
+      return aliveAsteroids;
+    }
+
     asteroid.alive = false;
+    aliveAsteroids = Math.max(0, aliveAsteroids - 1);
 
     if (awardScore) {
       this.timeSinceLastKill = 0;
@@ -1246,27 +1329,27 @@ export class AsteroidsGame {
       }
     }
 
-    // Spawn explosion and debris (convert to pixel coords for visual effects)
-    const px = fromQ12_4(asteroid.x);
-    const py = fromQ12_4(asteroid.y);
-    this.spawnExplosion(px, py, asteroid.size);
-    this.spawnDebris(px, py, asteroid.size);
-    this.addScreenShake(
-      asteroid.size === "large"
-        ? SHAKE_INTENSITY_MEDIUM
-        : asteroid.size === "medium"
-          ? SHAKE_INTENSITY_SMALL
-          : SHAKE_INTENSITY_SMALL * 0.5,
-    );
-    this.audio.playExplosion(asteroid.size);
+    if (this.renderer) {
+      const px = fromQ12_4(asteroid.x);
+      const py = fromQ12_4(asteroid.y);
+      this.renderer.onAsteroidDestroyed(px, py, asteroid.size);
+      this.renderer.addScreenShake(
+        asteroid.size === "large"
+          ? SHAKE_INTENSITY_MEDIUM
+          : asteroid.size === "medium"
+            ? SHAKE_INTENSITY_SMALL
+            : SHAKE_INTENSITY_SMALL * 0.5,
+      );
+      this.audio.playExplosion(asteroid.size);
+    }
 
     if (asteroid.size === "small") {
-      return;
+      return aliveAsteroids;
     }
 
     const childSize: AsteroidSize = asteroid.size === "large" ? "medium" : "small";
-    const totalObjects = this.asteroids.filter((entry) => entry.alive).length;
-    const splitCount = totalObjects >= ASTEROID_CAP ? 1 : 2;
+    const freeSlots = Math.max(0, ASTEROID_CAP - aliveAsteroids);
+    const splitCount = Math.min(2, freeSlots);
 
     for (let i = 0; i < splitCount; i += 1) {
       const child = this.createAsteroid(childSize, asteroid.x, asteroid.y);
@@ -1274,20 +1357,23 @@ export class AsteroidsGame {
       child.vx += (asteroid.vx * 46) >> 8;
       child.vy += (asteroid.vy * 46) >> 8;
       this.asteroids.push(child);
+      aliveAsteroids += 1;
     }
+
+    return aliveAsteroids;
   }
 
   private destroyShip(): void {
     this.queueShipRespawn(SHIP_RESPAWN_FRAMES);
     this.lives -= 1;
 
-    // Big explosion effect (convert to pixel coords for visual effects)
-    const px = fromQ12_4(this.ship.x);
-    const py = fromQ12_4(this.ship.y);
-    this.spawnExplosion(px, py, "large");
-    this.spawnDebris(px, py, "large");
-    this.addScreenShake(SHAKE_INTENSITY_LARGE);
-    this.audio.playExplosion("large");
+    if (this.renderer) {
+      const px = fromQ12_4(this.ship.x);
+      const py = fromQ12_4(this.ship.y);
+      this.renderer.onShipDestroyed(px, py);
+      this.renderer.addScreenShake(SHAKE_INTENSITY_LARGE);
+      this.audio.playExplosion("large");
+    }
 
     if (this.lives <= 0) {
       if (this.mode !== "replay") {
@@ -1295,7 +1381,7 @@ export class AsteroidsGame {
       }
       this.ship.canControl = false;
       this.ship.respawnTimer = 99999;
-      if (!this.headless) {
+      if (this.renderer) {
         this.saveHighScore();
       }
     }
@@ -1304,18 +1390,14 @@ export class AsteroidsGame {
   private addScore(points: number): void {
     this.score += points;
 
-    while (this.score >= this.nextExtraLifeScore) {
+    // Per rules, a single score event is always < EXTRA_LIFE_SCORE_STEP, so we can cross
+    // at most one extra-life threshold per addScore call.
+    if (this.score >= this.nextExtraLifeScore) {
       this.lives += 1;
       this.nextExtraLifeScore += EXTRA_LIFE_SCORE_STEP;
-      this.audio.playExtraLife();
-      // Extra life celebration effect
-      for (let i = 0; i < 20; i++) {
-        this.spawnParticle(
-          WORLD_WIDTH * 0.5 + visualRandomRange(-100, 100),
-          WORLD_HEIGHT * 0.5 + visualRandomRange(-50, 50),
-          "spark",
-          "#ffd700",
-        );
+      if (this.renderer) {
+        this.audio.playExtraLife();
+        this.renderer.onExtraLife();
       }
     }
 
@@ -1329,631 +1411,36 @@ export class AsteroidsGame {
     this.bullets = this.bullets.filter((entity) => entity.alive);
     this.saucers = this.saucers.filter((entity) => entity.alive);
     this.saucerBullets = this.saucerBullets.filter((entity) => entity.alive);
-    this.particles = this.particles.filter((p) => p.life > 0).slice(-MAX_PARTICLES);
-    this.debris = this.debris.filter((d) => d.life > 0).slice(-MAX_DEBRIS);
+    this.renderer?.pruneVisuals();
   }
 
-  // Particle system
-  private spawnParticle(
-    x: number,
-    y: number,
-    type: Particle["type"],
-    color: string,
-    count = 1,
-  ): void {
-    if (this.headless) return;
-    for (let i = 0; i < count; i++) {
-      if (this.particles.length >= MAX_PARTICLES) break;
-
-      const angle = visualRandomRange(0, Math.PI * 2);
-      const speed = visualRandomRange(20, 120);
-      const life = visualRandomRange(0.3, 0.8);
-
-      this.particles.push({
-        id: this.nextId++,
-        x: x + visualRandomRange(-5, 5),
-        y: y + visualRandomRange(-5, 5),
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life,
-        maxLife: life,
-        size: visualRandomRange(1, 3),
-        color,
-        alpha: 1,
-        decay: visualRandomRange(0.8, 1.2),
-        type,
-      });
-    }
-  }
-
-  private spawnExplosion(x: number, y: number, size: "small" | "medium" | "large"): void {
-    const particleCount = size === "large" ? 25 : size === "medium" ? 15 : 8;
-    const colors = ["#ff6b35", "#f7931e", "#ffd700", "#ffffff"];
-
-    for (let i = 0; i < particleCount; i++) {
-      this.spawnParticle(x, y, "spark", colors[visualRandomInt(0, colors.length)]);
-    }
-
-    // Add smoke particles
-    this.spawnParticle(x, y, "smoke", "#555555", 5);
-  }
-
-  private spawnMuzzleFlash(x: number, y: number): void {
-    this.spawnParticle(x, y, "glow", "#a8ff60", 3);
-  }
-
-  private spawnThrustParticles(ship: Ship): void {
-    // Opposite direction (angle + 128 BAM = +180deg)
-    const { dx, dy } = displaceQ12_4((ship.angle + 128) & 0xff, ship.radius);
-    const x = fromQ12_4(ship.x + dx);
-    const y = fromQ12_4(ship.y + dy);
-
-    this.spawnParticle(x, y, "spark", "#ffaa44", 2);
-    this.spawnParticle(x, y, "smoke", "#666666", 1);
-  }
-
-  private spawnDebris(x: number, y: number, size: AsteroidSize | "large"): void {
-    if (this.headless) return;
-    const debrisCount = size === "large" ? 8 : size === "medium" ? 5 : 3;
-
-    for (let i = 0; i < debrisCount; i++) {
-      if (this.debris.length >= MAX_DEBRIS) break;
-
-      const angle = visualRandomRange(0, Math.PI * 2);
-      const speed = visualRandomRange(30, 90);
-      const life = visualRandomRange(0.5, 1.2);
-      const vertices: number[] = [];
-      const vertexCount = visualRandomInt(4, 7);
-
-      for (let j = 0; j < vertexCount; j++) {
-        vertices.push(visualRandomRange(0.5, 1));
-      }
-
-      this.debris.push({
-        id: this.nextId++,
-        x: x + visualRandomRange(-10, 10),
-        y: y + visualRandomRange(-10, 10),
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        angle: visualRandomRange(0, Math.PI * 2),
-        spin: visualRandomRange(-2, 2),
-        life,
-        maxLife: life,
-        size: visualRandomRange(3, 8),
-        vertices,
-      });
-    }
-  }
-
-  private updateParticles(dt: number): void {
-    for (const particle of this.particles) {
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-      particle.vx *= 0.98;
-      particle.vy *= 0.98;
-      particle.life -= dt * particle.decay;
-      particle.alpha = particle.life / particle.maxLife;
-    }
-  }
-
-  private updateDebris(dt: number): void {
-    for (const d of this.debris) {
-      d.x = wrapX(d.x + d.vx * dt);
-      d.y = wrapY(d.y + d.vy * dt);
-      d.angle += d.spin * dt;
-      d.life -= dt;
-    }
-  }
-
-  // Screen shake
-  private addScreenShake(intensity: number): void {
-    this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
-  }
-
-  private updateScreenShake(): void {
-    if (this.shakeIntensity > 0.1) {
-      this.shakeX = (Math.random() - 0.5) * this.shakeIntensity * 2;
-      this.shakeY = (Math.random() - 0.5) * this.shakeIntensity * 2;
-      this.shakeRotation = (Math.random() - 0.5) * this.shakeIntensity * 0.02;
-      this.shakeIntensity *= SHAKE_DECAY;
-    } else {
-      this.shakeX = 0;
-      this.shakeY = 0;
-      this.shakeRotation = 0;
-      this.shakeIntensity = 0;
-    }
-  }
-
-  private seedStars(count: number): void {
-    this.stars.length = 0;
-
-    for (let i = 0; i < count; i += 1) {
-      const baseAlpha = visualRandomRange(0.2, 0.95);
-      this.stars.push({
-        x: visualRandomRange(0, WORLD_WIDTH),
-        y: visualRandomRange(0, WORLD_HEIGHT),
-        alpha: baseAlpha,
-        baseAlpha,
-        twinkleSpeed: visualRandomRange(0.8, 2.5),
-        twinklePhase: visualRandomRange(0, Math.PI * 2),
-      });
-    }
-  }
-
-  private render(alpha: number): void {
-    if (this.headless || !this.ctx) return;
-    const ctx = this.ctx;
-
-    ctx.save();
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
-
-    // Deep space background
-    const gradient = ctx.createRadialGradient(
-      this.cssWidth / 2,
-      this.cssHeight / 2,
-      0,
-      this.cssWidth / 2,
-      this.cssHeight / 2,
-      Math.max(this.cssWidth, this.cssHeight),
-    );
-    gradient.addColorStop(0, "#0a0f1a");
-    gradient.addColorStop(1, "#020408");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, this.cssWidth, this.cssHeight);
-
-    ctx.translate(this.viewOffsetX, this.viewOffsetY);
-    ctx.scale(this.viewScale, this.viewScale);
-
-    // Apply screen shake
-    ctx.translate(this.shakeX, this.shakeY);
-    ctx.rotate(this.shakeRotation);
-
-    this.drawStars(ctx);
-
-    // Set up glow effect
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = "#4ade80";
-    ctx.strokeStyle = "#b8ffe3";
-    ctx.fillStyle = "#b8ffe3";
-    ctx.lineWidth = 2;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-
-    this.drawDebris(ctx);
-    this.drawAsteroids(ctx, alpha);
-    this.drawShip(ctx, alpha);
-    this.drawBullets(ctx, this.bullets, alpha);
-    this.drawSaucers(ctx, alpha);
-    this.drawBullets(ctx, this.saucerBullets, alpha);
-    this.drawParticles(ctx);
-    this.drawHud(ctx);
-
-    // Reset shadow for HUD and overlay
-    ctx.shadowBlur = 0;
-
-    this.drawOverlay(ctx, alpha);
-    ctx.restore();
-  }
-
-  private drawStars(ctx: CanvasRenderingContext2D): void {
-    for (const star of this.stars) {
-      // Twinkling effect
-      const twinkle = Math.sin(this.gameTime * star.twinkleSpeed + star.twinklePhase);
-      const alpha = star.baseAlpha * (0.6 + twinkle * 0.4);
-      ctx.globalAlpha = clamp(alpha, 0.1, 1);
-      ctx.fillStyle = "#9fd4ff";
-      ctx.fillRect(star.x, star.y, 1.4, 1.4);
-    }
-
-    ctx.globalAlpha = 1;
-  }
-
-  private drawShip(ctx: CanvasRenderingContext2D, alpha: number): void {
-    const ship = this.ship;
-
-    if (!ship.canControl && (this.mode === "game-over" || this.lives <= 0)) {
-      return;
-    }
-
-    if (ship.invulnerableTimer > 0 && Math.floor(ship.invulnerableTimer / 3) % 2 === 0) {
-      return;
-    }
-
-    // Convert from fixed-point, then interpolate
-    const renderX = lerpWrap(fromQ12_4(ship.prevX), fromQ12_4(ship.x), alpha, WORLD_WIDTH);
-    const renderY = lerpWrap(fromQ12_4(ship.prevY), fromQ12_4(ship.y), alpha, WORLD_HEIGHT);
-    const renderAngle = lerpAngle(BAMToRadians(ship.prevAngle), BAMToRadians(ship.angle), alpha);
-
-    ctx.save();
-    ctx.translate(renderX, renderY);
-    ctx.rotate(renderAngle + Math.PI * 0.5);
-
-    // Ship glow
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "#4ade80";
-
-    ctx.beginPath();
-    ctx.moveTo(0, -ship.radius);
-    ctx.lineTo(ship.radius * 0.72, ship.radius);
-    ctx.lineTo(0, ship.radius * 0.45);
-    ctx.lineTo(-ship.radius * 0.72, ship.radius);
-    ctx.closePath();
-    ctx.stroke();
-
-    // Thrust flame with glow
-    if (ship.canControl && this.input.isDown("ArrowUp") && this.mode === "playing") {
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = "#ff6b35";
-      ctx.strokeStyle = "#ffaa44";
-      ctx.beginPath();
-      const flame = 8 + Math.sin(Date.now() * 0.03) * 4;
-      ctx.moveTo(-4, ship.radius * 0.9);
-      ctx.lineTo(0, ship.radius + flame);
-      ctx.lineTo(4, ship.radius * 0.9);
-      ctx.stroke();
-      ctx.strokeStyle = "#b8ffe3";
-      ctx.shadowColor = "#4ade80";
-    }
-
-    ctx.restore();
-  }
-
-  private drawAsteroids(ctx: CanvasRenderingContext2D, alpha: number): void {
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = "#6b7280";
-
-    for (const asteroid of this.asteroids) {
-      if (!asteroid.alive) {
-        continue;
-      }
-
-      const vertices = asteroid.vertices;
-      const vertexCount = vertices.length;
-
-      // Convert from fixed-point, then interpolate
-      const renderX = lerpWrap(
-        fromQ12_4(asteroid.prevX),
-        fromQ12_4(asteroid.x),
-        alpha,
-        WORLD_WIDTH,
-      );
-      const renderY = lerpWrap(
-        fromQ12_4(asteroid.prevY),
-        fromQ12_4(asteroid.y),
-        alpha,
-        WORLD_HEIGHT,
-      );
-      const renderAngle = lerpAngle(
-        BAMToRadians(asteroid.prevAngle),
-        BAMToRadians(asteroid.angle),
-        alpha,
-      );
-
-      ctx.save();
-      ctx.translate(renderX, renderY);
-      ctx.rotate(renderAngle);
-      ctx.beginPath();
-
-      for (let i = 0; i < vertexCount; i += 1) {
-        const angle = (i / vertexCount) * Math.PI * 2;
-        const radius = asteroid.radius * vertices[i];
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-
-      ctx.closePath();
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.shadowColor = "#4ade80";
-    ctx.shadowBlur = 8;
-  }
-
-  private drawBullets(ctx: CanvasRenderingContext2D, bullets: Bullet[], alpha: number): void {
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = "#fbbf24";
-
-    for (const bullet of bullets) {
-      if (!bullet.alive) {
-        continue;
-      }
-
-      // Convert from fixed-point, then interpolate
-      const renderX = lerpWrap(fromQ12_4(bullet.prevX), fromQ12_4(bullet.x), alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(fromQ12_4(bullet.prevY), fromQ12_4(bullet.y), alpha, WORLD_HEIGHT);
-
-      ctx.fillStyle = "#fef3c7";
-      ctx.fillRect(renderX - 1.2, renderY - 1.2, 2.4, 2.4);
-    }
-
-    ctx.shadowColor = "#4ade80";
-    ctx.shadowBlur = 8;
-  }
-
-  private drawSaucers(ctx: CanvasRenderingContext2D, alpha: number): void {
-    for (const saucer of this.saucers) {
-      if (!saucer.alive) {
-        continue;
-      }
-
-      const w = saucer.small ? 22 : 30;
-      const h = saucer.small ? 9 : 12;
-
-      // Convert from fixed-point, then interpolate
-      const renderX = lerpWrap(fromQ12_4(saucer.prevX), fromQ12_4(saucer.x), alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(fromQ12_4(saucer.prevY), fromQ12_4(saucer.y), alpha, WORLD_HEIGHT);
-
-      ctx.save();
-      ctx.translate(renderX, renderY);
-
-      // Saucer glow - different colors for small vs large
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = saucer.small ? "#ef4444" : "#f97316";
-
-      ctx.beginPath();
-      ctx.ellipse(0, 0, w * 0.6, h * 0.45, 0, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(-w * 0.5, 0);
-      ctx.lineTo(-w * 0.28, -h * 0.55);
-      ctx.lineTo(w * 0.28, -h * 0.55);
-      ctx.lineTo(w * 0.5, 0);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.shadowColor = "#4ade80";
-    ctx.shadowBlur = 8;
-  }
-
-  private drawParticles(ctx: CanvasRenderingContext2D): void {
-    for (const particle of this.particles) {
-      if (particle.life <= 0) continue;
-
-      ctx.globalAlpha = particle.alpha;
-      ctx.fillStyle = particle.color;
-
-      if (particle.type === "glow") {
-        ctx.shadowBlur = particle.size * 3;
-        ctx.shadowColor = particle.color;
-      } else {
-        ctx.shadowBlur = 0;
-      }
-
-      ctx.fillRect(
-        particle.x - particle.size * 0.5,
-        particle.y - particle.size * 0.5,
-        particle.size,
-        particle.size,
-      );
-    }
-
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = "#4ade80";
-  }
-
-  private drawDebris(ctx: CanvasRenderingContext2D): void {
-    ctx.shadowBlur = 5;
-    ctx.shadowColor = "#6b7280";
-
-    for (const d of this.debris) {
-      if (d.life <= 0) continue;
-
-      ctx.globalAlpha = d.life / d.maxLife;
-      ctx.save();
-      ctx.translate(d.x, d.y);
-      ctx.rotate(d.angle);
-
-      ctx.beginPath();
-      const vertexCount = d.vertices.length;
-      for (let i = 0; i < vertexCount; i++) {
-        const angle = (i / vertexCount) * Math.PI * 2;
-        const r = d.size * d.vertices[i];
-        const x = Math.cos(angle) * r;
-        const y = Math.sin(angle) * r;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = "#4ade80";
-  }
-
-  private drawHud(ctx: CanvasRenderingContext2D): void {
-    ctx.save();
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = "#4ade80";
-    ctx.fillStyle = "#d6fff0";
-    ctx.font = "600 20px 'Monaspace Neon', 'Monaspace Krypton', monospace";
-    ctx.textBaseline = "top";
-
-    const scoreLabel = `SCORE ${this.score.toString().padStart(5, "0")}`;
-    const highLabel = `HIGH ${this.highScore.toString().padStart(5, "0")}`;
-    const waveLabel = `WAVE ${Math.max(1, this.wave)}`;
-
-    ctx.fillText(scoreLabel, 20, 18);
-    ctx.fillText(highLabel, WORLD_WIDTH - 230, 18);
-    ctx.fillText(waveLabel, WORLD_WIDTH - 145, WORLD_HEIGHT - 40);
-
-    // Display seed for ZK verification
-    ctx.font = "500 12px 'Monaspace Krypton', monospace";
-    ctx.fillStyle = "#6b7280";
-    ctx.fillText(`SEED ${this.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`, 20, 44);
-
-    // Draw ship lives as icons instead of text
-    this.drawShipLives(ctx, 20, WORLD_HEIGHT - 45, this.lives);
-
-    // Autopilot indicator
-    if (this.autopilot.isEnabled()) {
-      ctx.save();
-      ctx.font = "600 16px 'Monaspace Neon', 'Monaspace Krypton', monospace";
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = "#22d3ee";
-      ctx.fillStyle = "#22d3ee";
-      const pulse = 0.7 + Math.sin(this.gameTime * 4) * 0.3;
-      ctx.globalAlpha = pulse;
-      ctx.fillText("AUTOPILOT", WORLD_WIDTH / 2 - 50, 18);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-
-    ctx.restore();
-  }
-
-  private drawShipLives(
-    ctx: CanvasRenderingContext2D,
-    startX: number,
-    startY: number,
-    count: number,
-  ): void {
-    const shipSize = 10;
-    const spacing = 22;
-    const maxDisplay = Math.min(count, 10); // Cap display at 10 ships
-
-    ctx.save();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "#d6fff0";
-
-    for (let i = 0; i < maxDisplay; i++) {
-      const x = startX + i * spacing + shipSize;
-      const y = startY;
-
-      ctx.save();
-      ctx.translate(x, y);
-      // Point up
-      ctx.rotate(0);
-
-      ctx.beginPath();
-      ctx.moveTo(0, -shipSize);
-      ctx.lineTo(shipSize * 0.72, shipSize);
-      ctx.lineTo(0, shipSize * 0.45);
-      ctx.lineTo(-shipSize * 0.72, shipSize);
-      ctx.closePath();
-      ctx.stroke();
-
-      ctx.restore();
-    }
-
-    // If more than 10 lives, show "+N" indicator
-    if (count > 10) {
-      ctx.font = "500 14px 'Monaspace Krypton', monospace";
-      ctx.fillStyle = "#d6fff0";
-      ctx.fillText(`+${count - 10}`, startX + maxDisplay * spacing + 5, startY - 5);
-    }
-
-    ctx.restore();
-  }
-
-  private drawOverlay(ctx: CanvasRenderingContext2D, alpha: number): void {
-    void alpha;
-
-    if (this.mode === "playing") {
-      return;
-    }
-
-    if (this.mode === "replay") {
-      this.drawReplayOverlay(ctx);
-      return;
-    }
-
-    ctx.save();
-
-    // Vignette effect
-    const gradient = ctx.createRadialGradient(
-      WORLD_WIDTH / 2,
-      WORLD_HEIGHT / 2,
-      WORLD_HEIGHT * 0.3,
-      WORLD_WIDTH / 2,
-      WORLD_HEIGHT / 2,
-      WORLD_HEIGHT * 0.8,
-    );
-    gradient.addColorStop(0, "rgba(0, 8, 14, 0.6)");
-    gradient.addColorStop(1, "rgba(0, 8, 14, 0.9)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = "#4ade80";
-    ctx.fillStyle = "#d6fff0";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = "700 56px 'Monaspace Neon', 'Monaspace Krypton', monospace";
-
-    if (this.mode === "menu") {
-      // Animated title
-      const pulse = 1 + Math.sin(Date.now() * 0.003) * 0.05;
-      ctx.save();
-      ctx.translate(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.34);
-      ctx.scale(pulse, pulse);
-      ctx.fillText("ASTEROIDS", 0, 0);
-      ctx.restore();
-
-      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.46);
-      ctx.fillText("Space: Fire", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
-      ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.58);
-
-      // Autopilot hint in cyan
-      ctx.shadowColor = "#22d3ee";
-      ctx.fillStyle = "#22d3ee";
-      ctx.fillText("A: Toggle Autopilot", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
-
-      // Tape load hint in purple
-      ctx.shadowColor = "#a855f7";
-      ctx.fillStyle = "#a855f7";
-      ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.7);
-
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "#4ade80";
-      ctx.fillStyle = "#4ade80";
-      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.78);
-    }
-
-    if (this.mode === "paused") {
-      ctx.fillText("PAUSED", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.45);
-      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      if (this.pauseFromHidden) {
-        ctx.fillText("Tab hidden: auto-paused", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.56);
-      }
-      ctx.fillText("Press P / Enter or Tap to Resume", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.66);
-    }
-
-    if (this.mode === "game-over") {
-      ctx.shadowColor = "#ef4444";
-      ctx.fillStyle = "#ff6b6b";
-      ctx.fillText("GAME OVER", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.42);
-      ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillStyle = "#d6fff0";
-      ctx.fillText(
-        `Final Score: ${this.score.toString().padStart(5, "0")}`,
-        WORLD_WIDTH * 0.5,
-        WORLD_HEIGHT * 0.56,
-      );
-      ctx.fillText("Press Enter, R, or Tap to Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
-
-      // Tape save hint
-      ctx.shadowColor = "#a855f7";
-      ctx.fillStyle = "#a855f7";
-      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillText("D: Save Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.72);
-    }
-
-    ctx.restore();
+  /** Build the render state snapshot for the renderer. */
+  private buildRenderState(): GameRenderState {
+    return {
+      ship: this.ship,
+      asteroids: this.asteroids,
+      bullets: this.bullets,
+      saucerBullets: this.saucerBullets,
+      saucers: this.saucers,
+      mode: this.mode,
+      score: this.score,
+      highScore: this.highScore,
+      wave: this.wave,
+      lives: this.lives,
+      gameSeed: this.gameSeed,
+      gameTime: this.gameTime,
+      thrustActive: this.currentFrameInput.thrust,
+      autopilotEnabled: this.autopilot.isEnabled(),
+      replayInfo: this.replayTapeSource
+        ? {
+            currentFrame: this.replayTapeSource.getCurrentFrame(),
+            totalFrames: this.replayTapeSource.getTotalFrames(),
+            isComplete: this.replayTapeSource.isComplete(),
+            speed: this.replaySpeed,
+            paused: this.replayPaused,
+          }
+        : null,
+    };
   }
 
   // =========================================================================
@@ -1962,8 +1449,11 @@ export class AsteroidsGame {
 
   /** Run one simulation step (storePreviousPositions + updateSimulation). */
   stepSimulation(): void {
-    this.storePreviousPositions();
+    if (this.renderer) {
+      this.storePreviousPositions();
+    }
     this.updateSimulation(FIXED_TIMESTEP);
+    this.gameTime += FIXED_TIMESTEP;
   }
 
   /** Replace the current input source. */
@@ -1993,6 +1483,20 @@ export class AsteroidsGame {
     return this.gameSeed;
   }
 
+  /** Snapshot the current recorded run (no claimant binding). */
+  getRunRecord(): GameRunRecord | null {
+    if (!this.recorder) {
+      return null;
+    }
+
+    return {
+      seed: this.gameSeed,
+      inputs: this.recorder.getInputs(),
+      finalScore: this.score,
+      finalRngState: getGameRngState(),
+    };
+  }
+
   /** Build a serialized tape from the current recording. */
   getTape(): Uint8Array | null {
     if (!this.recorder) return null;
@@ -2006,6 +1510,7 @@ export class AsteroidsGame {
   /** Load a tape and enter visual replay mode. */
   loadReplay(tapeData: Uint8Array): void {
     const tape = deserializeTape(tapeData);
+    this.audio.enable();
     this.startNewGame(tape.header.seed);
     this.mode = "replay";
     this.replaySpeed = 1;
@@ -2017,112 +1522,6 @@ export class AsteroidsGame {
     this.inputSource = tapeSource;
     // Stop recording during replay
     this.recorder = null;
-  }
-
-  private drawReplayOverlay(ctx: CanvasRenderingContext2D): void {
-    const tapeComplete = this.replayTapeSource?.isComplete() ?? false;
-
-    // Show completion overlay with vignette when tape is finished
-    if (tapeComplete) {
-      ctx.save();
-
-      const gradient = ctx.createRadialGradient(
-        WORLD_WIDTH / 2,
-        WORLD_HEIGHT / 2,
-        WORLD_HEIGHT * 0.3,
-        WORLD_WIDTH / 2,
-        WORLD_HEIGHT / 2,
-        WORLD_HEIGHT * 0.8,
-      );
-      gradient.addColorStop(0, "rgba(0, 8, 14, 0.6)");
-      gradient.addColorStop(1, "rgba(0, 8, 14, 0.9)");
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      ctx.font = "700 40px 'Monaspace Neon', 'Monaspace Krypton', monospace";
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = "#a855f7";
-      ctx.fillStyle = "#a855f7";
-      ctx.fillText("REPLAY COMPLETE", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.38);
-
-      ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = "#d6fff0";
-      ctx.fillText(
-        `Final Score: ${this.score.toString().padStart(5, "0")}`,
-        WORLD_WIDTH * 0.5,
-        WORLD_HEIGHT * 0.5,
-      );
-      ctx.fillText(`Wave: ${this.wave}`, WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.57);
-
-      ctx.font = "500 14px 'Monaspace Krypton', monospace";
-      ctx.fillStyle = "#6b7280";
-      ctx.fillText(
-        `Seed: 0x${this.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`,
-        WORLD_WIDTH * 0.5,
-        WORLD_HEIGHT * 0.64,
-      );
-
-      ctx.font = "600 22px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillStyle = "#4ade80";
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "#4ade80";
-      ctx.fillText("Press Esc to Exit", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.76);
-
-      ctx.restore();
-      return;
-    }
-
-    ctx.save();
-
-    // "REPLAY" label top-center
-    ctx.font = "600 18px 'Monaspace Neon', 'Monaspace Krypton', monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "#a855f7";
-    ctx.fillStyle = "#a855f7";
-    const pulse = 0.7 + Math.sin(this.gameTime * 4) * 0.3;
-    ctx.globalAlpha = pulse;
-    ctx.fillText("REPLAY", WORLD_WIDTH / 2, 18);
-    ctx.globalAlpha = 1;
-
-    if (this.replayTapeSource) {
-      const current = this.replayTapeSource.getCurrentFrame();
-      const total = this.replayTapeSource.getTotalFrames();
-
-      // Frame counter
-      ctx.font = "500 14px 'Monaspace Krypton', monospace";
-      ctx.fillStyle = "#d6fff0";
-      ctx.shadowBlur = 0;
-      ctx.fillText(`Frame ${current} / ${total}`, WORLD_WIDTH / 2, 42);
-
-      // Speed indicator
-      const speedLabel = this.replayPaused ? "PAUSED" : `${this.replaySpeed}x`;
-      ctx.fillText(speedLabel, WORLD_WIDTH / 2, 60);
-
-      // Progress bar
-      const barY = WORLD_HEIGHT - 10;
-      const barH = 4;
-      const progress = total > 0 ? current / total : 0;
-
-      ctx.fillStyle = "#333";
-      ctx.fillRect(20, barY, WORLD_WIDTH - 40, barH);
-
-      ctx.fillStyle = "#a855f7";
-      ctx.fillRect(20, barY, (WORLD_WIDTH - 40) * progress, barH);
-
-      // Key hints
-      ctx.font = "500 12px 'Monaspace Krypton', monospace";
-      ctx.fillStyle = "#6b7280";
-      ctx.textAlign = "center";
-      ctx.fillText("1/2/4: Speed    Space: Pause    Esc: Exit", WORLD_WIDTH / 2, WORLD_HEIGHT - 20);
-    }
-
-    ctx.restore();
   }
 
   private downloadTape(): void {

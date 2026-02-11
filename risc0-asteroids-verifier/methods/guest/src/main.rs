@@ -22,7 +22,10 @@ fn main() {
     env::read_slice(&mut tape);
     tape.truncate(tape_len);
 
-    let guest_input = GuestInput { tape, max_frames };
+    let guest_input = GuestInput {
+        tape,
+        max_frames,
+    };
 
     let journal = verify_guest_input(&guest_input).unwrap_or_else(|err| {
         panic!("guest verification failed: {err}");

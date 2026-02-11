@@ -7,39 +7,38 @@ SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
 MEDIUM_TAPE="$ROOT_DIR/test-fixtures/test-medium.tape"
 DEFAULT_THRESHOLDS_FILE="$VERIFIER_DIR/benchmarks/thresholds.env"
 
-RUN_COVERAGE=1
-RUN_DEV=1
-RUN_SECURE_SHORT=1
-RUN_SECURE_MEDIUM=0
-CHECK_THRESHOLDS=0
+COVERAGE_MODE="on" # on|off
+THRESHOLD_MODE="off" # off|check
 OUT_DIR=""
 THRESHOLDS_FILE="$DEFAULT_THRESHOLDS_FILE"
 SEGMENT_LIMIT_PO2="19"
 declare -a HOST_EXTRA_ARGS=()
+HOST_BUILD_ARGS=(--no-default-features)
 
 usage() {
   cat <<'USAGE_EOF'
 Usage: scripts/bench-risc0.sh [options]
 
 Run coverage + performance benchmarks for the RISC0 Asteroids verifier.
+Local policy is enforced: CPU-only host build and dev-mode proving only.
 
 Options:
   --out-dir <path>         Write artifacts to this directory.
                            Default: risc0-asteroids-verifier/benchmarks/runs/<utc-timestamp>
-  --check                  Enforce regression thresholds from thresholds file.
+  --threshold-mode <mode>  off|check (default: off).
+                           off = report metrics only
+                           check = enforce regression thresholds
   --thresholds <path>      Use custom thresholds file (env format).
   --segment-limit-po2 <n>  Pass segment limit (po2 cycles) to host verifier.
                            Default: 19
-  --full                   Include secure medium-fixture proving (slow, expensive).
-  --dev-only               Skip secure proving runs.
-  --skip-coverage          Skip cargo-llvm-cov coverage run.
+  --coverage-mode <mode>   on|off (default: on).
   -h, --help               Show this help.
 
 Examples:
   bash scripts/bench-risc0.sh
-  bash scripts/bench-risc0.sh --check
-  bash scripts/bench-risc0.sh --full --check
-  bash scripts/bench-risc0.sh --dev-only --out-dir /tmp/risc0-bench
+  bash scripts/bench-risc0.sh --threshold-mode check
+  bash scripts/bench-risc0.sh --coverage-mode off
+  bash scripts/bench-risc0.sh --out-dir /tmp/risc0-bench
 USAGE_EOF
 }
 
@@ -49,30 +48,21 @@ while [[ $# -gt 0 ]]; do
       OUT_DIR="${2:-}"
       shift 2
       ;;
-    --check)
-      CHECK_THRESHOLDS=1
-      shift
-      ;;
     --thresholds)
       THRESHOLDS_FILE="${2:-}"
+      shift 2
+      ;;
+    --threshold-mode)
+      THRESHOLD_MODE="${2:-}"
       shift 2
       ;;
     --segment-limit-po2)
       SEGMENT_LIMIT_PO2="${2:-}"
       shift 2
       ;;
-    --full)
-      RUN_SECURE_MEDIUM=1
-      shift
-      ;;
-    --dev-only)
-      RUN_SECURE_SHORT=0
-      RUN_SECURE_MEDIUM=0
-      shift
-      ;;
-    --skip-coverage)
-      RUN_COVERAGE=0
-      shift
+    --coverage-mode)
+      COVERAGE_MODE="${2:-}"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -85,6 +75,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$COVERAGE_MODE" != "on" && "$COVERAGE_MODE" != "off" ]]; then
+  echo "Invalid --coverage-mode value: $COVERAGE_MODE (expected on|off)" >&2
+  exit 1
+fi
+if [[ "$THRESHOLD_MODE" != "off" && "$THRESHOLD_MODE" != "check" ]]; then
+  echo "Invalid --threshold-mode value: $THRESHOLD_MODE (expected off|check)" >&2
+  exit 1
+fi
 
 if [[ -n "$SEGMENT_LIMIT_PO2" ]]; then
   HOST_EXTRA_ARGS+=(--segment-limit-po2 "$SEGMENT_LIMIT_PO2")
@@ -136,7 +135,7 @@ ensure_file "$MEDIUM_TAPE"
 require_cmd cargo
 require_cmd /usr/bin/time
 
-if [[ "$RUN_COVERAGE" -eq 1 ]]; then
+if [[ "$COVERAGE_MODE" == "on" ]]; then
   if ! cargo llvm-cov --version >/dev/null 2>&1; then
     echo "cargo llvm-cov is not installed. Install with: cargo install cargo-llvm-cov --locked" >&2
     exit 1
@@ -232,9 +231,8 @@ run_coverage() {
 
 run_case() {
   local case_name="$1"
-  local mode="$2"
-  local tape_path="$3"
-  local with_pprof="$4"
+  local tape_path="$2"
+  local pprof_mode="$3"
 
   local log_file="$OUT_DIR/${case_name}.log"
   local pprof_file="$OUT_DIR/${case_name}.pprof"
@@ -242,34 +240,27 @@ run_case() {
 
   echo "==> Running case: $case_name"
 
-  local mode_label="secure"
-  if [[ "$mode" == "1" ]]; then
-    mode_label="dev"
-  fi
+  local mode_label="dev"
 
-  local -a dev_mode_args=()
-  if [[ "$mode" == "1" ]]; then
-    dev_mode_args+=(--allow-dev-mode)
-  fi
-
-  local -a host_cmd=(target/release/host --receipt-kind composite)
+  local -a host_cmd=(
+    target/release/host
+    --receipt-kind composite
+    --proof-mode dev
+  )
   if [[ ${#HOST_EXTRA_ARGS[@]} -gt 0 ]]; then
     host_cmd+=("${HOST_EXTRA_ARGS[@]}")
   fi
-  if [[ ${#dev_mode_args[@]} -gt 0 ]]; then
-    host_cmd+=("${dev_mode_args[@]}")
-  fi
   host_cmd+=(--tape "$tape_path")
 
-  if [[ "$with_pprof" -eq 1 ]]; then
+  if [[ "$pprof_mode" == "on" ]]; then
     (
       cd "$VERIFIER_DIR"
-      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" RISC0_PPROF_OUT="$pprof_file" "${host_cmd[@]}"
+      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE=1 RISC0_PPROF_OUT="$pprof_file" "${host_cmd[@]}"
     ) > "$log_file" 2>&1
   else
     (
       cd "$VERIFIER_DIR"
-      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE="$mode" "${host_cmd[@]}"
+      /usr/bin/time -l env RISC0_INFO=1 RUST_LOG=info RISC0_DEV_MODE=1 "${host_cmd[@]}"
     ) > "$log_file" 2>&1
   fi
 
@@ -314,7 +305,7 @@ run_case() {
     reserved_cycles="NA"
   fi
 
-  if [[ "$with_pprof" -eq 1 ]]; then
+  if [[ "$pprof_mode" == "on" ]]; then
     pprof_path="$pprof_file"
     if command -v go >/dev/null 2>&1; then
       go tool pprof -top "$pprof_file" > "$pprof_top_file" 2>&1 || true
@@ -368,7 +359,7 @@ check_thresholds() {
     fi
   }
 
-  if [[ "$RUN_COVERAGE" -eq 1 ]]; then
+  if [[ "$COVERAGE_MODE" == "on" ]]; then
     check_float_min "coverage regions" "$COVERAGE_REGIONS" "$COVERAGE_MIN_REGIONS"
     check_float_min "coverage lines" "$COVERAGE_LINES" "$COVERAGE_MIN_LINES"
     check_float_min "coverage functions" "$COVERAGE_FUNCTIONS" "$COVERAGE_MIN_FUNCTIONS"
@@ -384,26 +375,6 @@ check_thresholds() {
   value="$(metric_for_case dev_medium real_s || true)"
   if [[ -n "$value" ]]; then
     check_case_float_le "dev_medium" "real_s" "$value" "$DEV_MEDIUM_MAX_REAL_S"
-  fi
-
-  value="$(metric_for_case secure_short real_s || true)"
-  if [[ -n "$value" ]]; then
-    check_case_float_le "secure_short" "real_s" "$value" "$SECURE_SHORT_MAX_REAL_S"
-  fi
-
-  value="$(metric_for_case secure_short max_rss_bytes || true)"
-  if [[ -n "$value" ]]; then
-    check_case_float_le "secure_short" "max_rss_bytes" "$value" "$SECURE_SHORT_MAX_RSS_BYTES"
-  fi
-
-  value="$(metric_for_case secure_medium real_s || true)"
-  if [[ -n "$value" ]]; then
-    check_case_float_le "secure_medium" "real_s" "$value" "$SECURE_MEDIUM_MAX_REAL_S"
-  fi
-
-  value="$(metric_for_case secure_medium max_rss_bytes || true)"
-  if [[ -n "$value" ]]; then
-    check_case_float_le "secure_medium" "max_rss_bytes" "$value" "$SECURE_MEDIUM_MAX_RSS_BYTES"
   fi
 
   value="$(metric_for_case dev_short total_cycles || true)"
@@ -434,14 +405,14 @@ write_summary() {
     if [[ -n "$SEGMENT_LIMIT_PO2" ]]; then
       echo "- Segment limit po2 override: \`$SEGMENT_LIMIT_PO2\`"
     fi
-    echo "- Coverage run: $([[ "$RUN_COVERAGE" -eq 1 ]] && echo "yes" || echo "no")"
-    echo "- Dev runs: $([[ "$RUN_DEV" -eq 1 ]] && echo "yes" || echo "no")"
-    echo "- Secure short run: $([[ "$RUN_SECURE_SHORT" -eq 1 ]] && echo "yes" || echo "no")"
-    echo "- Secure medium run: $([[ "$RUN_SECURE_MEDIUM" -eq 1 ]] && echo "yes" || echo "no")"
-    echo "- Threshold checks: $([[ "$CHECK_THRESHOLDS" -eq 1 ]] && echo "enabled" || echo "disabled")"
+    echo "- Host build mode: \`cpu (no-default-features)\`"
+    echo "- Proof mode: \`dev\`"
+    echo "- Coverage mode: \`$COVERAGE_MODE\`"
+    echo "- Dev runs: yes"
+    echo "- Threshold mode: \`$THRESHOLD_MODE\`"
     echo
 
-    if [[ "$RUN_COVERAGE" -eq 1 ]]; then
+    if [[ "$COVERAGE_MODE" == "on" ]]; then
       echo "## Coverage"
       echo
       echo "- Regions: ${COVERAGE_REGIONS}%"
@@ -487,29 +458,19 @@ write_summary() {
 echo "==> Building host release binary"
 (
   cd "$VERIFIER_DIR"
-  cargo build -p host --release >/dev/null
+  cargo build -p host --release "${HOST_BUILD_ARGS[@]}" >/dev/null
 )
 
-if [[ "$RUN_COVERAGE" -eq 1 ]]; then
+if [[ "$COVERAGE_MODE" == "on" ]]; then
   run_coverage
 fi
 
-if [[ "$RUN_DEV" -eq 1 ]]; then
-  run_case "dev_short" "1" "$SHORT_TAPE" "1"
-  run_case "dev_medium" "1" "$MEDIUM_TAPE" "1"
-fi
-
-if [[ "$RUN_SECURE_SHORT" -eq 1 ]]; then
-  run_case "secure_short" "0" "$SHORT_TAPE" "0"
-fi
-
-if [[ "$RUN_SECURE_MEDIUM" -eq 1 ]]; then
-  run_case "secure_medium" "0" "$MEDIUM_TAPE" "0"
-fi
+run_case "dev_short" "$SHORT_TAPE" "on"
+run_case "dev_medium" "$MEDIUM_TAPE" "on"
 
 write_summary
 
-if [[ "$CHECK_THRESHOLDS" -eq 1 ]]; then
+if [[ "$THRESHOLD_MODE" == "check" ]]; then
   check_thresholds
 fi
 

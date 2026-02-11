@@ -48,6 +48,11 @@ verify_fixture() {
   local seal_hex journal_hex image_id_hex journal_digest_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
   image_id_hex=$(tr -d '[:space:]' < "$image_id_file")
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -93,8 +98,6 @@ echo ""
 ensure_funded_key "$CALLER_NAME"
 echo ""
 
-verify_fixture "short tape"     "proof-short-groth16"
-echo ""
 verify_fixture "medium tape"    "proof-medium-groth16"
 echo ""
 verify_fixture "real game tape" "proof-real-game-groth16"

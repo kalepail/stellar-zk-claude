@@ -2,6 +2,21 @@
 
 Date: 2026-02-09
 
+## Status Update (2026-02-10)
+Implemented from this plan:
+- `V-14` small saucer scoring (`990`)
+- `V-19` strict asteroid-cap split behavior
+- `V-22` saucer-asteroid collision handling
+- `V-08` anti-autofire shift-register fire gating
+- `V-13` fixed saucer fire reload cadence (`10` frames)
+- deterministic open-area respawn with edge padding
+
+Additional implemented parity changes:
+- Saucer bullet hard cap set to `2`
+- Saucer and ship bullet lifetime set to `72` frames
+- Saucer side-entry and immediate X-bound cull (no offscreen X grace margin)
+- Saucer spawn/fire paused while ship is not visible
+
 ## Objective
 Resolve selected variance items while keeping rules:
 - easy to understand for bot/autopilot developers
@@ -36,7 +51,8 @@ This keeps early behavior close to classic while allowing stronger pressure afte
 
 ### V-08 Ship bullet autofire behavior
 - Keep anti-autofire gating for all waves (no mode switch to hold-fire).
-- Implement original-style fire gating semantics consistently across the run.
+- Implement original-style edge-triggered fire gating semantics consistently across the run.
+- Rule uses 8-bit shift register gate (press now, not pressed previous frame).
 
 ### V-09 Ship bullet lifetime
 - Move lifetime closer to classic model.
@@ -55,8 +71,8 @@ This keeps early behavior close to classic while allowing stronger pressure afte
 
 ### V-13 Saucer firing cadence
 - Base timing should align with classic rhythm.
-- Cadence can increase as waves rise, but via gradual deterministic ramp.
-- Avoid abrupt wave-to-wave cadence jumps.
+- Use fixed deterministic reload (`10` frames) instead of randomized windows.
+- Keep cadence stable and simple unless future tuning is explicitly requested.
 
 ### V-14 Small saucer scoring
 - Switch to arcade-faithful scoring target (`990`).
@@ -82,7 +98,7 @@ This keeps early behavior close to classic while allowing stronger pressure afte
 
 ### Anti-saucer-farming policy (locked)
 - Keep rules simple: no extra anti-farm scoring modifier or per-wave saucer budget initially.
-- Rely on escalating pressure channels first (`V-03`, `V-12`, `V-13`, anti-lurk).
+- Rely on escalating pressure channels first (`V-03`, `V-12`, anti-lurk/spawn pressure).
 - Revisit only if telemetry shows dominant saucer-farming strategies.
 
 ## Asteroid Cap Decision Memo (V-19)
@@ -100,8 +116,8 @@ Reference lines:
 ### What current game does
 - Uses `ASTEROID_CAP = 27` in TS and zk (`src/game/constants.ts`, Rust constants mirror).
 - Uses a modernized wave spawn cap of `16` large asteroids (harder than original `11`).
-- Intended split behavior: if at cap, split into one child; otherwise two.
-- Actual edge case today: alive asteroid count can reach `ASTEROID_CAP + 1` due split decision being made after parent is marked dead.
+- Split behavior is now strict: if at cap, split into one child; otherwise two.
+- Current invariant: alive asteroid count never exceeds `ASTEROID_CAP`.
 
 ### Why current cap exists (practical intent)
 - Keeps entity count bounded for deterministic performance and proving cost.
@@ -117,12 +133,12 @@ Reference lines:
 ### Why this is the best fit for your stated goal
 - You explicitly want early waves human-playable and late waves harder without confusing rule switches.
 - A fixed cap keeps one simple mental model for bot developers.
-- Late-wave challenge should come from deterministic pressure ramps (saucer aim/cadence/spawn pressure and speed), not from unbounded asteroid clutter.
+- Late-wave challenge should come from deterministic pressure ramps (saucer aim/spawn pressure and speed), not from unbounded asteroid clutter.
 - This reduces risk of chaotic, low-signal "asteroid soup" while still allowing strong difficulty escalation.
 
 ### If endless-running appears in telemetry
 - Do not raise cap first.
-- First tune existing pressure channels already in scope (`V-12`, `V-13`, anti-lurk timing).
+- First tune existing pressure channels already in scope (`V-12`, anti-lurk timing, spawn pressure).
 - Only consider cap ramp (`27 -> 30`) as a last resort after telemetry confirms pressure tuning is insufficient.
 
 ## Implementation Blueprint
@@ -130,7 +146,7 @@ Reference lines:
 1. Input/Fire system (`V-08`)
 - Implement anti-autofire gate in both:
   - `src/game/AsteroidsGame.ts`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim.rs`
+  - `risc0-asteroids-verifier/asteroids-core/src/sim/game.rs`
 - Add parity tests proving identical shot spawn frames for fixed tapes.
 
 2. Projectile timing model (`V-09`, `V-10`)
@@ -144,11 +160,9 @@ Reference lines:
   - `wave >= 5`: `min(16, 10 + (wave - 4))`
 - Add progression tests validating exact wave table for waves `1..12`.
 
-4. Saucer behavior ramps (`V-12`, `V-13`)
-- Replace ad hoc thresholds with deterministic continuous formulas:
-  - accuracy pressure = `f(wave, lurk_time)`
-  - fire cadence pressure = `g(wave, lurk_time)`
-- Clamp min/max values to preserve readability and prevent pathological behavior.
+4. Saucer behavior updates (`V-12`, `V-13`)
+- Keep deterministic accuracy pressure formula for small saucers.
+- Use fixed deterministic fire reload (`10` frames) for saucers.
 - Add golden trace tests for representative waves (`1, 4, 5, 10, 20`).
 
 5. Scoring (`V-14`)
@@ -195,11 +209,11 @@ Reference lines:
 
 ## Final Locked Decisions Snapshot
 - `V-03`: hybrid wave large-count ramp (classic waves `1..4`, smooth rise to `16` by wave `10`)
-- `V-08`: anti-autofire gating retained across all waves
+- `V-08`: edge-triggered shift-register fire gate (release required between shots)
 - `V-09`: ship bullet lifetime moved near classic, deterministic
 - `V-10`: saucer bullet lifetime near classic, deterministic
 - `V-12`: small-saucer accuracy scales progressively with wave/lurk
-- `V-13`: saucer cadence scales progressively with wave/lurk
+- `V-13`: saucer fire cadence uses fixed deterministic reload (`10` frames)
 - `V-14`: small saucer score set to `990`
 - `V-19`: fixed hard asteroid cap `27`, strict no-overflow invariant
 - `V-20`: spawn invulnerability retained across all waves

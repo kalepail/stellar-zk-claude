@@ -1,0 +1,13 @@
+/target
+/benchmarks
+/checkpoints
+/claude-evolution
+/evolve/scores
+/evolve/journal/iteration-*.md
+/evolve/journal/*-output-*.log
+/evolve/journal/bench-output-*.log
+/codex-/
+/codex-tuner/runs
+/codex-tuner/records/record-*
+/codex-tuner/scripts/__pycache__/
+/codex-tuner/scripts/*.pyc

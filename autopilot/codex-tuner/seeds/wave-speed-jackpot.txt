@@ -1,0 +1,7 @@
+# capped high-ceiling seeds for wave-pace tuning
+0x7624d842
+0x2a6e8bee
+0x52326114
+0xd73b25c2
+0xd0c31716
+0x3c00c834

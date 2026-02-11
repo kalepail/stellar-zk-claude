@@ -7,7 +7,7 @@ Scope: Stellar Asteroids contract, RISC0 verifier stack, proof/test scripts, and
 
 What passed:
 - `stellar-asteroids-contract`: `cargo test --workspace --all-targets` (15/15 tests passed).
-- Testnet end-to-end integration: `stellar-asteroids-contract/scripts/deploy-and-test.sh --groth16` (24/24 checks passed).
+- Testnet end-to-end integration: `stellar-asteroids-contract/scripts/deploy-and-test.sh --proof-mode all` (24/24 checks passed).
 - Real tape replay checks: `scripts/verify-tape.ts` for `test-short`, `test-medium`, `test-real-game` all passed.
 - Verifier core: `cargo +1.93.0 test --workspace --all-targets --no-default-features` in `risc0-asteroids-verifier` passed.
 - Live prover (Vast.ai URL): successful proving for short/medium/real tapes and full benchmark matrix.
@@ -138,15 +138,14 @@ Run all of the following on every release candidate:
 - Contract unit tests: `cd stellar-asteroids-contract && cargo test --workspace --all-targets`
 - Contract integration/testnet:
   - `./scripts/verify-proofs.sh`
-  - `./scripts/deploy-and-test.sh --groth16`
+  - `./scripts/deploy-and-test.sh --proof-mode all`
 - Verifier:
   - `cd risc0-asteroids-verifier && cargo +1.93.0 test --workspace --all-targets --no-default-features`
 - Live prover:
-  - `bash scripts/bench-prover-api.sh <prover-url>`
+  - `bash scripts/bench-segment-sweep.sh <prover-url> --receipts composite --seg-floor 19 --seg-ceiling 21 --tapes short,medium,real`
   - `bash scripts/stress-test-api.sh <prover-url> --delay 1`
 - Fresh non-fixture E2E:
   - generate tape,
   - generate live Groth16 proof,
   - submit to testnet contract,
   - assert claimed + balance delta + duplicate rejection.
-
