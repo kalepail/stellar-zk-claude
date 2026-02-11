@@ -169,6 +169,13 @@ export interface GameConfig {
   seed?: number;
 }
 
+export interface GameRunRecord {
+  seed: number;
+  inputs: Uint8Array;
+  finalScore: number;
+  finalRngState: number;
+}
+
 export class AsteroidsGame {
   private readonly canvas: HTMLCanvasElement | null;
 
@@ -1472,6 +1479,20 @@ export class AsteroidsGame {
   }
   getGameSeed(): number {
     return this.gameSeed;
+  }
+
+  /** Snapshot the current recorded run (no claimant binding). */
+  getRunRecord(): GameRunRecord | null {
+    if (!this.recorder) {
+      return null;
+    }
+
+    return {
+      seed: this.gameSeed,
+      inputs: this.recorder.getInputs(),
+      finalScore: this.score,
+      finalRngState: getGameRngState(),
+    };
   }
 
   /** Build a serialized tape from the current recording. */

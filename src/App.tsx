@@ -11,7 +11,7 @@ import {
   type ProofJobPublic,
   type ProofJobStatus,
 } from "./proof/api";
-import { deserializeTape } from "./game/tape";
+import { deserializeTape, serializeTape } from "./game/tape";
 import type {
   SmartAccountConfig,
   SmartAccountRelayerMode,
@@ -170,12 +170,15 @@ function App() {
           const bytes = new Uint8Array(buf);
           const tape = deserializeTape(bytes);
           setLatestRun({
-            tape: bytes,
-            score: tape.footer.finalScore,
+            record: {
+              seed: tape.header.seed,
+              inputs: tape.inputs,
+              finalScore: tape.footer.finalScore,
+              finalRngState: tape.footer.finalRngState,
+            },
             frameCount: tape.header.frameCount,
-            seed: tape.header.seed,
-            finalRngState: tape.footer.finalRngState,
             endedAtMs: Date.now(),
+            claimantLock: tape.header.claimantAddress,
           });
           setProofError(null);
           setProofJob((current) =>
@@ -194,8 +197,33 @@ function App() {
     if (!latestRun) {
       return;
     }
-    if (latestRun.score <= 0) {
+    if (latestRun.record.finalScore <= 0) {
       setProofError("zero-score runs are not accepted for proving or token minting");
+      return;
+    }
+    if (latestRun.claimantLock && latestRun.claimantLock !== claimantAddress) {
+      setProofError(
+        `this tape is locked to claimant ${latestRun.claimantLock}; connect that wallet to submit`,
+      );
+      return;
+    }
+    if (claimantAddress.trim().length === 0) {
+      setProofError("connect a smart wallet before submitting a proof");
+      return;
+    }
+
+    let tapeBytes: Uint8Array;
+    try {
+      tapeBytes = serializeTape(
+        latestRun.record.seed,
+        latestRun.record.inputs,
+        latestRun.record.finalScore,
+        latestRun.record.finalRngState,
+        claimantAddress,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to serialize tape";
+      setProofError(message);
       return;
     }
 
@@ -203,7 +231,7 @@ function App() {
     setProofError(null);
 
     try {
-      const response = await submitProofJob(latestRun.tape);
+      const response = await submitProofJob(tapeBytes);
       setProofJob(response.job);
     } catch (error) {
       if (error instanceof ProofApiError) {
@@ -217,7 +245,7 @@ function App() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [latestRun]);
+  }, [claimantAddress, latestRun]);
 
   const connectWallet = useCallback(async () => {
     setWalletAction("connecting");
@@ -411,16 +439,21 @@ function App() {
   }, []);
 
   const proofBusy = proofJob ? !isTerminalProofStatus(proofJob.status) : false;
-  const hasPositiveScore = (latestRun?.score ?? 0) > 0;
+  const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
   const walletConnected = claimantAddress.trim().length > 0;
   const walletBusy = walletAction !== "idle";
+  const claimantLockMismatch =
+    Boolean(latestRun?.claimantLock) &&
+    walletConnected &&
+    latestRun?.claimantLock !== claimantAddress;
   const canSubmit =
     Boolean(latestRun) &&
     hasPositiveScore &&
     !isSubmitting &&
     !proofBusy &&
     walletConnected &&
-    !walletBusy;
+    !walletBusy &&
+    !claimantLockMismatch;
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
@@ -442,7 +475,7 @@ function App() {
       </section>
 
       <section className="game-panel" aria-label="Asteroids game panel">
-        <AsteroidsCanvas onGameOver={handleGameOver} claimantAddress={claimantAddress} />
+        <AsteroidsCanvas onGameOver={handleGameOver} />
       </section>
 
       <section className="proof-panel" aria-live="polite">
@@ -496,7 +529,7 @@ function App() {
           <dl className="proof-meta-grid">
             <div>
               <dt>Score</dt>
-              <dd>{latestRun.score.toLocaleString()}</dd>
+              <dd>{latestRun.record.finalScore.toLocaleString()}</dd>
             </div>
             <div>
               <dt>Frames</dt>
@@ -504,15 +537,15 @@ function App() {
             </div>
             <div>
               <dt>Seed</dt>
-              <dd>{formatHex32(latestRun.seed)}</dd>
+              <dd>{formatHex32(latestRun.record.seed)}</dd>
             </div>
             <div>
               <dt>Final RNG</dt>
-              <dd>{formatHex32(latestRun.finalRngState)}</dd>
+              <dd>{formatHex32(latestRun.record.finalRngState)}</dd>
             </div>
             <div>
               <dt>Tape Bytes</dt>
-              <dd>{latestRun.tape.byteLength.toLocaleString()}</dd>
+              <dd>{(72 + latestRun.frameCount + 12).toLocaleString()}</dd>
             </div>
             <div>
               <dt>Captured</dt>
@@ -522,13 +555,19 @@ function App() {
         ) : (
           <p className="proof-placeholder">Finish a run to capture a replay tape for proving.</p>
         )}
-        {latestRun && latestRun.score <= 0 ? (
+        {latestRun && latestRun.record.finalScore <= 0 ? (
           <p className="proof-warning">
             Zero-score runs are not accepted for proving or token minting.
           </p>
         ) : null}
         {latestRun && !walletConnected ? (
           <p className="proof-warning">Connect a smart wallet before submitting a proof.</p>
+        ) : null}
+        {latestRun && claimantLockMismatch ? (
+          <p className="proof-warning">
+            Loaded tape claimant does not match the connected wallet. Connect{" "}
+            <code>{latestRun.claimantLock}</code> to submit.
+          </p>
         ) : null}
 
         <div className="wallet-panel">

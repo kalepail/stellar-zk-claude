@@ -1,32 +1,25 @@
 import { useEffect, useRef } from "react";
+import type { GameRunRecord } from "../game/AsteroidsGame";
 import { AsteroidsGame } from "../game/AsteroidsGame";
 
 export interface CompletedGameRun {
-  tape: Uint8Array;
-  score: number;
+  record: GameRunRecord;
   frameCount: number;
-  seed: number;
-  finalRngState: number;
   endedAtMs: number;
+  claimantLock: string | null;
 }
 
 interface AsteroidsCanvasProps {
   onGameOver?: (run: CompletedGameRun) => void;
-  claimantAddress?: string;
 }
 
-export function AsteroidsCanvas({ onGameOver, claimantAddress }: AsteroidsCanvasProps) {
+export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onGameOverRef = useRef(onGameOver);
-  const claimantAddressRef = useRef(claimantAddress ?? "");
 
   useEffect(() => {
     onGameOverRef.current = onGameOver;
   }, [onGameOver]);
-
-  useEffect(() => {
-    claimantAddressRef.current = claimantAddress ?? "";
-  }, [claimantAddress]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -47,15 +40,13 @@ export function AsteroidsCanvas({ onGameOver, claimantAddress }: AsteroidsCanvas
 
       const modeNow = game.getMode();
       if (modeNow === "game-over" && modeBefore !== "game-over") {
-        const tape = game.getTape(claimantAddressRef.current);
-        if (tape) {
+        const record = game.getRunRecord();
+        if (record) {
           onGameOverRef.current?.({
-            tape,
-            score: game.getScore(),
-            frameCount: game.getFrameCount(),
-            seed: game.getGameSeed(),
-            finalRngState: game.getRngState(),
+            record,
+            frameCount: record.inputs.length,
             endedAtMs: Date.now(),
+            claimantLock: null,
           });
         }
       }
