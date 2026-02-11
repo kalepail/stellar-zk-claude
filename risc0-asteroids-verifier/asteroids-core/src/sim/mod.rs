@@ -203,7 +203,6 @@ pub struct LiveGame {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TransitionState {
-    frame_count: u32,
     score: u32,
     wave: i32,
     asteroids: usize,

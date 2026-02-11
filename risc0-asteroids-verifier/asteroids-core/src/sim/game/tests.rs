@@ -19,12 +19,13 @@ fn assert_transition_violation_at_frame(
         .expect("initial state must be valid");
 
     let mut mutate = Some(mutate);
-    for input in inputs {
+    for (idx, input) in inputs.iter().enumerate() {
+        let frame = (idx + 1) as u32;
         let before_step = game.transition_state();
         game.step(*input);
         let mut after_step = game.transition_state();
 
-        if after_step.frame_count == frame_to_mutate {
+        if frame == frame_to_mutate {
             if let Some(mutate_once) = mutate.take() {
                 mutate_once(&mut after_step);
             }
@@ -32,7 +33,7 @@ fn assert_transition_violation_at_frame(
 
         if let Err(rule) = validate_transition(&before_step, &after_step, decode_input_byte(*input))
         {
-            assert_eq!(after_step.frame_count, frame_to_mutate);
+            assert_eq!(frame, frame_to_mutate);
             assert_eq!(rule, expected);
             return;
         }

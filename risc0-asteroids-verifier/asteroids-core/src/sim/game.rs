@@ -190,7 +190,6 @@ impl Game {
 
     pub(super) fn transition_state(&self) -> TransitionState {
         TransitionState {
-            frame_count: self.frame_count,
             score: self.score,
             wave: self.wave,
             asteroids: self.asteroids.len(),
