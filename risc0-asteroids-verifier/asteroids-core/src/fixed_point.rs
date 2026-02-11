@@ -108,23 +108,24 @@ pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i
 
 #[inline]
 pub fn wrap_x_q12_4(x: i32) -> i32 {
-    if x < 0 {
-        x + WORLD_WIDTH_Q12_4
-    } else if x >= WORLD_WIDTH_Q12_4 {
-        x - WORLD_WIDTH_Q12_4
-    } else {
+    // Fast-path: positions are almost always already in-range.
+    if (x as u32) < (WORLD_WIDTH_Q12_4 as u32) {
         x
+    } else if x < 0 {
+        x + WORLD_WIDTH_Q12_4
+    } else {
+        x - WORLD_WIDTH_Q12_4
     }
 }
 
 #[inline]
 pub fn wrap_y_q12_4(y: i32) -> i32 {
-    if y < 0 {
-        y + WORLD_HEIGHT_Q12_4
-    } else if y >= WORLD_HEIGHT_Q12_4 {
-        y - WORLD_HEIGHT_Q12_4
-    } else {
+    if (y as u32) < (WORLD_HEIGHT_Q12_4 as u32) {
         y
+    } else if y < 0 {
+        y + WORLD_HEIGHT_Q12_4
+    } else {
+        y - WORLD_HEIGHT_Q12_4
     }
 }
 
