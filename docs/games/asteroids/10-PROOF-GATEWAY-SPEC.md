@@ -368,7 +368,9 @@ Job states: `queued` → `running` → `succeeded` | `failed`.
 Single-flight enforced by global semaphore (concurrency 1) + active-job check.
 
 Query param policy gates: `max_frames`, `receipt_kind`, `segment_limit_po2`,
-`proof_mode`, `verify_mode`.
+`verify_mode`.
+
+`proof_mode` is forced from `RISC0_DEV_MODE` at prover startup (not a query param).
 
 Operational defaults: `MAX_TAPE_BYTES=2097152`, `MAX_JOBS=64`,
 `JOB_TTL_SECS=86400`, `MAX_FRAMES=18000`, `MIN_SEGMENT_LIMIT_PO2=16`,
