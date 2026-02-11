@@ -5,7 +5,7 @@ This doc captures the next performance/determinism investigations to run later, 
 ## Constraints (Non-Negotiable)
 
 - Proof verification must continue to use strict replay (`verify_tape -> replay_strict`) and enforce all game rules deterministically.
-- No backwards compatibility: AST3 tapes are the only supported format (claimant address embedded in tape header; old tapes are rejected).
+- No backwards compatibility: AST3 tapes are the only supported format (v2 header, no claimant bytes, old tapes rejected).
 - Any gameplay-semantic change in Rust must be mirrored to TypeScript (sim + tape serializer) for 1:1 parity.
 - Determinism: no floats, no nondeterministic iteration, no dependence on host timing, and no data-structure reordering that changes collision resolution order.
 
@@ -123,4 +123,3 @@ When touching math/types:
 - Ensure wrap/shortest-delta behavior is identical across Rust + TS (including edge cases near 0 and world size).
 - Do not introduce float math or host-dependent randomness.
 - Preserve entity iteration order and collision resolution order (stable compaction only).
-

@@ -5,24 +5,24 @@
 Define the client-side path that:
 1. Connects a smart-account wallet via smart-account-kit.
 2. Submits a completed game tape for ZK proving.
-3. Claims the proven score on-chain via the Soroban contract.
+3. Relays the proven score on-chain (through the worker claim relay).
 4. Displays token balance and submission history.
 
 ## Current State
 
 The game engine, tape capture, proof gateway, RISC0 prover, and Soroban
-contract are all implemented. The client currently stops at "proof succeeded"
-with no wallet, no on-chain submission, and no token display.
+contract are implemented. The current frontend uses wallet-backed proof
+submission and surfaces claim relay status from the worker.
 
 ## User Flow
 
 1. User opens app, creates or connects a smart-account wallet.
 2. User plays Asteroids; tape records every frame.
-3. Game over → user submits tape to worker for proving.
+3. Game over → user submits tape to worker for proving with `x-claimant-address`.
 4. UI shows proof pipeline status (queued → proving → done).
-5. Proof succeeds → user claims score on-chain.
-6. Contract verifies proof, mints SAC tokens to player.
-7. UI shows updated balance and submission history.
+5. Proof succeeds → worker enqueues claim relay job automatically.
+6. Claim relay submits `submit_score(seal, journal_raw, claimant)` on-chain.
+7. UI shows claim status (`queued/submitting/retrying/succeeded/failed`) and tx hash when available.
 
 ---
 
@@ -61,7 +61,7 @@ packages/asteroids-score-client/
 The generated `Client` has typed methods matching each contract function:
 
 ```typescript
-client.submit_score({ player, seal, journal_raw }) → AssembledTransaction<u32>
+client.submit_score({ seal, journal_raw, claimant }) → AssembledTransaction<u32>
 client.is_claimed({ journal_digest })              → AssembledTransaction<boolean>
 client.image_id()                                  → AssembledTransaction<Buffer>
 client.router_id()                                 → AssembledTransaction<string>
@@ -207,9 +207,9 @@ const client = new ChannelsClient({
 
 ### Where Relay Logic Lives
 
-For local/dev flows, direct browser submission is acceptable.
-For production, prefer delegating transaction submission to the worker backend so
-API keys remain server-side.
+Primary path: transaction submission is delegated to the worker claim relay.
+The browser submits proof jobs; the worker performs on-chain claim relay after
+proof success.
 
 The browser should never receive privileged backend relay secrets.
 
@@ -220,28 +220,23 @@ The browser should never receive privileged backend relay secrets.
 ### Step-by-Step
 
 ```
-1. Fetch proof result from worker
-   GET /api/proofs/jobs/{id}/result
-   → { stored_at, prover_response: { result: { proof: { receipt, journal, ... } } } }
+1. Submit proof job to worker
+   POST /api/proofs/jobs (raw tape body + x-claimant-address)
 
-2. Extract seal + journal_raw from proof artifact
-   seal = prover_response.result.proof.receipt  (exact path TBD — see open questions)
-   journal_raw = pack 6 × u32 LE from journal fields
+2. Poll proof job
+   GET /api/proofs/jobs/{id}
+   → includes proof state + claim state
 
-3. Check replay: await scoreContract.is_claimed({ journal_digest })
-   If claimed → show "already claimed" message, stop
+3. On proof success
+   Worker enqueues claim job and sends claimant + journal + proof artifact to claim relay.
 
-4. Build contract call
-   const at = await scoreContract.submit_score({
-     player: walletSession.contractId,   // claimant smart wallet contract address
-     seal: Buffer.from(sealBytes),
-     journal_raw: Buffer.from(journalBytes),
-   });
+4. Track claim relay status in UI
+   claim.status: queued | submitting | retrying | succeeded | failed
+   claim.txHash: set when available
 
-5. Sign and submit with smart-account-kit
-   const result = await kit.signAndSubmit(at);
-
-6. Return tx hash + minted score
+5. Optional fallback path (manual claim)
+   If claim relay fails terminally, UI can surface claim.fallbackPayload and use it
+   to submit `submit_score({ seal, journal_raw, claimant })` from an operator tool.
 ```
 
 ### Journal Packing
@@ -279,7 +274,7 @@ const balance = await tokenClient.balance({ id: walletContractId });
 ### History
 
 Query `ScoreSubmitted` contract events via Soroban RPC `getEvents` or
-Horizon transaction history. Each entry provides: score, player, journal digest,
+Horizon transaction history. Each entry provides: score, claimant, journal digest,
 ledger timestamp, and tx hash.
 
 ---
@@ -294,10 +289,9 @@ ledger timestamp, and tx hash.
 
 ### Claim Panel
 - Appears after proof succeeds
-- "Claim Score" button (disabled without wallet)
-- Progress states: building → signing (WebAuthn prompt) → submitting → confirmed
-- Tx hash with explorer link on success
-- Error states: already claimed, verification failed, relay error
+- Shows relay lifecycle (`queued/submitting/retrying/succeeded/failed`)
+- Shows tx hash with explorer link on success
+- Shows relay error details + fallback payload action when relay fails
 
 ### History Panel
 - Past submissions, most recent first
@@ -307,7 +301,7 @@ ledger timestamp, and tx hash.
 ### Game Panel Gating
 - Game playable without wallet (tape capture still works)
 - "Connect wallet to claim scores" prompt on game-over without wallet
-- Proof submission to worker does not require wallet (only claiming does)
+- Proof submission to worker requires wallet (claimant address is mandatory)
 
 ---
 

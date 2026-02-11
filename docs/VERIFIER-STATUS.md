@@ -8,7 +8,7 @@ This doc captures the current state of the RISC0 “risk‑zero” Asteroids ver
 
 - Strict fairness: verification must prove the game was played according to the AST3 rules as implemented by the verifier (no “trust the client” outcomes).
 - Determinism: the replay must be fully deterministic (no floats, no host timing, no nondeterministic iteration).
-- Forward‑only tape format: AST3 v1 tapes only (claimant address embedded in the tape header; legacy tapes are rejected).
+- Forward‑only tape format: AST3 v2 tapes only (16-byte header, claimant not embedded in tape; legacy tapes are rejected).
 - Rust is the source of truth for the proof. Any gameplay‑semantic change must be mirrored in the TypeScript engine/serializer so the on‑screen sim and tape generation match what the proof verifies.
 
 ## What The Verifier Proves
@@ -21,7 +21,6 @@ At a high level it proves:
    - Magic/version/rules tag and reserved bytes/bits are validated.
    - CRC32 matches (tampering is rejected).
    - Frame count is bounded by `max_frames`.
-   - Claimant address is present in the header and is validated as a Stellar StrKey (no NUL padding).
 
 2. **Deterministic replay of outcomes**
    - The verifier replays from `seed + inputs` and computes `final_score`, `final_rng_state`, and `frame_count`.
@@ -63,7 +62,7 @@ How to reproduce:
 
 What is covered well today:
 
-- Tape parsing/CRC/format checks and claimant validation (unit tests cover many invalid cases).
+- Tape parsing/CRC/format checks (unit tests cover many invalid cases).
 - Strict replay rejects key classes of cheating/tampering:
   - score/RNG tampering
   - cooldown bypass
@@ -106,11 +105,11 @@ What is not “fully covered” (engineering gaps, not necessarily rule gaps):
   - Commit: `f837eeb` (`verifier-core: revert shortest_delta unsigned check`)
   - This restored the best-known cycle counts for strict verification.
 
-### Tape Claimant Threading + Parity Improvements
+### Tape Format Simplification + Parity Improvements
 
-- Ensured claimant-in-header behavior is consistently treated as the only source of claimant identity (forward-only).
-- Updated autopilot tooling to embed a valid claimant in generated tapes so generated artifacts are always provable.
-  - Commit: `c98ecd3` (`autopilot: embed claimant in generated tapes`)
+- Removed claimant bytes from the tape format and verification journal.
+- Kept claimant as an explicit submission input at gateway/contract layers.
+- Updated autopilot tooling and serializer callsites to generate claimant-free AST3 v2 tapes.
 
 ### Repo Hygiene
 
@@ -124,7 +123,7 @@ What is not “fully covered” (engineering gaps, not necessarily rule gaps):
 
 ## Confidence Statement (Honest)
 
-- **Tape integrity + unforgeability of outcome (score/RNG/frames/claimant):** very high.
+- **Tape integrity + unforgeability of outcome (score/RNG/frames):** very high.
 - **Deterministic rule enforcement (as implemented):** very high.
 - **“Absolutely no gaps whatsoever”:** high confidence, but not absolute. The remaining material risks are:
   - seed provenance policy (external to verifier)
@@ -132,4 +131,3 @@ What is not “fully covered” (engineering gaps, not necessarily rule gaps):
   - the inherent possibility of a simulator bug that passes currently-checked invariants
 
 If you want the strongest possible assurance without loosening strictness, the highest-value engineering investment is a Rust<->TS differential corpus test suite plus CI coverage, and a seed commitment protocol if seed grinding is disallowed by product rules.
-

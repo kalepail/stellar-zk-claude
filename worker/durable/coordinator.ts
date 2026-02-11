@@ -182,27 +182,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   private async loadJob(jobId: string): Promise<ProofJobRecord | null> {
-    const job = (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
-    if (!job) {
-      return null;
-    }
-
-    const hasRecoveryAttempts = typeof job.prover?.recoveryAttempts === "number";
-    const hasValidSegmentLimit =
-      typeof job.prover?.segmentLimitPo2 === "number" || job.prover?.segmentLimitPo2 === null;
-    const hasClaimMetadata = typeof job.claim?.claimantAddress === "string";
-
-    if (!hasRecoveryAttempts || !hasValidSegmentLimit || !hasClaimMetadata) {
-      console.warn(
-        `[proof-worker] dropping unsupported legacy job schema for ${jobId}; clearing stale record`,
-      );
-      await this.ctx.storage.delete(jobKey(jobId));
-      await this.releaseActiveIfMatches(jobId);
-      await this.deleteArtifact(job.tape?.key);
-      return null;
-    }
-
-    return job;
+    return (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
   }
 
   private async saveJob(job: ProofJobRecord): Promise<void> {
