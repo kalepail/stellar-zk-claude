@@ -1,0 +1,9 @@
+/target
+/benchmarks
+/checkpoints
+/claude-evolution
+/evolve/scores
+/evolve/journal/iteration-*.md
+/evolve/journal/*-output-*.log
+/evolve/journal/bench-output-*.log
+/codex-
