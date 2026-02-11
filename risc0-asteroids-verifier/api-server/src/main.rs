@@ -234,7 +234,6 @@ mod tests {
                 &[0x00],
                 0,
                 0xAABB_CCDD,
-                b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             );
         let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
             .expect_err("zero score should be rejected");
@@ -249,7 +248,6 @@ mod tests {
                 &[0x00],
                 10,
                 0xAABB_CCDD,
-                b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             );
         assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }

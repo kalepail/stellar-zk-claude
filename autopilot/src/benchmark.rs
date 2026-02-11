@@ -1,5 +1,5 @@
 use crate::bots::bot_ids;
-use crate::runner::{run_bot_with_claimant, RunMetrics};
+use crate::runner::{run_bot, RunMetrics};
 use crate::util::seed_to_hex;
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
@@ -53,7 +53,6 @@ pub struct BenchmarkConfig {
     pub seeds: Vec<u32>,
     pub max_frames: u32,
     pub objective: Objective,
-    pub claimant_address: String,
     pub out_dir: PathBuf,
     pub save_top: usize,
     pub jobs: Option<usize>,
@@ -158,10 +157,6 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<BenchmarkReport> {
     if config.bots.is_empty() {
         return Err(anyhow!("benchmark requires at least one bot"));
     }
-    if config.claimant_address.trim().is_empty() {
-        return Err(anyhow!("benchmark requires non-empty claimant_address"));
-    }
-
     fs::create_dir_all(&config.out_dir)
         .with_context(|| format!("failed creating {}", config.out_dir.display()))?;
 
@@ -178,12 +173,7 @@ pub fn run_benchmark(config: BenchmarkConfig) -> Result<BenchmarkReport> {
         .collect();
 
     let run_one = |(bot_id, seed): &(String, u32)| -> Result<InternalRun> {
-        let artifact = run_bot_with_claimant(
-            bot_id,
-            *seed,
-            config.max_frames,
-            config.claimant_address.as_bytes(),
-        )
+        let artifact = run_bot(bot_id, *seed, config.max_frames)
             .with_context(|| format!("benchmark run failed for bot={bot_id} seed={seed:#x}"))?;
         let objective_value = config.objective.run_value(&artifact.metrics);
         Ok(InternalRun {

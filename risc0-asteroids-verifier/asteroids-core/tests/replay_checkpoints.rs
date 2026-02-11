@@ -1,12 +1,7 @@
-use std::fs;
-
+use asteroids_verifier_core::rng::SeededRng;
+use asteroids_verifier_core::sim::replay;
 use asteroids_verifier_core::sim::{replay_with_checkpoints, ReplayCheckpoint};
-use asteroids_verifier_core::tape::parse_tape;
-
-fn load(path: &str) -> Vec<u8> {
-    let full = format!("../../{path}");
-    fs::read(&full).unwrap_or_else(|err| panic!("failed reading {full}: {err}"))
-}
+use asteroids_verifier_core::tape::{parse_tape, serialize_tape};
 
 fn mix_u64(hash: u64, value: u64) -> u64 {
     // FNV-1a style mix for stable fixture fingerprinting.
@@ -42,7 +37,19 @@ fn checkpoint_fingerprint(checkpoints: &[ReplayCheckpoint]) -> u64 {
 
 #[test]
 fn short_fixture_checkpoint_fingerprint_stable() {
-    let bytes = load("test-fixtures/test-short.tape");
+    let seed = 0xDEAD_BEEF;
+    let mut rng = SeededRng::new(0xA0A0_0001);
+    let mut inputs = vec![0u8; 700];
+    for input in &mut inputs {
+        *input = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let bytes = serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
     let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 50);
 
@@ -52,16 +59,28 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Updated golden fingerprint for AST3 ruleset.
+    // Golden fingerprint for generated AST3 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
-        10_036_430_449_149_217_048
+        13_845_899_089_436_327_554
     );
 }
 
 #[test]
 fn medium_fixture_checkpoint_fingerprint_stable() {
-    let bytes = load("test-fixtures/test-medium.tape");
+    let seed = 0xDEAD_BEEF;
+    let mut rng = SeededRng::new(0xA0A0_0002);
+    let mut inputs = vec![0u8; 4_500];
+    for input in &mut inputs {
+        *input = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let bytes = serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
     let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 200);
 
@@ -71,9 +90,9 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Updated golden fingerprint for AST3 ruleset.
+    // Golden fingerprint for generated AST3 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
-        11_214_824_663_140_276_594
+        10_200_522_372_937_520_498
     );
 }

@@ -1,7 +1,7 @@
 /**
  * Headless tape generator using autopilot.
  *
- * Usage: bun run scripts/generate-tape.ts [--seed <hex>] [--max-frames <n>] [--claimant <strkey>] [--output <path>]
+ * Usage: bun run scripts/generate-tape.ts [--seed <hex>] [--max-frames <n>] [--output <path>]
  *
  * Runs an autopilot game in headless mode, records inputs to a tape,
  * writes the tape to a file, then verifies it inline.
@@ -12,7 +12,6 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
-import { validateClaimantStrKeyFromUserInput } from "../shared/stellar/strkey";
 
 const DEFAULT_MAX_FRAMES = 18_000;
 
@@ -20,7 +19,6 @@ const DEFAULT_MAX_FRAMES = 18_000;
 let seed = Date.now();
 let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
 let outputPath = "";
-let claimant = "";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
@@ -30,8 +28,6 @@ for (let i = 0; i < args.length; i++) {
     maxFrames = parseInt(args[++i], 10);
   } else if (args[i] === "--output" && args[i + 1]) {
     outputPath = args[++i];
-  } else if (args[i] === "--claimant" && args[i + 1]) {
-    claimant = args[++i];
   }
 }
 
@@ -40,18 +36,9 @@ if (!outputPath) {
   outputPath = `asteroids-${seedHex}.tape`;
 }
 
-if (claimant.trim().length === 0) {
-  console.error(
-    "Missing --claimant. Tapes must embed a non-empty Stellar strkey claimant address (G... or C...).",
-  );
-  process.exit(1);
-}
-claimant = validateClaimantStrKeyFromUserInput(claimant);
-
 console.log(`Generating tape:`);
 console.log(`  Seed:       0x${seed.toString(16).padStart(8, "0")}`);
 console.log(`  Max frames: ${maxFrames}`);
-console.log(`  Claimant:   ${claimant}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();
 
@@ -91,7 +78,7 @@ console.log(`  Wave:   ${game.getWave()}`);
 console.log(`  Lives:  ${game.getLives()}`);
 console.log(`  Time:   ${elapsed.toFixed(1)}ms (${(frame / (elapsed / 1000)).toFixed(0)} fps)`);
 
-const tapeData = game.getTape(claimant);
+const tapeData = game.getTape();
 if (!tapeData) {
   console.error("Failed to get tape data");
   process.exit(1);

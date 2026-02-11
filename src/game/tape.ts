@@ -3,17 +3,16 @@
  *
  * Tape layout (little-endian):
  *
- * HEADER (72 bytes):
+ * HEADER (16 bytes):
  *   [0..3]   u32    magic           = 0x5A4B5450 ("ZKTP")
- *   [4]      u8     version         = 1
+ *   [4]      u8     version         = 2
  *   [5]      u8     rules_tag       = 3
  *   [6..7]   u8[2]  reserved        = 0
  *   [8..11]  u32    seed
  *   [12..15] u32    frameCount
- *   [16..71] u8[56] claimantAddress (ASCII Stellar strkey, no padding)
  *
  * BODY (frameCount bytes):
- *   [72 .. 72+N-1]  u8[]  One byte per frame
+ *   [16 .. 16+N-1]  u8[]  One byte per frame
  *     bit 0 (0x01): left
  *     bit 1 (0x02): right
  *     bit 2 (0x04): thrust
@@ -21,23 +20,17 @@
  *     bits 4-7: reserved (0)
  *
  * FOOTER (12 bytes):
- *   [72+N .. 72+N+3]   u32  finalScore
- *   [72+N+4 .. 72+N+7] u32  finalRngState
- *   [72+N+8 .. 72+N+11] u32  checksum (CRC-32 of header+body)
+ *   [16+N .. 16+N+3]   u32  finalScore
+ *   [16+N+4 .. 16+N+7] u32  finalRngState
+ *   [16+N+8 .. 16+N+11] u32 checksum (CRC-32 of header+body)
  */
 
 import { RULES_TAG } from "./constants";
-import {
-  validateClaimantStrKey,
-  validateClaimantStrKeyFromUserInput,
-} from "../../shared/stellar/strkey";
 
 export const TAPE_MAGIC = 0x5a4b5450;
-export const TAPE_VERSION = 1;
-
-const HEADER_SIZE = 72;
-const FOOTER_SIZE = 12;
-const CLAIMANT_ADDRESS_SIZE = 56;
+export const TAPE_VERSION = 2;
+export const TAPE_HEADER_SIZE = 16;
+export const TAPE_FOOTER_SIZE = 12;
 
 export interface TapeHeader {
   magic: number;
@@ -45,7 +38,6 @@ export interface TapeHeader {
   rulesTag: number;
   seed: number;
   frameCount: number;
-  claimantAddress: string;
 }
 
 export interface TapeFooter {
@@ -118,12 +110,9 @@ export function serializeTape(
   inputs: Uint8Array,
   finalScore: number,
   finalRngState: number,
-  claimantAddress: string,
 ): Uint8Array {
-  const normalizedClaimant = validateClaimantStrKeyFromUserInput(claimantAddress);
-
   const frameCount = inputs.length;
-  const totalSize = HEADER_SIZE + frameCount + FOOTER_SIZE;
+  const totalSize = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
   const data = new Uint8Array(totalSize);
   const view = new DataView(data.buffer);
 
@@ -135,21 +124,11 @@ export function serializeTape(
   view.setUint32(8, seed >>> 0, true);
   view.setUint32(12, frameCount, true);
 
-  // Claimant address: 56 bytes ASCII (no padding).
-  const encoder = new TextEncoder();
-  const claimantBytes = encoder.encode(normalizedClaimant);
-  if (claimantBytes.length !== CLAIMANT_ADDRESS_SIZE) {
-    throw new Error(
-      `claimantAddress must be exactly ${CLAIMANT_ADDRESS_SIZE} bytes when encoded (got ${claimantBytes.length})`,
-    );
-  }
-  data.set(claimantBytes, 16);
-
   // Body
-  data.set(inputs, HEADER_SIZE);
+  data.set(inputs, TAPE_HEADER_SIZE);
 
   // Footer
-  const footerOffset = HEADER_SIZE + frameCount;
+  const footerOffset = TAPE_HEADER_SIZE + frameCount;
   view.setUint32(footerOffset, finalScore >>> 0, true);
   view.setUint32(footerOffset + 4, finalRngState >>> 0, true);
 
@@ -161,7 +140,7 @@ export function serializeTape(
 }
 
 export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
-  if (data.length < HEADER_SIZE + FOOTER_SIZE) {
+  if (data.length < TAPE_HEADER_SIZE + TAPE_FOOTER_SIZE) {
     throw new Error("Tape too short");
   }
 
@@ -195,33 +174,20 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
     );
   }
 
-  const expectedLength = HEADER_SIZE + frameCount + FOOTER_SIZE;
+  const expectedLength = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
   if (data.length !== expectedLength) {
     throw new Error(`Tape length mismatch: expected ${expectedLength} bytes, got ${data.length}`);
   }
 
-  // Read claimant address: 56 bytes at offset 16 (no padding allowed)
-  const claimantRaw = data.subarray(16, 16 + CLAIMANT_ADDRESS_SIZE);
-  for (let i = 0; i < claimantRaw.length; i += 1) {
-    if (claimantRaw[i] === 0) {
-      throw new Error("Tape claimantAddress contains NUL bytes (padding is not allowed)");
-    }
-  }
-  let claimantAddress = "";
-  for (let i = 0; i < claimantRaw.length; i += 1) {
-    claimantAddress += String.fromCharCode(claimantRaw[i]);
-  }
-  validateClaimantStrKey(claimantAddress);
+  const inputs = data.subarray(TAPE_HEADER_SIZE, TAPE_HEADER_SIZE + frameCount);
 
-  const inputs = data.subarray(HEADER_SIZE, HEADER_SIZE + frameCount);
-
-  const footerOffset = HEADER_SIZE + frameCount;
+  const footerOffset = TAPE_HEADER_SIZE + frameCount;
   const finalScore = view.getUint32(footerOffset, true);
   const finalRngState = view.getUint32(footerOffset + 4, true);
   const storedChecksum = view.getUint32(footerOffset + 8, true);
 
   // Verify CRC-32 and reserved input bits in one pass.
-  const computed = crc32AndValidateInputs(data, HEADER_SIZE, footerOffset);
+  const computed = crc32AndValidateInputs(data, TAPE_HEADER_SIZE, footerOffset);
   if (computed >>> 0 !== storedChecksum >>> 0) {
     throw new Error(
       `CRC mismatch: stored=0x${storedChecksum.toString(16)}, computed=0x${(computed >>> 0).toString(16)}`,
@@ -229,7 +195,7 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
   }
 
   return {
-    header: { magic, version, rulesTag, seed, frameCount, claimantAddress },
+    header: { magic, version, rulesTag, seed, frameCount },
     inputs,
     footer: { finalScore, finalRngState, checksum: storedChecksum },
   };

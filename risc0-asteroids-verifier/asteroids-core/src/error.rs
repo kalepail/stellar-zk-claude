@@ -53,18 +53,6 @@ impl fmt::Display for RuleCode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClaimantAddressError {
-    Empty,
-    NotFullLength { found: usize },
-    InvalidPrefix { found: u8 },
-    InvalidBase32Char { index: usize, found: u8 },
-    TrailingBitsNonZero,
-    VersionByteMismatch { found: u8, expected: u8 },
-    ChecksumMismatch,
-    NotUtf8,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VerifyError {
     TapeTooShort { actual: usize, min: usize },
@@ -80,7 +68,6 @@ pub enum VerifyError {
     FrameCountMismatch { claimed: u32, computed: u32 },
     ScoreMismatch { claimed: u32, computed: u32 },
     RngMismatch { claimed: u32, computed: u32 },
-    InvalidClaimantAddress { error: ClaimantAddressError },
 }
 
 impl fmt::Display for VerifyError {
@@ -130,32 +117,6 @@ impl fmt::Display for VerifyError {
                     "rng mismatch: claimed=0x{claimed:08x}, computed=0x{computed:08x}"
                 )
             }
-            Self::InvalidClaimantAddress { error } => match error {
-                ClaimantAddressError::Empty => write!(f, "claimant address is empty"),
-                ClaimantAddressError::NotFullLength { found } => write!(
-                    f,
-                    "claimant address must be exactly 56 bytes (found {found})"
-                ),
-                ClaimantAddressError::InvalidPrefix { found } => write!(
-                    f,
-                    "claimant address must start with 'G' (account) or 'C' (contract); found 0x{found:02x}"
-                ),
-                ClaimantAddressError::InvalidBase32Char { index, found } => write!(
-                    f,
-                    "claimant address contains invalid base32 character at index {index}: 0x{found:02x}"
-                ),
-                ClaimantAddressError::TrailingBitsNonZero => {
-                    write!(f, "claimant address base32 has non-zero trailing bits")
-                }
-                ClaimantAddressError::VersionByteMismatch { found, expected } => write!(
-                    f,
-                    "claimant address version byte mismatch: found {found}, expected {expected}"
-                ),
-                ClaimantAddressError::ChecksumMismatch => {
-                    write!(f, "claimant address checksum mismatch")
-                }
-                ClaimantAddressError::NotUtf8 => write!(f, "claimant address is not valid UTF-8"),
-            },
         }
     }
 }
@@ -300,11 +261,6 @@ mod tests {
         }
         .to_string()
         .contains("claimed=0xabcdef01"));
-        assert!(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::NotUtf8
-        }
-            .to_string()
-            .contains("UTF-8"));
     }
 
     #[cfg(feature = "std")]

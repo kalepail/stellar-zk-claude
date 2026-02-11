@@ -1,6 +1,5 @@
 use super::*;
 use crate::tape::parse_tape;
-use std::fs;
 
 fn assert_invariant_violation(mutator: impl FnOnce(&mut Game), expected: RuleCode) {
     let mut game = Game::new(0xDEAD_BEEF);
@@ -182,9 +181,20 @@ fn live_game_snapshot_counts_match_initial_checkpoint() {
 
 #[test]
 fn checked_step_accepts_verified_fixture_inputs() {
-    let bytes = fs::read("../../test-fixtures/test-medium.tape")
-        .expect("fixture should load for checked-step test");
-    let tape = parse_tape(&bytes, 18_000).expect("fixture should parse for checked-step test");
+    let seed = 0xDEAD_BEEF;
+    let mut rng = SeededRng::new(0xA5A5_5A5A);
+    let mut inputs = vec![0u8; 4_000];
+    for byte in &mut inputs {
+        *byte = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let tape_bytes = crate::tape::serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
+    let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
     let mut live = LiveGame::new(tape.header.seed);
     for input in tape.inputs {
@@ -329,9 +339,20 @@ fn strict_replay_detects_forced_illegal_wave_advance() {
 
 #[test]
 fn strict_transition_validator_matches_downloads_fixture() {
-    let bytes =
-        fs::read("../../test-fixtures/test-real-game.tape").expect("downloads fixture should load");
-    let tape = parse_tape(&bytes, 18_000).expect("downloads fixture should parse");
+    let seed = 0x1234_5678;
+    let mut rng = SeededRng::new(0xC0DE_CAFE);
+    let mut inputs = vec![0u8; 6_000];
+    for byte in &mut inputs {
+        *byte = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let tape_bytes = crate::tape::serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
+    let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
     let mut game = Game::new(tape.header.seed);
     game.validate_invariants()

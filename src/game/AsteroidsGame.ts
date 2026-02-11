@@ -1498,16 +1498,9 @@ export class AsteroidsGame {
   }
 
   /** Build a serialized tape from the current recording. */
-  getTape(claimantAddress = ""): Uint8Array | null {
+  getTape(): Uint8Array | null {
     if (!this.recorder) return null;
-    if (claimantAddress.trim().length === 0) return null;
-    return serializeTape(
-      this.gameSeed,
-      this.recorder.getInputs(),
-      this.score,
-      getGameRngState(),
-      claimantAddress,
-    );
+    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score, getGameRngState());
   }
 
   // =========================================================================

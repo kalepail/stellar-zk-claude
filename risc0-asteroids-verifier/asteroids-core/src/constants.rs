@@ -1,7 +1,6 @@
 pub const TAPE_MAGIC: u32 = 0x5A4B5450;
-pub const TAPE_VERSION: u8 = 1;
-pub const TAPE_HEADER_SIZE: usize = 72;
-pub const CLAIMANT_ADDRESS_SIZE: usize = 56;
+pub const TAPE_VERSION: u8 = 2;
+pub const TAPE_HEADER_SIZE: usize = 16;
 pub const TAPE_FOOTER_SIZE: usize = 12;
 
 pub const MAX_FRAMES_DEFAULT: u32 = 18_000;

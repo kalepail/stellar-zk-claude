@@ -28,7 +28,6 @@ const tape = deserializeTape(data, DEFAULT_MAX_FRAMES);
 console.log(`Tape: ${tapePath}`);
 console.log(`  Seed:       0x${tape.header.seed.toString(16).padStart(8, "0")}`);
 console.log(`  Frames:     ${tape.header.frameCount}`);
-console.log(`  Claimant:   ${tape.header.claimantAddress}`);
 console.log(`  Exp. Score:  ${tape.footer.finalScore}`);
 console.log(`  Exp. RNG:   0x${tape.footer.finalRngState.toString(16).padStart(8, "0")}`);
 console.log();

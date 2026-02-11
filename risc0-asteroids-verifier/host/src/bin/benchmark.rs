@@ -25,7 +25,6 @@ struct BenchmarkJson {
     final_rng_state: u32,
     tape_checksum: u32,
     rules_digest: u32,
-    claimant_address: String,
     segments: u64,
     total_cycles: u64,
     cycles_per_frame: u64,
@@ -170,7 +169,6 @@ fn main() -> Result<()> {
             final_rng_state: journal.final_rng_state,
             tape_checksum: journal.tape_checksum,
             rules_digest: journal.rules_digest,
-            claimant_address: journal.claimant_address.clone(),
             segments,
             total_cycles,
             cycles_per_frame,
@@ -188,11 +186,9 @@ fn main() -> Result<()> {
     println!("  Final RNG:     0x{:08x}", journal.final_rng_state);
     println!("  Tape checksum: 0x{:08x}", journal.tape_checksum);
     println!("  Rules digest:  0x{:08x}", journal.rules_digest);
-    println!("  Claimant:      {}", journal.claimant_address);
     println!("  Segments:      {}", segments);
     println!("  Total cycles:  {}", total_cycles);
     println!("  Cycles/frame:  {}", cycles_per_frame);
 
     Ok(())
 }
-

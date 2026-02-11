@@ -63,7 +63,7 @@ wait_for_idle() {
 
 # Parse a ZKTP binary tape file header.
 # Args: $1 = path to .tape file
-# Outputs: "frames score seed size_bytes claimant" on stdout
+# Outputs: "frames score seed size_bytes" on stdout
 read_tape_header() {
   local tape_path="$1"
   python3 - "$tape_path" << 'PYEOF'
@@ -77,19 +77,7 @@ if magic != 0x5A4B5450:
     sys.exit(1)
 seed    = struct.unpack_from('<I', data, 8)[0]
 frames  = struct.unpack_from('<I', data, 12)[0]
-score   = struct.unpack_from('<I', data, 72 + frames)[0]
-claimant_raw = data[16:72]
-if len(claimant_raw) != 56:
-    print('ERROR: invalid tape: missing claimant bytes', file=sys.stderr)
-    sys.exit(1)
-if any(b == 0 for b in claimant_raw):
-    print('ERROR: invalid tape: claimant contains NUL padding', file=sys.stderr)
-    sys.exit(1)
-try:
-    claimant_s = claimant_raw.decode('ascii')
-except Exception:
-    print('ERROR: invalid tape: claimant is not ASCII', file=sys.stderr)
-    sys.exit(1)
-print(f'{frames} {score} {seed} {len(data)} {claimant_s}')
+score   = struct.unpack_from('<I', data, 16 + frames)[0]
+print(f'{frames} {score} {seed} {len(data)}')
 PYEOF
 }

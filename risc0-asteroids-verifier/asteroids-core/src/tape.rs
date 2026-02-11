@@ -1,10 +1,8 @@
 use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{
-    CLAIMANT_ADDRESS_SIZE, RULES_TAG, TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION,
-};
-use crate::error::{ClaimantAddressError, VerifyError};
+use crate::constants::{RULES_TAG, TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION};
+use crate::error::VerifyError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapeHeader {
@@ -13,7 +11,6 @@ pub struct TapeHeader {
     pub rules_tag: u8,
     pub seed: u32,
     pub frame_count: u32,
-    pub claimant_address: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,27 +83,6 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
     let seed = read_u32_le(bytes, 8);
     let frame_count = read_u32_le(bytes, 12);
 
-    // Read claimant address: 56 bytes at offset 16 (no padding allowed).
-    let claimant_raw = &bytes[16..16 + CLAIMANT_ADDRESS_SIZE];
-    let claimant_end = claimant_raw
-        .iter()
-        .rposition(|&b| b != 0)
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    if claimant_end == 0 {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::Empty,
-        });
-    }
-    if claimant_end != CLAIMANT_ADDRESS_SIZE {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::NotFullLength { found: claimant_end },
-        });
-    }
-
-    validate_claimant_strkey(claimant_raw)?;
-    let claimant_address = claimant_raw.to_vec();
-
     if frame_count == 0 || frame_count > max_frames {
         return Err(VerifyError::FrameCountOutOfRange {
             frame_count,
@@ -145,7 +121,6 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
             rules_tag,
             seed,
             frame_count,
-            claimant_address,
         },
         inputs,
         footer: TapeFooter {
@@ -156,13 +131,7 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
     })
 }
 
-pub fn serialize_tape(
-    seed: u32,
-    inputs: &[u8],
-    final_score: u32,
-    final_rng_state: u32,
-    claimant_address: &[u8],
-) -> Vec<u8> {
+pub fn serialize_tape(seed: u32, inputs: &[u8], final_score: u32, final_rng_state: u32) -> Vec<u8> {
     let total_len = TAPE_HEADER_SIZE + inputs.len() + TAPE_FOOTER_SIZE;
     let mut data = vec![0u8; total_len];
 
@@ -173,11 +142,6 @@ pub fn serialize_tape(
     data[7] = 0;
     write_u32_le(&mut data, 8, seed);
     write_u32_le(&mut data, 12, inputs.len() as u32);
-
-    // Claimant address: 56 bytes at offset 16. Shorter inputs will produce an
-    // invalid tape (rejected by parse_tape).
-    let claimant_len = claimant_address.len().min(CLAIMANT_ADDRESS_SIZE);
-    data[16..16 + claimant_len].copy_from_slice(&claimant_address[..claimant_len]);
 
     let body_start = TAPE_HEADER_SIZE;
     let body_end = body_start + inputs.len();
@@ -205,131 +169,6 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
 #[inline]
 fn write_u32_le(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-const STRKEY_LEN: usize = CLAIMANT_ADDRESS_SIZE;
-const STRKEY_RAW_LEN: usize = 35; // version (1) + payload (32) + crc16 (2)
-
-const STRKEY_VERSION_ACCOUNT_ID: u8 = 48; // 'G...'
-const STRKEY_VERSION_CONTRACT_ID: u8 = 16; // 'C...'
-
-fn validate_claimant_strkey(claimant: &[u8]) -> Result<(), VerifyError> {
-    if claimant.is_empty() {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::Empty,
-        });
-    }
-    if claimant.len() != STRKEY_LEN {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::NotFullLength {
-                found: claimant.len(),
-            },
-        });
-    }
-
-    // Prefix determines the expected version byte.
-    let (expected_version, _ty) = match claimant[0] {
-        b'G' => (STRKEY_VERSION_ACCOUNT_ID, "account"),
-        b'C' => (STRKEY_VERSION_CONTRACT_ID, "contract"),
-        other => {
-            return Err(VerifyError::InvalidClaimantAddress {
-                error: ClaimantAddressError::InvalidPrefix { found: other },
-            });
-        }
-    };
-
-    // Base32 decode to raw bytes.
-    let mut out = [0u8; STRKEY_RAW_LEN];
-    let mut out_len = 0usize;
-    let mut buffer: u32 = 0;
-    let mut bits: u8 = 0;
-
-    for (index, &ch) in claimant.iter().enumerate() {
-        let val = base32_value(ch).ok_or(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::InvalidBase32Char {
-                index,
-                found: ch,
-            },
-        })?;
-
-        buffer = (buffer << 5) | (val as u32);
-        bits += 5;
-
-        while bits >= 8 {
-            bits -= 8;
-
-            if out_len >= out.len() {
-                // Should never happen for 56-char inputs.
-                return Err(VerifyError::InvalidClaimantAddress {
-                    error: ClaimantAddressError::TrailingBitsNonZero,
-                });
-            }
-
-            out[out_len] = ((buffer >> bits) & 0xFF) as u8;
-            out_len += 1;
-
-            if bits == 0 {
-                buffer = 0;
-            } else {
-                buffer &= (1u32 << bits) - 1;
-            }
-        }
-    }
-
-    if bits != 0 || buffer != 0 {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::TrailingBitsNonZero,
-        });
-    }
-
-    if out_len != out.len() {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::TrailingBitsNonZero,
-        });
-    }
-
-    if out[0] != expected_version {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::VersionByteMismatch {
-                found: out[0],
-                expected: expected_version,
-            },
-        });
-    }
-
-    let stored_crc = u16::from_le_bytes([out[STRKEY_RAW_LEN - 2], out[STRKEY_RAW_LEN - 1]]);
-    let computed_crc = crc16_xmodem(&out[..STRKEY_RAW_LEN - 2]);
-    if stored_crc != computed_crc {
-        return Err(VerifyError::InvalidClaimantAddress {
-            error: ClaimantAddressError::ChecksumMismatch,
-        });
-    }
-
-    Ok(())
-}
-
-#[inline]
-fn base32_value(ch: u8) -> Option<u8> {
-    match ch {
-        b'A'..=b'Z' => Some(ch - b'A'),
-        b'2'..=b'7' => Some(ch - b'2' + 26),
-        _ => None,
-    }
-}
-
-fn crc16_xmodem(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    for &byte in data {
-        crc ^= (byte as u16) << 8;
-        for _ in 0..8 {
-            crc = if (crc & 0x8000) != 0 {
-                (crc << 1) ^ 0x1021
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
 }
 
 const CRC_TABLE: [u32; 256] = build_crc_table();
@@ -398,9 +237,6 @@ fn crc32_and_validate_inputs(
 mod tests {
     use super::*;
 
-    const CANONICAL_G: &[u8] = b"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V";
-    const CANONICAL_C: &[u8] = b"CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
-
     fn footer_offset(frame_count: usize) -> usize {
         TAPE_HEADER_SIZE + frame_count
     }
@@ -420,7 +256,7 @@ mod tests {
     #[test]
     fn roundtrip_small_tape() {
         let inputs = [0x00u8, 0x09u8, 0x06u8];
-        let bytes = serialize_tape(0xABCD_1234, &inputs, 777, 0x1111_2222, CANONICAL_C);
+        let bytes = serialize_tape(0xABCD_1234, &inputs, 777, 0x1111_2222);
         let tape = parse_tape(&bytes, 100).unwrap();
 
         assert_eq!(tape.header.seed, 0xABCD_1234);
@@ -441,7 +277,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_magic() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes[0] ^= 0x01;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -451,7 +287,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_version() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes[4] = TAPE_VERSION + 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -461,8 +297,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_rules_tag() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
-        bytes[5] = 255; // unknown tag
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[5] = 255;
         assert!(matches!(
             parse_tape(&bytes, 100),
             Err(VerifyError::UnknownRulesTag { found: 255 })
@@ -470,19 +306,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_zero_rules_tag() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
-        bytes[5] = 0; // legacy tape
-        assert!(matches!(
-            parse_tape(&bytes, 100),
-            Err(VerifyError::UnknownRulesTag { found: 0 })
-        ));
-    }
-
-    #[test]
     fn rejects_nonzero_header_reserved_bytes() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
-        bytes[6] = 1; // reserved byte [6]
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[6] = 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
             Err(VerifyError::HeaderReservedNonZero)
@@ -491,7 +317,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_frame_count() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -504,7 +330,7 @@ mod tests {
 
     #[test]
     fn rejects_frame_count_above_max() {
-        let bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         assert!(matches!(
             parse_tape(&bytes, 0),
             Err(VerifyError::FrameCountOutOfRange {
@@ -516,7 +342,7 @@ mod tests {
 
     #[test]
     fn rejects_trailing_bytes_beyond_declared_frame_count() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes.push(0);
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -526,8 +352,7 @@ mod tests {
 
     #[test]
     fn rejects_shorter_than_declared_frame_count() {
-        let mut bytes =
-            serialize_tape(0xABCD_1234, &[0x00u8, 0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8, 0x00u8], 0, 0x1111_2222);
         bytes.pop();
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -537,7 +362,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_input_bits_nonzero() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         bytes[TAPE_HEADER_SIZE] = 0x80;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -550,7 +375,7 @@ mod tests {
 
     #[test]
     fn rejects_crc_mismatch() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222, CANONICAL_C);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
         let checksum_offset = footer_offset(1) + 8;
         bytes[checksum_offset] ^= 0x01;
         assert!(matches!(
@@ -560,68 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn claimant_g_address_roundtrips() {
-        let g_addr = CANONICAL_G;
-        assert_eq!(g_addr.len(), CLAIMANT_ADDRESS_SIZE);
-        let inputs = [0x00u8, 0x01];
-        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, g_addr);
-        let tape = parse_tape(&bytes, 100).unwrap();
-        assert_eq!(tape.header.claimant_address, g_addr.to_vec());
-    }
-
-    #[test]
-    fn claimant_c_address_roundtrips() {
-        let c_addr = CANONICAL_C;
-        assert_eq!(c_addr.len(), CLAIMANT_ADDRESS_SIZE);
-        let inputs = [0x00u8, 0x01];
-        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, c_addr);
-        let tape = parse_tape(&bytes, 100).unwrap();
-        assert_eq!(tape.header.claimant_address, c_addr.to_vec());
-    }
-
-    #[test]
-    fn claimant_empty_is_rejected() {
-        let inputs = [0x00u8, 0x01];
-        let bytes = serialize_tape(0x1111, &inputs, 42, 0x2222, b"");
-        assert!(matches!(
-            parse_tape(&bytes, 100),
-            Err(VerifyError::InvalidClaimantAddress {
-                error: ClaimantAddressError::Empty
-            })
-        ));
-    }
-
-    #[test]
-    fn claimant_shorter_than_56_bytes_is_rejected() {
-        let short = b"GSHORT";
-        let inputs = [0x00u8];
-        let bytes = serialize_tape(0x1111, &inputs, 0, 0x2222, short);
-        assert!(matches!(
-            parse_tape(&bytes, 100),
-            Err(VerifyError::InvalidClaimantAddress {
-                error: ClaimantAddressError::NotFullLength { .. }
-            })
-        ));
-    }
-
-    #[test]
-    fn claimant_invalid_checksum_is_rejected() {
-        let invalid = b"GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW";
-        assert_eq!(invalid.len(), CLAIMANT_ADDRESS_SIZE);
-        let inputs = [0x00u8];
-        let bytes = serialize_tape(0x1111, &inputs, 0, 0x2222, invalid);
-        assert!(matches!(
-            parse_tape(&bytes, 100),
-            Err(VerifyError::InvalidClaimantAddress {
-                error: ClaimantAddressError::ChecksumMismatch
-            })
-        ));
-    }
-
-    #[test]
     fn serialize_tape_writes_crc_over_header_and_body() {
         let inputs = [0x01u8, 0x02u8, 0x04u8, 0x08u8];
-        let bytes = serialize_tape(0xABCD_1234, &inputs, 77, 0xCAFEBABE, CANONICAL_C);
+        let bytes = serialize_tape(0xABCD_1234, &inputs, 77, 0xCAFEBABE);
         let checksum_offset = footer_offset(inputs.len()) + 8;
         let stored = u32::from_le_bytes([
             bytes[checksum_offset],

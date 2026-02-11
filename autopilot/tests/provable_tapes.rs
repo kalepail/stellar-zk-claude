@@ -7,11 +7,11 @@ fn all_bots_generate_provable_tapes_on_smoke_seed() -> Result<()> {
     let seed = 0xDEAD_BEEF;
     for bot in bot_ids() {
         // Keep this light: it runs every `cargo test` and touches every bot.
-        let artifact = run_bot(bot, seed, 300)?;
-        assert!(artifact.metrics.frame_count > 0, "bot={bot}");
-        assert_eq!(artifact.metrics.bot_id, bot, "bot id mismatch for {bot}");
-        assert!(artifact.tape.len() > 72 + 12, "tape too small for {bot}");
-    }
+            let artifact = run_bot(bot, seed, 300)?;
+            assert!(artifact.metrics.frame_count > 0, "bot={bot}");
+            assert_eq!(artifact.metrics.bot_id, bot, "bot id mismatch for {bot}");
+            assert!(artifact.tape.len() > 16 + 12, "tape too small for {bot}");
+        }
     Ok(())
 }
 
@@ -34,7 +34,7 @@ fn representative_bots_generate_provable_tapes_on_multiple_seeds() -> Result<()>
                 "bot id mismatch for {bot} seed={seed:#x}"
             );
             assert!(
-                artifact.tape.len() > 72 + 12,
+                artifact.tape.len() > 16 + 12,
                 "tape too small for {bot} seed={seed:#x}"
             );
         }
@@ -65,7 +65,6 @@ fn benchmark_smoke_outputs_expected_metadata() -> Result<()> {
         seeds: vec![0xDEAD_BEEF, 0xC0FF_EE11],
         max_frames: 900,
         objective: Objective::Hybrid,
-        claimant_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V".to_string(),
         out_dir: tmp.path().to_path_buf(),
         save_top: 1,
         jobs: None,

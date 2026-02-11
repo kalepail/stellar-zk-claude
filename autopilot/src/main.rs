@@ -6,7 +6,7 @@ use rust_autopilot::benchmark::{resolve_bots, run_benchmark, BenchmarkConfig, Ob
 use rust_autopilot::bots::{bot_ids, bot_manifest_entries, create_bot, describe_bots};
 use rust_autopilot::claude::lab::{run_multi_generation, EvolvedConfig};
 use rust_autopilot::codex_lab::{collect_run_intel, default_codex_output_dir, run_learning_cycle};
-use rust_autopilot::runner::{run_bot_with_claimant, write_tape};
+use rust_autopilot::runner::{run_bot, write_tape};
 use rust_autopilot::util::{parse_seed, parse_seed_csv, parse_seed_file, seed_to_hex};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,9 +18,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
     about = "Rust autopilot lab for deterministic Asteroids tape generation and benchmarking"
 )]
 struct Cli {
-    /// Claimant address embedded in generated tapes (56-char Stellar strkey, G... or C...)
-    #[arg(long, default_value = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V")]
-    claimant_address: String,
     #[command(subcommand)]
     command: Commands,
 }
@@ -135,11 +132,7 @@ impl From<CliObjective> for Objective {
 }
 
 fn main() -> Result<()> {
-    let Cli {
-        claimant_address,
-        command,
-    } = Cli::parse();
-    let claimant_address = claimant_address.trim().to_string();
+    let Cli { command } = Cli::parse();
 
     match command {
         Commands::ListBots => {
@@ -172,8 +165,7 @@ fn main() -> Result<()> {
                 return Err(anyhow!("unknown bot '{bot}'. available: {available}"));
             }
             let seed = parse_seed(&seed)?;
-            let artifact =
-                run_bot_with_claimant(&bot, seed, max_frames, claimant_address.as_bytes())?;
+            let artifact = run_bot(&bot, seed, max_frames)?;
             let output_path = output.unwrap_or_else(|| {
                 PathBuf::from(format!(
                     "checkpoints/{}-{}-score{}-frames{}.tape",
@@ -241,7 +233,6 @@ fn main() -> Result<()> {
                 seeds,
                 max_frames,
                 objective,
-                claimant_address: claimant_address.clone(),
                 out_dir: out_dir.clone(),
                 save_top,
                 jobs,
