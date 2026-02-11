@@ -145,14 +145,10 @@ pub fn shortest_delta_q12_4(from: i32, to: i32, size: i32) -> i32 {
     let mut delta = to - from;
     let half = size >> 1;
 
-    // Fast-path: most deltas are already in [-half, half]. Use an unsigned range
-    // check to avoid the second compare on the common case.
-    //
-    // Note: `size` is always even in this codebase (world dimensions), so
-    // `2*half == size`.
-    let shifted = delta + half;
-    if (shifted as u32) > (size as u32) {
-        delta = if delta > 0 { delta - size } else { delta + size };
+    if delta > half {
+        delta -= size;
+    } else if delta < -half {
+        delta += size;
     }
 
     delta
