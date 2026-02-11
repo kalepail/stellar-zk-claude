@@ -31,8 +31,9 @@ jobs and consume expensive GPU time.
       Zero Trust application policy on the tunnel.
 - [ ] **Verify `RISC0_DEV_MODE=0`** on the prover instance. Dev mode generates
       fake proofs that would pass the mock verifier but not the Groth16 verifier.
-- [ ] **Verify `PROOF_MODE_POLICY=secure-only`** on the prover instance so
-      clients cannot request `proof_mode=dev`.
+- [ ] **Verify the prover does not accept a client-controlled dev-proof override.**
+      The api-server must force proof mode from `RISC0_DEV_MODE` (dev receipts only
+      when `RISC0_DEV_MODE=1`), and production must run with `RISC0_DEV_MODE=0`.
 - [ ] **Verify `ALLOW_INSECURE_PROVER_URL=0`** in wrangler.jsonc (already the
       default). The worker must communicate with the prover over HTTPS only.
 - [ ] **Update `PROVER_BASE_URL`** in wrangler.jsonc from the placeholder
@@ -523,7 +524,5 @@ anything to mainnet so all deployed config points to the final names.
 | Env Var | Required Value for Mainnet |
 |---|---|
 | `RISC0_DEV_MODE` | `0` |
-| `PROOF_MODE_POLICY` | `secure-only` |
 | `ALLOW_INSECURE_PROVER_URL` | `0` |
-| `PROVER_RECEIPT_KIND` | `groth16` |
 | `NETWORK` | `mainnet` (in deployment scripts) |
