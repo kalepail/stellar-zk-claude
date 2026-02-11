@@ -234,9 +234,9 @@ The browser should never receive privileged backend relay secrets.
    claim.status: queued | submitting | retrying | succeeded | failed
    claim.txHash: set when available
 
-5. Optional fallback path (manual claim)
-   If claim relay fails terminally, UI can surface claim.fallbackPayload and use it
-   to submit `submit_score({ seal, journal_raw, claimant })` from an operator tool.
+5. Terminal relay failures
+   If claim relay fails terminally, UI surfaces `claim.lastError` and keeps the job
+   in failed claim state. Retry is done by re-running proof submission.
 ```
 
 ### Journal Packing
@@ -291,7 +291,7 @@ ledger timestamp, and tx hash.
 - Appears after proof succeeds
 - Shows relay lifecycle (`queued/submitting/retrying/succeeded/failed`)
 - Shows tx hash with explorer link on success
-- Shows relay error details + fallback payload action when relay fails
+- Shows relay error details when relay fails
 
 ### History Panel
 - Past submissions, most recent first

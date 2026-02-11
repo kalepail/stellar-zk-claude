@@ -37,14 +37,6 @@ export interface ProverTracking {
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
 
-export interface ClaimFallbackPayload {
-  claimantAddress: string;
-  journalRawHex: string;
-  journalDigestHex: string;
-  proofArtifactKey: string;
-  note: string;
-}
-
 export interface ClaimTracking {
   claimantAddress: string;
   status: ClaimStatus;
@@ -54,7 +46,6 @@ export interface ClaimTracking {
   nextRetryAt: string | null;
   submittedAt: string | null;
   txHash: string | null;
-  fallbackPayload: ClaimFallbackPayload | null;
 }
 
 export interface ProofJournal {

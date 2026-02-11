@@ -167,13 +167,6 @@ interface ProofJobRecord {
     nextRetryAt: string | null;
     submittedAt: string | null;
     txHash: string | null;
-    fallbackPayload: {
-      claimantAddress: string;
-      journalRawHex: string;
-      journalDigestHex: string;
-      proofArtifactKey: string;
-      note: string;
-    } | null;
   };
   result: {
     artifactKey: string;       // R2 key to result.json

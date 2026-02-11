@@ -718,20 +718,6 @@ function App() {
                 <strong>Claim Relay:</strong> {proofJob.claim.lastError}
               </p>
             ) : null}
-            {proofJob.claim.fallbackPayload ? (
-              <button
-                type="button"
-                onClick={() => {
-                  const payload = JSON.stringify(proofJob.claim.fallbackPayload, null, 2);
-                  const blob = new Blob([payload], { type: "application/json" });
-                  const url = URL.createObjectURL(blob);
-                  window.open(url, "_blank");
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                Open Manual Claim Payload
-              </button>
-            ) : null}
             {proofJob.error ? (
               <p className="proof-error-inline">
                 <strong>Failure:</strong> {proofJob.error}

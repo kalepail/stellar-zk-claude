@@ -14,7 +14,6 @@ import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
 import type {
-  ClaimFallbackPayload,
   CreateJobResult,
   ProofJobRecord,
   ProofResultSummary,
@@ -29,12 +28,6 @@ import {
   retryDelaySeconds,
   safeErrorMessage,
 } from "../utils";
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
@@ -291,7 +284,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         nextRetryAt: null,
         submittedAt: null,
         txHash: null,
-        fallbackPayload: null,
       },
       error: null,
     };
@@ -433,7 +425,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.status = "queued";
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
-    job.claim.fallbackPayload = null;
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
@@ -467,7 +458,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.claim.status = "failed";
       job.claim.lastError = `proof failed before on-chain claim: ${reason}`;
       job.claim.nextRetryAt = null;
-      job.claim.fallbackPayload = null;
     }
 
     await this.saveJob(job);
@@ -478,43 +468,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
     }
     return job;
-  }
-
-  private async buildClaimFallbackPayload(
-    job: ProofJobRecord,
-    note: string,
-  ): Promise<ClaimFallbackPayload | null> {
-    if (!job.result?.summary) {
-      return null;
-    }
-
-    const journal = job.result.summary.journal;
-    const journalRaw = new Uint8Array(24);
-    const view = new DataView(journalRaw.buffer);
-    view.setUint32(0, journal.seed >>> 0, true);
-    view.setUint32(4, journal.frame_count >>> 0, true);
-    view.setUint32(8, journal.final_score >>> 0, true);
-    view.setUint32(12, journal.final_rng_state >>> 0, true);
-    view.setUint32(16, journal.tape_checksum >>> 0, true);
-    view.setUint32(20, journal.rules_digest >>> 0, true);
-
-    let digestBytes: Uint8Array;
-    try {
-      digestBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", journalRaw));
-    } catch (error) {
-      console.warn(
-        `[proof-worker] failed hashing journal for fallback payload: ${safeErrorMessage(error)}`,
-      );
-      return null;
-    }
-
-    return {
-      claimantAddress: job.claim.claimantAddress,
-      journalRawHex: bytesToHex(journalRaw),
-      journalDigestHex: bytesToHex(digestBytes),
-      proofArtifactKey: job.result.artifactKey,
-      note,
-    };
   }
 
   private async enqueueClaimJob(jobId: string): Promise<void> {
@@ -540,10 +493,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.claim.status = "failed";
       job.claim.lastError = `failed enqueueing claim job: ${safeErrorMessage(error)}`;
       job.claim.nextRetryAt = null;
-      job.claim.fallbackPayload = await this.buildClaimFallbackPayload(
-        job,
-        "relay queue enqueue failed; submit manually",
-      );
       await this.saveJob(job);
     }
   }
@@ -605,7 +554,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.txHash = txHash;
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
-    job.claim.fallbackPayload = null;
     job.updatedAt = nowIso();
     await this.saveJob(job);
     return job;
@@ -623,10 +571,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.status = "failed";
     job.claim.lastError = reason;
     job.claim.nextRetryAt = null;
-    job.claim.fallbackPayload = await this.buildClaimFallbackPayload(
-      job,
-      "relay claim failed; submit manually",
-    );
     job.updatedAt = nowIso();
     await this.saveJob(job);
     return job;
