@@ -77,11 +77,11 @@ SSH into your instance and build (replace the path with your actual `WORKDIR`):
 ```bash
 cd <WORKDIR>/risc0-asteroids-verifier
 
-# Default build (includes CUDA acceleration):
+# CPU-default build (local/dev):
 cargo build --locked --release -p api-server
 
-# CPU-only (for testing without GPU):
-cargo build --locked --release -p api-server --no-default-features
+# CUDA build (Vast/prod GPU):
+cargo build --locked --release -p api-server --features cuda
 ```
 
 The first build will take a while (~15-30 min depending on hardware) because it compiles the RISC Zero zkVM guest ELF. Subsequent builds use incremental compilation and are much faster.
@@ -93,25 +93,28 @@ The release binary is at `target/release/api-server`.
 ```bash
 cd <WORKDIR>/risc0-asteroids-verifier
 
-# Minimal (with API key auth):
+# Minimal CPU run (with API key auth):
 API_KEY='your-strong-random-secret' cargo run --release -p api-server
 
 # Or run the binary directly:
 API_KEY='your-strong-random-secret' ./target/release/api-server
 
-# With full env config:
+# CUDA run (recommended on Vast/prod GPU):
+API_KEY='your-strong-random-secret' cargo run --release -p api-server --features cuda
+
+# With full env config (CUDA):
 API_KEY='your-strong-random-secret' \
 RUST_LOG=info \
 RISC0_DEV_MODE=0 \
 MAX_FRAMES=18000 \
-cargo run --release -p api-server
+cargo run --release -p api-server --features cuda
 ```
 
 Verify it's running and confirm the accelerator:
 
 ```bash
 curl -s http://127.0.0.1:8080/health | jq '.accelerator'
-# Should print "cuda" on GPU instances, "cpu" if built with --no-default-features
+# "cuda" only when built with --features cuda; otherwise "cpu"
 ```
 
 ### 5. Recommended production run (supervisord)
@@ -148,6 +151,28 @@ If you update `/etc/stellar-zk/api-server.env`, apply changes with:
 
 ```bash
 supervisorctl restart risc0-asteroids-api
+```
+
+### 5b. Full prover state reset (flush jobs DB + artifacts)
+
+If the persisted job store is in a bad state (for example after schema drift),
+you can wipe all prover job state and start fresh:
+
+```bash
+cd <WORKDIR>/risc0-asteroids-verifier
+sudo bash deploy/reset-prover-state.sh
+```
+
+This deletes:
+- `/var/lib/stellar-zk/prover/jobs.db*`
+- `/var/lib/stellar-zk/prover/results/*`
+- `/var/lib/stellar-zk/prover/api-server.log`
+- `/var/lib/stellar-zk/prover/api-server.err`
+
+Use `--yes` to skip confirmation:
+
+```bash
+sudo bash deploy/reset-prover-state.sh --yes
 ```
 
 ### 6. Expose via Cloudflare Tunnel
@@ -194,9 +219,11 @@ Use the tunnel URL as `PROVER_BASE_URL` in your Cloudflare Worker config. For mo
 
 ### Authentication
 
-If `API_KEY` is set, all `/api/*` routes require either:
+`API_KEY` is required by default, and all `/api/*` routes require either:
 - `x-api-key: <API_KEY>` header, or
 - `Authorization: Bearer <API_KEY>` header.
+
+For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
 
 `/health` is always open.
 
@@ -278,9 +305,11 @@ See `api-server/.env.example` for all options. Key variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_BIND_ADDR` | `0.0.0.0:8080` | Listen address |
-| `API_KEY` | _(empty)_ | Shared secret for `/api/*` auth |
+| `API_KEY` | `replace-with-a-strong-random-secret` | Shared secret for `/api/*` auth (required in production) |
 | `RUST_LOG` | `info` | Log level |
 | `RISC0_DEV_MODE` | `0` | Set to `1` for fake proofs (testing only) |
+| `API_KEY_MIN_LENGTH` | `32` | Minimum accepted `API_KEY` length |
+| `ALLOW_MISSING_API_KEY` | `0` | Local-only escape hatch; only valid with `RISC0_DEV_MODE=1` |
 | `MAX_TAPE_BYTES` | `2097152` | Max tape payload size (2 MB) |
 | `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |

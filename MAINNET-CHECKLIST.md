@@ -39,6 +39,14 @@ jobs and consume expensive GPU time.
 - [ ] **Update `PROVER_BASE_URL`** in wrangler.jsonc from the placeholder
       `https://replace-with-your-prover.example.com` to the actual tunnel URL.
       Alternatively store it as a Wrangler secret.
+- [ ] **Run automated preflight checks** before every deploy:
+      ```bash
+      WORKER_CONFIG=wrangler.jsonc \
+      PROVER_ENV=risc0-asteroids-verifier/api-server/.env \
+      ./scripts/mainnet-security-preflight.sh
+      ```
+      This catches placeholder URLs, insecure transport flags, weak/missing
+      API key config, and dev-mode leaks early.
 
 ---
 
@@ -300,7 +308,8 @@ Production readiness for the Vast.ai prover server.
       cd <your-clone>/risc0-asteroids-verifier
 
       # 1. Build first (the service runs the compiled binary, not cargo run)
-      cargo build --locked --release -p api-server
+      #    NOTE: CPU is default; CUDA must be enabled explicitly for Vast/prod.
+      cargo build --locked --release -p api-server --features cuda
 
       # 2. Install supervisord config and env file
       mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover

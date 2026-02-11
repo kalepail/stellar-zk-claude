@@ -257,7 +257,7 @@ TIMED_OUT_PROOF_KILL_SECS=60
 Restart via supervisord:
 
 ```bash
-supervisorctl restart prover
+supervisorctl restart risc0-asteroids-api
 ```
 
 **Why prover first:** The worker gateway can tolerate a tighter prover timeout. If the prover times out at 10 minutes while the worker still has looser settings, the worker simply observes `proof_timeout` and fails the job — no breakage. The reverse (worker first) risks the worker failing jobs while the prover is still willing to run much longer proofs, which is harmless but wastes prover capacity.
@@ -287,13 +287,13 @@ npx wrangler deploy
 
 1. **Health check** — confirm timeout and rules metadata are reported:
    ```bash
-   curl -s https://risc0-kalien.stellar.buzz/health | jq '{timed_out_proof_kill_secs, ruleset, rules_digest_hex, image_id}'
+   curl -s https://risc0-kalien.stellar.buzz/health | jq '{accelerator, timed_out_proof_kill_secs, ruleset, rules_digest_hex, image_id}'
    ```
-   Expected: timeout configured correctly and `ruleset` / `rules_digest_hex` match the deployed contract + worker expectations.
+   Expected: `accelerator` is `"cuda"`, timeout configured correctly, and `ruleset` / `rules_digest_hex` match the deployed contract + worker expectations.
 
 2. **Submit a known-good tape** — verify it completes well under 10 min:
    ```bash
-   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw' \
+   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21' \
      -H "x-api-key: $API_KEY" \
      -H "Content-Type: application/octet-stream" \
      --data-binary @test-fixtures/test-medium.tape
@@ -302,7 +302,7 @@ npx wrangler deploy
 
 3. **Check logs for sweep behavior** — the sweep should now reap running jobs older than 600 s:
    ```bash
-   journalctl -u prover --since "5 min ago" | grep sweep
+   tail -n 200 /var/lib/stellar-zk/prover/api-server.log | rg sweep
    ```
 
 ### After worker deploy
@@ -310,6 +310,7 @@ npx wrangler deploy
 4. **Submit a job via the worker** and confirm end-to-end success:
    ```bash
    curl -X POST https://your-worker.example.com/api/proofs/jobs \
+     -H "x-claimant-address: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" \
      -H "Content-Type: application/octet-stream" \
      --data-binary @test-fixtures/test-medium.tape
    ```

@@ -926,14 +926,7 @@ impl Game {
                         continue;
                     }
 
-                    if collides_q12_4(
-                        sx,
-                        sy,
-                        sr,
-                        asteroid.x,
-                        asteroid.y,
-                        asteroid.radius,
-                    ) {
+                    if collides_q12_4(sx, sy, sr, asteroid.x, asteroid.y, asteroid.radius) {
                         self.saucers[saucer_index].alive = false;
                         self.prune_mask |= PRUNE_SAUCERS;
                         break;

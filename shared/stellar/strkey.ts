@@ -20,7 +20,9 @@ const BASE32_CHAR_TO_VALUE = (() => {
 export type ClaimantStrKeyType = "account" | "contract";
 
 export function normalizeClaimantStrKeyInput(value: string): string {
-  return value.trim();
+  // Normalize user input for interoperability: StrKey is case-insensitive base32,
+  // but we canonicalize to uppercase before strict decoding + checksum checks.
+  return value.trim().toUpperCase();
 }
 
 export function parseClaimantStrKey(value: string): {

@@ -30,22 +30,25 @@ Define deterministic numeric rules used by gameplay and verification.
 - Compare against squared collision threshold.
 
 ### Ship fire gate (anti-autofire)
-- `ship_fire_shift_reg = (ship_fire_shift_reg >> 1) | (fire ? 0x80 : 0x00)`
-- Ship shot is allowed only when:
-  - bit7 is set (fire pressed this frame), and
-  - bit6 is clear (fire was not pressed on previous frame).
+- Edge-triggered latch + cooldown model:
+  - `fire_pressed_this_frame = fire && !ship_fire_latch`
+  - Shot allowed only when `fire_pressed_this_frame && ship_fire_cooldown <= 0 && bullets < SHIP_BULLET_LIMIT`
+  - After fire: `ship_fire_cooldown = SHIP_BULLET_COOLDOWN_FRAMES`
+  - Latch update tracks hold behavior (`ship_fire_latch = fire` in the steady-state path).
 
 ### Saucer fire cadence
-- Saucer fire timer reload is fixed at `SAUCER_FIRE_RELOAD_FRAMES`.
-- Current value is `10` frames.
+- Saucer fire cadence uses pressure-based cooldown ranges (deterministic integer math + game RNG), not a fixed reload constant.
+- Higher pressure (wave + anti-lurk) reduces the min/max cooldown window.
 
 ## Constants (Consensus-Critical)
 - `SHIP_TURN_SPEED_BAM = 3`
 - `SHIP_BULLET_LIMIT = 4`
 - `SAUCER_BULLET_LIMIT = 2`
-- `SAUCER_FIRE_RELOAD_FRAMES = 10`
+- Small-saucer fire cooldown base/floor ranges: `[42..68] -> [22..40]` under max pressure
+- Large-saucer fire cooldown base/floor ranges: `[66..96] -> [36..56]` under max pressure
 - `SHIP_BULLET_LIFETIME_FRAMES = 72`
-- `SHIP_RESPAWN_FRAMES = 0`
+- `SHIP_BULLET_COOLDOWN_FRAMES = 10`
+- `SHIP_RESPAWN_FRAMES = 75`
 - `SHIP_SPAWN_INVULNERABLE_FRAMES = 120`
 - `SAUCER_BULLET_LIFETIME_FRAMES = 72`
 - `LURK_TIME_THRESHOLD_FRAMES = 360`

@@ -107,11 +107,11 @@ cat <<EOF
 
     cd ${PROVER_DIR}
 
-    # Build (CUDA enabled by default):
+    # Build (CPU default, local/dev):
     cargo build --locked --release -p api-server
 
-    # Build (CPU only, for testing without GPU):
-    cargo build --locked --release -p api-server --no-default-features
+    # Build (CUDA, required for GPU acceleration on Vast/prod):
+    cargo build --locked --release -p api-server --features cuda
 
     # Quick test run (foreground):
     API_KEY='your-secret' ./target/release/api-server

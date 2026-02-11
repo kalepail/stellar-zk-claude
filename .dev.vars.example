@@ -4,8 +4,9 @@
 # Required
 PROVER_BASE_URL=https://replace-with-your-prover.example.com
 
-# Optional auth headers for prover access
+# Required for remote provers. For localhost/127.0.0.1 you may omit auth.
 PROVER_API_KEY=
+# Optional alternative auth for remote provers (must set both fields).
 PROVER_ACCESS_CLIENT_ID=
 PROVER_ACCESS_CLIENT_SECRET=
 

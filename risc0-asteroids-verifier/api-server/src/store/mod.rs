@@ -4,6 +4,7 @@ mod files;
 mod tests;
 
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -35,6 +36,45 @@ pub struct JobStore {
     conn: Mutex<Connection>,
     results_dir: PathBuf,
 }
+
+const JOBS_SCHEMA_MIGRATIONS: [(&str, &str); 9] = [
+    (
+        "opt_max_frames",
+        "ALTER TABLE jobs ADD COLUMN opt_max_frames INTEGER NOT NULL DEFAULT 18000;",
+    ),
+    (
+        "opt_receipt_kind",
+        "ALTER TABLE jobs ADD COLUMN opt_receipt_kind TEXT NOT NULL DEFAULT 'composite';",
+    ),
+    (
+        "opt_segment_limit_po2",
+        "ALTER TABLE jobs ADD COLUMN opt_segment_limit_po2 INTEGER NOT NULL DEFAULT 21;",
+    ),
+    (
+        "opt_proof_mode",
+        "ALTER TABLE jobs ADD COLUMN opt_proof_mode TEXT NOT NULL DEFAULT 'secure';",
+    ),
+    (
+        "opt_verify_mode",
+        "ALTER TABLE jobs ADD COLUMN opt_verify_mode TEXT NOT NULL DEFAULT 'verify';",
+    ),
+    (
+        "opt_accelerator",
+        "ALTER TABLE jobs ADD COLUMN opt_accelerator TEXT NOT NULL DEFAULT 'cpu';",
+    ),
+    (
+        "result_path",
+        "ALTER TABLE jobs ADD COLUMN result_path TEXT;",
+    ),
+    (
+        "error",
+        "ALTER TABLE jobs ADD COLUMN error TEXT;",
+    ),
+    (
+        "error_code",
+        "ALTER TABLE jobs ADD COLUMN error_code TEXT;",
+    ),
+];
 
 impl JobStore {
     /// Open (or create) the SQLite database and results directory.
@@ -83,6 +123,9 @@ impl JobStore {
              CREATE INDEX IF NOT EXISTS idx_jobs_finished_at ON jobs(finished_at);",
         )
         .map_err(|e| format!("failed to create schema: {e}"))?;
+
+        Self::ensure_jobs_schema(&conn)?;
+
         let store = Self {
             conn: Mutex::new(conn),
             results_dir,
@@ -99,6 +142,36 @@ impl JobStore {
         }
 
         Ok(store)
+    }
+
+    fn ensure_jobs_schema(conn: &Connection) -> Result<(), String> {
+        let mut columns = Self::jobs_columns(conn)?;
+        for (column, migration_sql) in JOBS_SCHEMA_MIGRATIONS {
+            if columns.contains(column) {
+                continue;
+            }
+
+            tracing::warn!(column, "applying jobs table migration");
+            conn.execute_batch(migration_sql)
+                .map_err(|e| format!("failed to add jobs.{column}: {e}"))?;
+            columns.insert(column.to_string());
+        }
+        Ok(())
+    }
+
+    fn jobs_columns(conn: &Connection) -> Result<HashSet<String>, String> {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(jobs)")
+            .map_err(|e| format!("failed to read jobs table info: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("failed to iterate jobs columns: {e}"))?;
+
+        let mut columns = HashSet::new();
+        for row in rows {
+            columns.insert(row.map_err(|e| format!("failed to parse jobs column info: {e}"))?);
+        }
+        Ok(columns)
     }
 
     /// Mark any queued/running jobs from a previous crash as failed.

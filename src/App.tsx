@@ -18,6 +18,7 @@ import type {
   SmartWalletSession,
 } from "./wallet/smartAccount";
 import "./App.css";
+import { formatUtcDateTime } from "./time";
 
 function formatHex32(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
@@ -557,7 +558,7 @@ function App() {
             </div>
             <div>
               <dt>Captured</dt>
-              <dd>{new Date(latestRun.endedAtMs).toLocaleTimeString()}</dd>
+              <dd>{formatUtcDateTime(latestRun.endedAtMs)}</dd>
             </div>
           </dl>
         ) : (
@@ -668,6 +669,17 @@ function App() {
             <p>
               <strong>Job ID:</strong> <code>{proofJob.jobId}</code>
             </p>
+            <p>
+              <strong>Created:</strong> {formatUtcDateTime(proofJob.createdAt)}
+            </p>
+            <p>
+              <strong>Updated:</strong> {formatUtcDateTime(proofJob.updatedAt)}
+            </p>
+            {proofJob.completedAt ? (
+              <p>
+                <strong>Completed:</strong> {formatUtcDateTime(proofJob.completedAt)}
+              </p>
+            ) : null}
             <p>
               <strong>Queue Attempts:</strong> {proofJob.queue.attempts}
               {proofBusy ? (

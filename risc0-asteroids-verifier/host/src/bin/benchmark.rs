@@ -58,9 +58,9 @@ impl Cli {
                     let value = args
                         .next()
                         .ok_or_else(|| anyhow!("--segment-limit-po2 requires a number"))?;
-                    segment_limit_po2 = value.parse::<u32>().with_context(|| {
-                        format!("invalid --segment-limit-po2 value: {value}")
-                    })?;
+                    segment_limit_po2 = value
+                        .parse::<u32>()
+                        .with_context(|| format!("invalid --segment-limit-po2 value: {value}"))?;
                 }
                 "--json-out" => {
                     let value = args
@@ -173,8 +173,8 @@ fn main() -> Result<()> {
             total_cycles,
             cycles_per_frame,
         };
-        let json = serde_json::to_vec_pretty(&summary)
-            .context("failed serializing benchmark summary")?;
+        let json =
+            serde_json::to_vec_pretty(&summary).context("failed serializing benchmark summary")?;
         fs::write(path, json)
             .with_context(|| format!("failed writing benchmark summary to {}", path.display()))?;
     }

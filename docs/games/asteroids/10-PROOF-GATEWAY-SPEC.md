@@ -234,13 +234,14 @@ backs off and tries again rather than failing the job.
 
 **Submission:**
 - `POST {PROVER_BASE_URL}/api/jobs/prove-tape/raw`
-- Query params: `receipt_kind`, `segment_limit_po2`, `max_frames`
+- Query params currently sent by worker: `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`
 - Auth headers: `x-api-key` and/or `CF-Access-Client-Id` + `CF-Access-Client-Secret`
 - Response: `{ success, job_id, status, status_url }`
 
 **Polling:**
 - `GET {PROVER_BASE_URL}/api/jobs/{proverJobId}`
-- Response on success: `{ success, status: "succeeded", result: { proof, elapsed_ms } }`
+- Response shape: prover job record (`job_id`, `status`, `options`, optional `result`, optional `error`)
+- Success state includes `status: "succeeded"` with `result: { proof, elapsed_ms }`
 - Worker uses a **budget-limited** polling loop within each alarm invocation
   (`PROVER_POLL_BUDGET_MS`, default 45s). If the budget expires while the
   prover is still running, the alarm returns `"running"` and the DO schedules
@@ -301,7 +302,7 @@ bytes needed for on-chain verification.
 | Variable | Value | Notes |
 |----------|-------|-------|
 | `PROVER_BASE_URL` | `https://replace-with-your-prover.example.com` | Base URL for the prover API (typically a Cloudflare Tunnel URL) |
-| `PROVER_API_KEY` | _(secret)_ | Optional app-level auth for the prover (`wrangler secret put PROVER_API_KEY`) |
+| `PROVER_API_KEY` | _(secret)_ | Required for remote prover endpoints unless using Cloudflare Access service-token auth (`wrangler secret put PROVER_API_KEY`) |
 | `PROVER_ACCESS_CLIENT_ID` | _(secret)_ | Optional Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` | _(secret)_ | Optional Cloudflare Access service token secret |
 | `PROVER_EXPECTED_IMAGE_ID` | _unset_ | Optional image ID pin to prevent prover drift |
@@ -364,7 +365,7 @@ Serialized as 24 bytes (6 × u32 LE).
 `prove_tape` in `host/src/lib.rs`:
 1. Validates dev-mode policy (`RISC0_DEV_MODE` + `proof_mode`).
 2. Builds executor env with `max_frames`, original `tape_len`, padded tape, `segment_limit_po2`.
-3. Proves using requested receipt kind (composite → succinct → groth16).
+3. Proves using the requested receipt kind (`composite`, `succinct`, or `groth16`).
 4. Detects produced receipt kind from receipt internals.
 5. In non-dev mode, requires produced kind == requested kind.
 6. Verifies receipt against `VERIFY_TAPE_ID` when `verify_mode=verify`.
@@ -378,7 +379,8 @@ Endpoints:
 - `GET /api/jobs/{job_id}`
 - `DELETE /api/jobs/{job_id}`
 
-Auth: if `API_KEY` is set, requires `x-api-key` or `Authorization: Bearer` header.
+Auth: `API_KEY` is required by default; `/api/*` requires `x-api-key` or `Authorization: Bearer` header.
+For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
 
 Job states: `queued` → `running` → `succeeded` | `failed`.
 Single-flight enforced by global semaphore (concurrency 1) + active-job check.

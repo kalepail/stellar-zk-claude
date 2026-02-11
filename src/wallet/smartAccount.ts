@@ -9,6 +9,7 @@ import {
   PluginExecutionError,
   PluginTransportError,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
+import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
 const TESTNET_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const PUBLIC_NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
@@ -84,20 +85,17 @@ const config: SmartAccountConfig = {
 
 let kitInstance: SmartAccountKit | null = null;
 
-function ensureClaimantContractAddress(contractId: string): string {
-  const normalized = contractId.trim();
-  validateAddress(normalized, "claimant contract address");
+function ensureClaimantAddress(address: string): string {
+  const normalized = address.trim();
+  validateAddress(normalized, "claimant address");
 
-  if (!normalized.startsWith("C")) {
-    throw new Error(`claimant must be a smart-account contract address (got "${normalized}")`);
-  }
-
-  return normalized;
+  // Accept either classic account (G...) or contract (C...) addresses.
+  return parseClaimantStrKeyFromUserInput(normalized).normalized;
 }
 
 function toWalletSession(result: ConnectWalletResult): SmartWalletSession {
   return {
-    contractId: ensureClaimantContractAddress(result.contractId),
+    contractId: ensureClaimantAddress(result.contractId),
     credentialId: result.credentialId,
   };
 }

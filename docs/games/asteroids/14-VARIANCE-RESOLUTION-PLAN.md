@@ -7,8 +7,8 @@ Implemented from this plan:
 - `V-14` small saucer scoring (`990`)
 - `V-19` strict asteroid-cap split behavior
 - `V-22` saucer-asteroid collision handling
-- `V-08` anti-autofire shift-register fire gating
-- `V-13` fixed saucer fire reload cadence (`10` frames)
+- `V-08` anti-autofire edge-triggered latch + cooldown fire gating
+- `V-13` deterministic pressure-based saucer fire cooldown ranges
 - deterministic open-area respawn with edge padding
 
 Additional implemented parity changes:
@@ -16,6 +16,12 @@ Additional implemented parity changes:
 - Saucer and ship bullet lifetime set to `72` frames
 - Saucer side-entry and immediate X-bound cull (no offscreen X grace margin)
 - Saucer spawn/fire paused while ship is not visible
+
+## Status Update (2026-02-11)
+Current behavior adjustments relative to older plan wording:
+- This doc is a planning artifact; current canonical gameplay semantics live in `01-GAME-SPEC.md`.
+- Saucer fire cadence is not a fixed `10`-frame reload; it uses deterministic pressure-based cooldown ranges.
+- Max concurrent saucers are capped at `3` (not `6`) via wave tiers.
 
 ## Objective
 Resolve selected variance items while keeping rules:
@@ -52,7 +58,7 @@ This keeps early behavior close to classic while allowing stronger pressure afte
 ### V-08 Ship bullet autofire behavior
 - Keep anti-autofire gating for all waves (no mode switch to hold-fire).
 - Implement original-style edge-triggered fire gating semantics consistently across the run.
-- Rule uses 8-bit shift register gate (press now, not pressed previous frame).
+- Rule uses latch + cooldown gate (press now, not already latched, and cooldown clear).
 
 ### V-09 Ship bullet lifetime
 - Move lifetime closer to classic model.
@@ -71,8 +77,8 @@ This keeps early behavior close to classic while allowing stronger pressure afte
 
 ### V-13 Saucer firing cadence
 - Base timing should align with classic rhythm.
-- Use fixed deterministic reload (`10` frames) instead of randomized windows.
-- Keep cadence stable and simple unless future tuning is explicitly requested.
+- Use deterministic pressure-based cooldown ranges with bounded randomness.
+- Keep cadence behavior stable unless future tuning is explicitly requested.
 
 ### V-14 Small saucer scoring
 - Switch to arcade-faithful scoring target (`990`).
@@ -162,7 +168,7 @@ Reference lines:
 
 4. Saucer behavior updates (`V-12`, `V-13`)
 - Keep deterministic accuracy pressure formula for small saucers.
-- Use fixed deterministic fire reload (`10` frames) for saucers.
+- Keep deterministic pressure-based cooldown ranges for saucers.
 - Add golden trace tests for representative waves (`1, 4, 5, 10, 20`).
 
 5. Scoring (`V-14`)
@@ -209,11 +215,11 @@ Reference lines:
 
 ## Final Locked Decisions Snapshot
 - `V-03`: hybrid wave large-count ramp (classic waves `1..4`, smooth rise to `16` by wave `10`)
-- `V-08`: edge-triggered shift-register fire gate (release required between shots)
+- `V-08`: edge-triggered latch + cooldown fire gate (release required between shots)
 - `V-09`: ship bullet lifetime moved near classic, deterministic
 - `V-10`: saucer bullet lifetime near classic, deterministic
 - `V-12`: small-saucer accuracy scales progressively with wave/lurk
-- `V-13`: saucer fire cadence uses fixed deterministic reload (`10` frames)
+- `V-13`: saucer fire cadence uses deterministic pressure-based cooldown ranges
 - `V-14`: small saucer score set to `990`
 - `V-19`: fixed hard asteroid cap `27`, strict no-overflow invariant
 - `V-20`: spawn invulnerability retained across all waves

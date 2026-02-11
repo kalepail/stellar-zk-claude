@@ -17,10 +17,12 @@ This server is intentionally single-flight:
 
 ## Auth
 
-If `API_KEY` is set, all `/api/*` routes require either:
+`API_KEY` is required by default, and all `/api/*` routes require either:
 
 - `x-api-key: <API_KEY>`, or
 - `Authorization: Bearer <API_KEY>`.
+
+For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
 
 `/health` is always open.
 
@@ -34,6 +36,10 @@ From `risc0-asteroids-verifier/`:
 ```bash
 RISC0_DEV_MODE=1 cargo run --release -p api-server
 ```
+
+Feature note:
+- CPU is the default build (`default = []`).
+- Enable CUDA explicitly for GPU proving: `cargo run --release -p api-server --features cuda`.
 
 Health check:
 
@@ -68,7 +74,9 @@ See `.env.example` for full config.
 
 Most relevant:
 
-- `API_KEY`: optional shared secret for `/api/*`
+- `API_KEY`: required shared secret for `/api/*` in production
+- `API_KEY_MIN_LENGTH`: minimum accepted key length (default `32`)
+- `ALLOW_MISSING_API_KEY`: set `1` only for local development with `RISC0_DEV_MODE=1`
 - `MAX_TAPE_BYTES`: request payload cap
 - `MAX_JOBS`: max retained jobs in SQLite metadata store
 - `JOB_TTL_SECS`, `JOB_SWEEP_SECS`: retention + cleanup interval
