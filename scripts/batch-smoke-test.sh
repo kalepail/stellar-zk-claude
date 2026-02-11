@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Batch smoke test: run composite + groth16 on multiple tape files.
+# Batch smoke test: run selected receipt kinds on multiple tape files.
 # Produces a CSV results file and a summary table.
 #
 # Usage:
@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Options:
 #   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
-#   --receipts <csv>       composite,groth16 (default: composite,groth16)
+#   --receipts <csv>       composite,groth16 (default: composite)
 #   --poll <seconds>       Poll interval (default: 5)
 #   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
 #   -h, --help             Show this help
@@ -23,7 +23,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 PROVER_URL="http://127.0.0.1:8080"
-RECEIPTS_CSV="composite,groth16"
+RECEIPTS_CSV="composite"
 POLL_INTERVAL=5
 OUT_DIR=""
 TAPE_ARGS=()
@@ -37,7 +37,7 @@ Options:
   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
   --receipts <csv>       Comma-separated list of receipt kinds to run.
                          Allowed values: composite|groth16
-                         Default: composite,groth16
+                         Default: composite
   --poll <seconds>       Poll interval (default: 5)
   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
   -h, --help             Show this help

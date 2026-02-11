@@ -1,47 +1,104 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Quick smoke test: prove a tape as composite then compress to groth16.
+# Quick smoke test: prove a tape with selected receipt kinds.
 # Reports frame count, timing, and basic proof stats for each stage.
 #
 # Usage:
-#   bash scripts/smoke-test-prover.sh [prover-url] [tape-file]
-#
-# Defaults:
-#   prover-url  http://127.0.0.1:8080
-#   tape-file   test-fixtures/test-real-game.tape
+#   bash scripts/smoke-test-prover.sh [options]
 #
 # Examples:
 #   bash scripts/smoke-test-prover.sh
-#   bash scripts/smoke-test-prover.sh http://127.0.0.1:8080 test-fixtures/test-short.tape
-#   bash scripts/smoke-test-prover.sh https://<vast-host>:<port> test-fixtures/test-short.tape
+#   bash scripts/smoke-test-prover.sh --tape test-fixtures/test-short.tape
+#   bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts composite,groth16
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: scripts/smoke-test-prover.sh [prover-url] [tape-file]
+Usage: scripts/smoke-test-prover.sh [options]
 
 Defaults:
-  prover-url  http://127.0.0.1:8080
-  tape-file   test-fixtures/test-real-game.tape
+  --url       http://127.0.0.1:8080
+  --tape      test-fixtures/test-real-game.tape
+  --receipts  composite
+  --poll      5
 
 Examples:
   bash scripts/smoke-test-prover.sh
-  bash scripts/smoke-test-prover.sh http://127.0.0.1:8080 test-fixtures/test-short.tape
-  bash scripts/smoke-test-prover.sh https://<vast-host>:<port> test-fixtures/test-short.tape
+  bash scripts/smoke-test-prover.sh --tape test-fixtures/test-short.tape
+  bash scripts/smoke-test-prover.sh --url https://<vast-host>:<port> --receipts composite,groth16
 USAGE_EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
+PROVER_URL="http://127.0.0.1:8080"
+TAPE_FILE="$ROOT_DIR/test-fixtures/test-real-game.tape"
+RECEIPTS_CSV="composite"
+POLL_INTERVAL=5
+declare -a RECEIPTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --url)
+      PROVER_URL="${2%/}"
+      shift 2
+      ;;
+    --tape)
+      TAPE_FILE="$2"
+      shift 2
+      ;;
+    --receipts)
+      RECEIPTS_CSV="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
+      ;;
+    --poll)
+      POLL_INTERVAL="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ ! "$POLL_INTERVAL" =~ ^[0-9]+$ || "$POLL_INTERVAL" -lt 1 ]]; then
+  echo "ERROR: --poll must be an integer >= 1" >&2
+  exit 1
 fi
 
-PROVER_URL="${1:-http://127.0.0.1:8080}"
-PROVER_URL="${PROVER_URL%/}"
-TAPE_FILE="${2:-$ROOT_DIR/test-fixtures/test-real-game.tape}"
-POLL_INTERVAL=5
+if [[ -z "$RECEIPTS_CSV" ]]; then
+  echo "ERROR: --receipts cannot be empty" >&2
+  exit 1
+fi
+IFS=',' read -r -a RECEIPTS <<< "$RECEIPTS_CSV"
+if [[ "${#RECEIPTS[@]}" -eq 0 ]]; then
+  echo "ERROR: --receipts must include at least one value" >&2
+  exit 1
+fi
+declare -a NORMALIZED_RECEIPTS=()
+for receipt in "${RECEIPTS[@]}"; do
+  receipt="$(echo "$receipt" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  if [[ -z "$receipt" ]]; then
+    echo "ERROR: --receipts contains an empty entry" >&2
+    exit 1
+  fi
+  case "$receipt" in
+    composite|succinct|groth16)
+      NORMALIZED_RECEIPTS+=("$receipt")
+      ;;
+    *)
+      echo "ERROR: unsupported receipt kind: $receipt (allowed: composite|succinct|groth16)" >&2
+      exit 1
+      ;;
+  esac
+done
+RECEIPTS=("${NORMALIZED_RECEIPTS[@]}")
 
 # shellcheck source=_prover-helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_prover-helpers.sh"
@@ -68,6 +125,7 @@ echo "Frames:  $FRAMES"
 echo "Score:   $SCORE"
 echo "Seed:    $SEED"
 echo "Prover:  $PROVER_URL"
+echo "Receipts:${RECEIPTS[*]}"
 
 # ── Health check ─────────────────────────────────────────────────────
 health=$(curl -sf --connect-timeout 10 "$PROVER_URL/health" 2>/dev/null) || {
@@ -168,19 +226,22 @@ print(f'  total_cycles: {tc:,}')
   done
 }
 
-# ── Run both stages ──────────────────────────────────────────────────
+# ── Run selected stages ──────────────────────────────────────────────
 total_start=$(date +%s)
 failures=0
 
-run_proof "composite" "Stage 1: Composite" || failures=$((failures + 1))
-run_proof "groth16"   "Stage 2: Groth16"   || failures=$((failures + 1))
+stage_index=1
+for receipt in "${RECEIPTS[@]}"; do
+  run_proof "$receipt" "Stage ${stage_index}" || failures=$((failures + 1))
+  stage_index=$((stage_index + 1))
+done
 
 total_end=$(date +%s)
 total_secs=$((total_end - total_start))
 
 echo "================================================"
 if [[ $failures -eq 0 ]]; then
-  echo "PASS - both stages succeeded (${total_secs}s total)"
+  echo "PASS - ${#RECEIPTS[@]} stage(s) succeeded (${total_secs}s total)"
 else
   echo "FAIL - $failures stage(s) failed (${total_secs}s total)"
 fi

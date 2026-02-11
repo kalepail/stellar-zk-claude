@@ -142,7 +142,7 @@ Run all of the following on every release candidate:
 - Verifier:
   - `cd risc0-asteroids-verifier && cargo +1.93.0 test --workspace --all-targets --no-default-features`
 - Live prover:
-  - `bash scripts/bench-prover-api.sh <prover-url>`
+  - `bash scripts/bench-segment-sweep.sh <prover-url> --receipts composite --seg-floor 19 --seg-ceiling 21 --tapes short,medium,real`
   - `bash scripts/stress-test-api.sh <prover-url> --delay 1`
 - Fresh non-fixture E2E:
   - generate tape,
