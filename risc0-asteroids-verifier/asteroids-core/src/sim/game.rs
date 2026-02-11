@@ -1080,7 +1080,9 @@ impl Game {
     fn add_score(&mut self, points: u32) {
         self.score = self.score.saturating_add(points);
 
-        while self.score >= self.next_extra_life_score {
+        // Per rules, a single score event is always < EXTRA_LIFE_SCORE_STEP, so we can cross
+        // at most one extra-life threshold per add_score call.
+        if self.score >= self.next_extra_life_score {
             self.lives += 1;
             self.next_extra_life_score += EXTRA_LIFE_SCORE_STEP;
         }

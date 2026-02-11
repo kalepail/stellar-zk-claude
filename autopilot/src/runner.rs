@@ -7,6 +7,11 @@ use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
+// Canonical placeholder claimant address used for local benchmarking.
+// Must be a valid 56-byte Stellar strkey (G... or C...).
+pub const DEFAULT_CLAIMANT_ADDRESS: &[u8; 56] =
+    b"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V";
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RunMetrics {
     pub bot_id: String,
@@ -34,12 +39,21 @@ pub struct RunArtifact {
 }
 
 pub fn run_bot(bot_id: &str, seed: u32, max_frames: u32) -> Result<RunArtifact> {
+    run_bot_with_claimant(bot_id, seed, max_frames, DEFAULT_CLAIMANT_ADDRESS)
+}
+
+pub fn run_bot_with_claimant(
+    bot_id: &str,
+    seed: u32,
+    max_frames: u32,
+    claimant_address: &[u8],
+) -> Result<RunArtifact> {
     if max_frames == 0 {
         return Err(anyhow!("max_frames must be > 0"));
     }
 
     let mut bot = create_bot(bot_id).ok_or_else(|| anyhow!("unknown bot '{bot_id}'"))?;
-    run_bot_instance(bot.as_mut(), seed, max_frames)
+    run_bot_instance_with_claimant(bot.as_mut(), seed, max_frames, claimant_address)
 }
 
 pub fn run_bot_instance(
@@ -47,8 +61,29 @@ pub fn run_bot_instance(
     seed: u32,
     max_frames: u32,
 ) -> Result<RunArtifact> {
+    run_bot_instance_with_claimant(bot, seed, max_frames, DEFAULT_CLAIMANT_ADDRESS)
+}
+
+pub fn run_bot_instance_with_claimant(
+    bot: &mut dyn AutopilotBot,
+    seed: u32,
+    max_frames: u32,
+    claimant_address: &[u8],
+) -> Result<RunArtifact> {
     if max_frames == 0 {
         return Err(anyhow!("max_frames must be > 0"));
+    }
+    if claimant_address.is_empty() {
+        return Err(anyhow!("claimant_address must be non-empty"));
+    }
+    if claimant_address.len() != DEFAULT_CLAIMANT_ADDRESS.len() {
+        return Err(anyhow!(
+            "claimant_address must be exactly {} bytes (Stellar strkey)",
+            DEFAULT_CLAIMANT_ADDRESS.len()
+        ));
+    }
+    if claimant_address.iter().any(|&b| b == 0) {
+        return Err(anyhow!("claimant_address contains NUL bytes (padding not allowed)"));
     }
 
     bot.reset(seed);
@@ -92,7 +127,7 @@ pub fn run_bot_instance(
         &inputs,
         result.final_score,
         result.final_rng_state,
-        b"",
+        claimant_address,
     );
     let journal = verify_tape(&tape, max_frames.max(result.frame_count).max(1))
         .map_err(|err| anyhow!("generated tape failed verification: {err}"))?;

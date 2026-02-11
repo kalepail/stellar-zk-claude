@@ -65,6 +65,7 @@ fn benchmark_smoke_outputs_expected_metadata() -> Result<()> {
         seeds: vec![0xDEAD_BEEF, 0xC0FF_EE11],
         max_frames: 900,
         objective: Objective::Hybrid,
+        claimant_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V".to_string(),
         out_dir: tmp.path().to_path_buf(),
         save_top: 1,
         jobs: None,

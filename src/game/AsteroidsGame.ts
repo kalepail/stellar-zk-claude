@@ -1390,7 +1390,9 @@ export class AsteroidsGame {
   private addScore(points: number): void {
     this.score += points;
 
-    while (this.score >= this.nextExtraLifeScore) {
+    // Per rules, a single score event is always < EXTRA_LIFE_SCORE_STEP, so we can cross
+    // at most one extra-life threshold per addScore call.
+    if (this.score >= this.nextExtraLifeScore) {
       this.lives += 1;
       this.nextExtraLifeScore += EXTRA_LIFE_SCORE_STEP;
       if (this.renderer) {
