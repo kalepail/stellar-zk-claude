@@ -3,10 +3,21 @@ import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST, EXPECTED_RULESET } from 
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
+import { recordLeaderboardSyncFailure, runLeaderboardSync } from "../leaderboard-sync";
+import { parseLeaderboardSourceMode } from "../leaderboard-ingestion";
+import {
+  computeLeaderboard,
+  DEFAULT_LEADERBOARD_LIMIT,
+  extractLeaderboardRuns,
+  MAX_LEADERBOARD_LIMIT,
+  parseLeaderboardWindow,
+} from "../leaderboard";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
+import type { LeaderboardRankedEntry, PlayerProfileRecord } from "../types";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
 import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
+import type { LeaderboardResolvedSourceMode } from "../leaderboard-ingestion";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -31,6 +42,147 @@ function parseContentLength(value: string | undefined): number | null {
   }
 
   return parsed;
+}
+
+function parseOffset(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? "0", 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function parseLimit(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? `${DEFAULT_LEADERBOARD_LIMIT}`, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_LEADERBOARD_LIMIT;
+  }
+  return Math.min(parsed, MAX_LEADERBOARD_LIMIT);
+}
+
+function parseOptionalNonNegativeInteger(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") {
+    return null;
+  }
+
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseSyncLimit(raw: unknown): number | undefined {
+  const parsed = parseOptionalNonNegativeInteger(raw);
+  if (parsed === null) {
+    return undefined;
+  }
+  return Math.min(Math.max(parsed, 1), 1000);
+}
+
+function parseSyncSource(raw: unknown): LeaderboardResolvedSourceMode | "default" | null {
+  if (raw === null || raw === undefined || raw === "") {
+    return null;
+  }
+
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === "auto" || normalized === "default") {
+    return "default";
+  }
+  if (normalized === "rpc" || normalized === "events_api" || normalized === "datalake") {
+    return normalized;
+  }
+
+  return null;
+}
+
+function normalizeOptionalClaimantAddress(raw: string | undefined): string | null {
+  if (!raw || raw.trim().length === 0) {
+    return null;
+  }
+
+  return validateClaimantStrKeyFromUserInput(raw);
+}
+
+function requireLeaderboardAdmin(c: {
+  req: { header: (name: string) => string | undefined };
+  env: WorkerEnv;
+}): string {
+  const configured = c.env.LEADERBOARD_ADMIN_KEY?.trim();
+  if (!configured) {
+    throw new Error("leaderboard admin key is not configured");
+  }
+
+  const provided = c.req.header("x-leaderboard-admin-key")?.trim() ?? "";
+  if (provided.length === 0) {
+    throw new Error("x-leaderboard-admin-key is required");
+  }
+  if (provided !== configured) {
+    throw new Error("invalid x-leaderboard-admin-key");
+  }
+
+  return provided;
+}
+
+function sanitizeProfileUsername(raw: unknown): string | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+
+  if (typeof raw !== "string") {
+    throw new Error("username must be a string");
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed.length > 32) {
+    throw new Error("username must be 32 characters or fewer");
+  }
+
+  return trimmed;
+}
+
+function sanitizeProfileLinkUrl(raw: unknown): string | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+
+  if (typeof raw !== "string") {
+    throw new Error("link_url must be a string");
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed.length > 240) {
+    throw new Error("link_url must be 240 characters or fewer");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("link_url must be a valid absolute URL");
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("link_url must use http or https");
+  }
+
+  return url.toString();
+}
+
+function attachProfilesToEntry(
+  entry: LeaderboardRankedEntry,
+  profiles: Record<string, PlayerProfileRecord>,
+): LeaderboardRankedEntry & { profile: PlayerProfileRecord | null } {
+  return {
+    ...entry,
+    profile: profiles[entry.claimantAddress] ?? null,
+  };
 }
 
 async function readRequestBodyWithLimit(
@@ -142,6 +294,301 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       checked_at: new Date().toISOString(),
       prover,
       active_job: activeJob ? asPublicJob(activeJob) : null,
+    });
+  });
+
+  api.get("/leaderboard/sync/status", async (c) => {
+    try {
+      requireLeaderboardAdmin(c);
+    } catch (error) {
+      return jsonError(c, 401, safeErrorMessage(error));
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const [state, events] = await Promise.all([
+      coordinator.getLeaderboardIngestionState(),
+      coordinator.listLeaderboardEvents(),
+    ]);
+
+    return c.json({
+      success: true,
+      source: "events",
+      provider: state.provider,
+      provider_mode: parseLeaderboardSourceMode(c.env),
+      source_mode: state.sourceMode,
+      event_count: events.length,
+      state,
+    });
+  });
+
+  api.post("/leaderboard/sync", async (c) => {
+    try {
+      requireLeaderboardAdmin(c);
+    } catch (error) {
+      return jsonError(c, 401, safeErrorMessage(error));
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      const body = await c.req.json();
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return jsonError(c, 400, "sync payload must be an object");
+      }
+      payload = body as Record<string, unknown>;
+    } catch (error) {
+      return jsonError(c, 400, `invalid JSON payload: ${safeErrorMessage(error)}`);
+    }
+
+    const modeRaw =
+      typeof payload.mode === "string" ? payload.mode.trim().toLowerCase() : "forward";
+    const mode = modeRaw === "backfill" ? "backfill" : modeRaw === "forward" ? "forward" : null;
+    if (!mode) {
+      return jsonError(c, 400, "mode must be one of: forward, backfill");
+    }
+
+    const cursor =
+      typeof payload.cursor === "string" && payload.cursor.trim().length > 0
+        ? payload.cursor.trim()
+        : null;
+    const fromLedger = parseOptionalNonNegativeInteger(payload.from_ledger ?? payload.fromLedger);
+    const toLedger = parseOptionalNonNegativeInteger(payload.to_ledger ?? payload.toLedger);
+    const limit = parseSyncLimit(payload.limit);
+    const sourceRaw = parseSyncSource(payload.source);
+
+    if (payload.source !== undefined && payload.source !== null && sourceRaw === null) {
+      return jsonError(c, 400, "source must be one of: auto, rpc, datalake, events_api");
+    }
+    const source = sourceRaw && sourceRaw !== "default" ? sourceRaw : null;
+
+    if (mode === "backfill" && fromLedger === null) {
+      return jsonError(c, 400, "backfill mode requires from_ledger");
+    }
+    if (fromLedger !== null && toLedger !== null && fromLedger > toLedger) {
+      return jsonError(c, 400, "from_ledger must be <= to_ledger");
+    }
+
+    try {
+      const result = await runLeaderboardSync(c.env, {
+        mode,
+        cursor,
+        fromLedger,
+        toLedger,
+        limit,
+        source,
+      });
+
+      return c.json({
+        success: true,
+        source: "events",
+        provider_mode: parseLeaderboardSourceMode(c.env),
+        ...result,
+      });
+    } catch (error) {
+      await recordLeaderboardSyncFailure(c.env, error);
+      return jsonError(c, 502, `leaderboard sync failed: ${safeErrorMessage(error)}`);
+    }
+  });
+
+  api.get("/leaderboard", async (c) => {
+    const window = parseLeaderboardWindow(c.req.query("window"));
+    if (!window) {
+      return jsonError(c, 400, "window must be one of: 10m, day, all");
+    }
+
+    const limit = parseLimit(c.req.query("limit"));
+    const offset = parseOffset(c.req.query("offset"));
+
+    let claimantAddress: string | null;
+    try {
+      claimantAddress = normalizeOptionalClaimantAddress(c.req.query("address"));
+    } catch (error) {
+      return jsonError(c, 400, `invalid address: ${safeErrorMessage(error)}`);
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const [events, ingestionState] = await Promise.all([
+      coordinator.listLeaderboardEvents(),
+      coordinator.getLeaderboardIngestionState(),
+    ]);
+    const runs = extractLeaderboardRuns(events);
+    const computed = computeLeaderboard(runs, {
+      window,
+      limit,
+      offset,
+      claimantAddress,
+    });
+
+    const profileAddresses = new Set<string>();
+    for (const entry of computed.entries) {
+      profileAddresses.add(entry.claimantAddress);
+    }
+    if (computed.me) {
+      profileAddresses.add(computed.me.claimantAddress);
+    }
+
+    const profiles = await coordinator.getProfiles(Array.from(profileAddresses));
+
+    return c.json({
+      success: true,
+      source: "events",
+      provider: ingestionState.provider,
+      provider_mode: parseLeaderboardSourceMode(c.env),
+      source_mode: ingestionState.sourceMode,
+      window: computed.window,
+      generated_at: computed.generatedAt,
+      window_range: {
+        start_at: computed.windowRange.startAt,
+        end_at: computed.windowRange.endAt,
+      },
+      pagination: {
+        limit: computed.limit,
+        offset: computed.offset,
+        total: computed.totalPlayers,
+        next_offset: computed.nextOffset,
+      },
+      entries: computed.entries.map((entry) => attachProfilesToEntry(entry, profiles)),
+      me: computed.me ? attachProfilesToEntry(computed.me, profiles) : null,
+      ingestion: {
+        last_synced_at: ingestionState.lastSyncedAt,
+        highest_ledger: ingestionState.highestLedger,
+        total_events: ingestionState.totalEvents,
+      },
+    });
+  });
+
+  api.get("/leaderboard/player/:claimantAddress", async (c) => {
+    const rawClaimantAddress = c.req.param("claimantAddress");
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimantAddress);
+    } catch (error) {
+      return jsonError(c, 400, `invalid claimant address: ${safeErrorMessage(error)}`);
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const [profile, events] = await Promise.all([
+      coordinator.getProfile(claimantAddress),
+      coordinator.listLeaderboardEvents(),
+    ]);
+
+    const runs = extractLeaderboardRuns(events);
+    const playerRuns = runs.filter((run) => run.claimantAddress === claimantAddress);
+    // eslint-disable-next-line unicorn/no-array-sort
+    playerRuns.sort((left, right) => {
+      const leftMs = new Date(left.completedAt).getTime();
+      const rightMs = new Date(right.completedAt).getTime();
+      if (leftMs !== rightMs) {
+        return rightMs - leftMs;
+      }
+      if (left.score !== right.score) {
+        return right.score - left.score;
+      }
+      return left.jobId.localeCompare(right.jobId);
+    });
+
+    const bestRun = playerRuns.reduce<(typeof playerRuns)[number] | null>((best, run) => {
+      if (!best || run.score > best.score) {
+        return run;
+      }
+      if (run.score === best.score && run.completedAt < best.completedAt) {
+        return run;
+      }
+      return best;
+    }, null);
+
+    const rank10m = computeLeaderboard(runs, {
+      window: "10m",
+      claimantAddress,
+      limit: 1,
+      offset: 0,
+    }).me?.rank;
+    const rankDay = computeLeaderboard(runs, {
+      window: "day",
+      claimantAddress,
+      limit: 1,
+      offset: 0,
+    }).me?.rank;
+    const rankAll = computeLeaderboard(runs, {
+      window: "all",
+      claimantAddress,
+      limit: 1,
+      offset: 0,
+    }).me?.rank;
+
+    return c.json({
+      success: true,
+      player: {
+        claimant_address: claimantAddress,
+        profile,
+        stats: {
+          total_runs: playerRuns.length,
+          best_score: bestRun?.score ?? 0,
+          last_played_at: playerRuns[0]?.completedAt ?? null,
+        },
+        ranks: {
+          ten_min: rank10m ?? null,
+          day: rankDay ?? null,
+          all: rankAll ?? null,
+        },
+        recent_runs: playerRuns.slice(0, 25),
+      },
+    });
+  });
+
+  api.put("/leaderboard/player/:claimantAddress/profile", async (c) => {
+    const rawClaimantAddress = c.req.param("claimantAddress");
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimantAddress);
+    } catch (error) {
+      return jsonError(c, 400, `invalid claimant address: ${safeErrorMessage(error)}`);
+    }
+
+    const rawActor = c.req.header("x-claimant-address");
+    if (!rawActor) {
+      return jsonError(c, 401, "x-claimant-address is required to update profile");
+    }
+
+    let actorAddress: string;
+    try {
+      actorAddress = validateClaimantStrKeyFromUserInput(rawActor);
+    } catch (error) {
+      return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
+    }
+
+    if (actorAddress !== claimantAddress) {
+      return jsonError(c, 403, "profile updates are only allowed for the same claimant address");
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      const body = await c.req.json();
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return jsonError(c, 400, "profile payload must be an object");
+      }
+      payload = body as Record<string, unknown>;
+    } catch (error) {
+      return jsonError(c, 400, `invalid JSON payload: ${safeErrorMessage(error)}`);
+    }
+
+    let username: string | null;
+    let linkUrl: string | null;
+    try {
+      username = sanitizeProfileUsername(payload.username);
+      linkUrl = sanitizeProfileLinkUrl(payload.link_url ?? payload.linkUrl);
+    } catch (error) {
+      return jsonError(c, 400, safeErrorMessage(error));
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const profile = await coordinator.upsertProfile(claimantAddress, {
+      username,
+      linkUrl,
+    });
+
+    return c.json({
+      success: true,
+      profile,
     });
   });
 

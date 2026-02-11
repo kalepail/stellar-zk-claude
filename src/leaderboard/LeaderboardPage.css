@@ -1,0 +1,267 @@
+.leaderboard-shell {
+  min-height: 100vh;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  display: grid;
+  gap: 0.9rem;
+}
+
+.leaderboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.leaderboard-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: clamp(1.5rem, 3.2vw, 2.2rem);
+}
+
+.leaderboard-header p {
+  margin: 0.3rem 0 0;
+  color: rgba(205, 238, 226, 0.9);
+}
+
+.leaderboard-navlink {
+  color: #8dd1ff;
+  text-decoration: none;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.8rem;
+}
+
+.leaderboard-navlink:hover {
+  text-decoration: underline;
+}
+
+.leaderboard-controls {
+  border: 1px solid rgba(102, 199, 255, 0.3);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(94, 165, 255, 0.15), transparent 45%),
+    linear-gradient(160deg, rgba(9, 18, 33, 0.84), rgba(5, 12, 22, 0.96));
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.leaderboard-window-buttons {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.leaderboard-window-buttons button,
+.leaderboard-find-me button,
+.leaderboard-actions button {
+  appearance: none;
+  border: 1px solid rgba(102, 199, 255, 0.58);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(23, 72, 105, 0.8), rgba(13, 45, 73, 0.92));
+  color: #dff4ff;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+.leaderboard-window-buttons button.active {
+  border-color: rgba(145, 246, 201, 0.6);
+  background: linear-gradient(180deg, rgba(28, 94, 72, 0.8), rgba(20, 70, 54, 0.92));
+}
+
+.leaderboard-window-buttons button:hover:enabled,
+.leaderboard-find-me button:hover:enabled,
+.leaderboard-actions button:hover:enabled {
+  transform: translateY(-1px);
+}
+
+.leaderboard-window-buttons button:disabled,
+.leaderboard-find-me button:disabled,
+.leaderboard-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.leaderboard-find-me {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.leaderboard-find-me input,
+.leaderboard-form-grid input {
+  flex: 1 1 260px;
+  min-width: 0;
+  border: 1px solid rgba(108, 159, 230, 0.4);
+  border-radius: 8px;
+  background: rgba(13, 22, 40, 0.55);
+  color: #d9f4ff;
+  font-family: var(--font-display);
+  font-size: 0.86rem;
+  letter-spacing: 0.02em;
+  padding: 0.5rem 0.6rem;
+}
+
+.leaderboard-find-me input:focus,
+.leaderboard-form-grid input:focus {
+  outline: 2px solid rgba(102, 199, 255, 0.45);
+  outline-offset: 1px;
+}
+
+.leaderboard-card {
+  border: 1px solid rgba(102, 199, 255, 0.28);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 10% 8%, rgba(94, 165, 255, 0.12), transparent 45%),
+    linear-gradient(160deg, rgba(9, 18, 33, 0.75), rgba(6, 14, 25, 0.96));
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.leaderboard-card h2,
+.leaderboard-card h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.leaderboard-card p {
+  margin: 0;
+}
+
+.leaderboard-note {
+  margin: 0;
+  color: rgba(186, 210, 241, 0.92);
+}
+
+.leaderboard-error {
+  margin: 0;
+  color: #ffabab;
+}
+
+.leaderboard-table-wrap {
+  overflow-x: auto;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  border-bottom: 1px solid rgba(104, 161, 237, 0.22);
+  padding: 0.52rem 0.42rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.leaderboard-table th {
+  font-family: var(--font-display);
+  letter-spacing: 0.05em;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  color: rgba(161, 201, 255, 0.95);
+}
+
+.leaderboard-row--me {
+  background: rgba(18, 69, 86, 0.3);
+}
+
+.leaderboard-player-cell {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.leaderboard-player-cell a {
+  color: #9ce8ff;
+  text-decoration: none;
+}
+
+.leaderboard-player-cell a:hover {
+  text-decoration: underline;
+}
+
+.leaderboard-player-cell code {
+  color: rgba(190, 216, 249, 0.92);
+}
+
+.leaderboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.leaderboard-grid div {
+  border: 1px solid rgba(108, 159, 230, 0.24);
+  border-radius: 8px;
+  background: rgba(13, 22, 40, 0.45);
+  padding: 0.42rem 0.5rem;
+}
+
+.leaderboard-grid dt {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(146, 182, 233, 0.9);
+}
+
+.leaderboard-grid dd {
+  margin: 0.15rem 0 0;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+}
+
+.leaderboard-form-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.leaderboard-form-grid label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.leaderboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .leaderboard-header {
+    flex-direction: column;
+  }
+
+  .leaderboard-window-buttons {
+    flex-wrap: wrap;
+  }
+
+  .leaderboard-find-me {
+    flex-direction: column;
+  }
+
+  .leaderboard-find-me button {
+    width: 100%;
+  }
+
+  .leaderboard-grid {
+    grid-template-columns: 1fr;
+  }
+}

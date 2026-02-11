@@ -104,6 +104,74 @@ export interface ProofJobRecord {
   error: string | null;
 }
 
+export type LeaderboardWindow = "10m" | "day" | "all";
+
+export interface PlayerProfileRecord {
+  claimantAddress: string;
+  username: string | null;
+  linkUrl: string | null;
+  updatedAt: string;
+}
+
+export interface LeaderboardRunRecord {
+  jobId: string;
+  claimantAddress: string;
+  score: number;
+  seed: number;
+  frameCount: number | null;
+  completedAt: string;
+  claimStatus: ClaimStatus;
+  claimTxHash: string | null;
+}
+
+export interface LeaderboardRankedEntry extends LeaderboardRunRecord {
+  rank: number;
+}
+
+export interface LeaderboardWindowMetadata {
+  startAt: string | null;
+  endAt: string | null;
+}
+
+export interface LeaderboardComputedPage {
+  window: LeaderboardWindow;
+  generatedAt: string;
+  windowRange: LeaderboardWindowMetadata;
+  totalPlayers: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+  entries: LeaderboardRankedEntry[];
+  me: LeaderboardRankedEntry | null;
+}
+
+export interface LeaderboardEventRecord {
+  eventId: string;
+  claimantAddress: string;
+  seed: number;
+  previousBest: number;
+  newBest: number;
+  mintedDelta: number;
+  journalDigest: string | null;
+  txHash: string | null;
+  eventIndex: number | null;
+  ledger: number | null;
+  closedAt: string;
+  source: "galexie" | "rpc";
+  ingestedAt: string;
+}
+
+export interface LeaderboardIngestionState {
+  provider: "galexie" | "rpc";
+  sourceMode: "rpc" | "events_api" | "datalake";
+  cursor: string | null;
+  highestLedger: number | null;
+  lastSyncedAt: string | null;
+  lastBackfillAt: string | null;
+  totalEvents: number;
+  lastError: string | null;
+}
+
 export interface PublicProofTapeInfo {
   sizeBytes: number;
   metadata: TapeMetadata;
