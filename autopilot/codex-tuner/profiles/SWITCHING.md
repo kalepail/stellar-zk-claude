@@ -1,13 +1,20 @@
-# Profile switching shortcuts
+# Profile switching
 
-- `champion-stable-719970.json`: stronger general/stress behavior.
-- `champion-peak-782490.json`: first jackpot peak profile.
-- `champion-peak-791480.json`: current top-score peak profile.
-- `champion-peak-809220.json`: late-game pressure variant, current all-time peak.
+This lab is on an AST3 clean baseline.
 
-To activate any profile:
+- `base.json`: neutral profile.
+- `champion.json`: current working profile (starts equal to `base.json` after resets).
+
+To reset champion to baseline:
 
 ```bash
-cp autopilot/codex-tuner/profiles/<profile>.json autopilot/codex-tuner/profiles/champion.json
-cp autopilot/codex-tuner/profiles/<profile>.json autopilot/codex-/state/adaptive-profile.json
+cp autopilot/codex-tuner/profiles/base.json autopilot/codex-tuner/profiles/champion.json
 ```
+
+To install champion for runtime evaluation:
+
+```bash
+cp autopilot/codex-tuner/profiles/champion.json autopilot/codex-/state/adaptive-profile.json
+```
+
+Add archived `champion-*.json` variants only after they are re-benchmarked and validated under current rules.

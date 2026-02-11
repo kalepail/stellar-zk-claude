@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use asteroids_verifier_core::tape::parse_tape;
+use asteroids_verifier_core::verify_tape;
 use rust_autopilot::bots::{bot_fingerprint, create_bot};
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -25,7 +27,9 @@ struct ChampionRun {
 
 #[derive(Debug, Deserialize)]
 struct ChampionRegistry {
-    record_lock_bot: RecordLock,
+    #[serde(default)]
+    record_lock_bot: Option<RecordLock>,
+    #[serde(default)]
     runs: Vec<ChampionRun>,
 }
 
@@ -53,35 +57,39 @@ fn strict_artifacts_enabled() -> bool {
     )
 }
 
+fn strict_validate_tape(path: &str) -> Result<()> {
+    let bytes = fs::read(repo_path(path))?;
+    // Use a generous bound so this check validates format+rules, not the current bench cap.
+    let max_frames = 1_000_000;
+    parse_tape(&bytes, max_frames).map_err(|err| anyhow!("invalid tape {path}: {err}"))?;
+    verify_tape(&bytes, max_frames).map_err(|err| anyhow!("unverifiable tape {path}: {err}"))?;
+    Ok(())
+}
+
 #[test]
 fn champion_registry_matches_bot_roster_and_files() -> Result<()> {
     let raw = fs::read(repo_path("records/champions.json"))?;
     let registry: ChampionRegistry = serde_json::from_slice(&raw)?;
 
-    if create_bot(&registry.record_lock_bot.bot_id).is_none() {
-        return Err(anyhow!(
-            "record lock bot missing from roster: {}",
-            registry.record_lock_bot.bot_id
-        ));
-    }
-    let lock_fp = bot_fingerprint(&registry.record_lock_bot.bot_id).ok_or_else(|| {
-        anyhow!(
-            "missing fingerprint for {}",
-            registry.record_lock_bot.bot_id
-        )
-    })?;
-    if lock_fp != registry.record_lock_bot.bot_fingerprint {
-        return Err(anyhow!(
-            "record lock bot fingerprint mismatch: expected={} actual={}",
-            registry.record_lock_bot.bot_fingerprint,
-            lock_fp
-        ));
-    }
-    if strict_artifacts_enabled() && !repo_path(&registry.record_lock_bot.source_tape).exists() {
-        return Err(anyhow!(
-            "record lock source tape missing: {}",
-            registry.record_lock_bot.source_tape
-        ));
+    if let Some(lock) = &registry.record_lock_bot {
+        if create_bot(&lock.bot_id).is_none() {
+            return Err(anyhow!("record lock bot missing from roster: {}", lock.bot_id));
+        }
+        let lock_fp = bot_fingerprint(&lock.bot_id)
+            .ok_or_else(|| anyhow!("missing fingerprint for {}", lock.bot_id))?;
+        if lock_fp != lock.bot_fingerprint {
+            return Err(anyhow!(
+                "record lock bot fingerprint mismatch: expected={} actual={}",
+                lock.bot_fingerprint,
+                lock_fp
+            ));
+        }
+        if strict_artifacts_enabled() {
+            if !repo_path(&lock.source_tape).exists() {
+                return Err(anyhow!("record lock source tape missing: {}", lock.source_tape));
+            }
+            strict_validate_tape(&lock.source_tape)?;
+        }
     }
 
     let keep_checkpoints = read_keep_set("records/keep-checkpoints.txt")?;
@@ -109,6 +117,7 @@ fn champion_registry_matches_bot_roster_and_files() -> Result<()> {
             if !repo_path(&run.checkpoint_meta).exists() {
                 return Err(anyhow!("missing metadata: {}", run.checkpoint_meta));
             }
+            strict_validate_tape(&run.checkpoint_tape)?;
 
             if run.source.starts_with("benchmarks/") && !repo_path(&run.source).exists() {
                 return Err(anyhow!("missing benchmark source path: {}", run.source));

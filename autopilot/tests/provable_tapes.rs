@@ -7,11 +7,11 @@ fn all_bots_generate_provable_tapes_on_smoke_seed() -> Result<()> {
     let seed = 0xDEAD_BEEF;
     for bot in bot_ids() {
         // Keep this light: it runs every `cargo test` and touches every bot.
-            let artifact = run_bot(bot, seed, 300)?;
-            assert!(artifact.metrics.frame_count > 0, "bot={bot}");
-            assert_eq!(artifact.metrics.bot_id, bot, "bot id mismatch for {bot}");
-            assert!(artifact.tape.len() > 16 + 12, "tape too small for {bot}");
-        }
+        let artifact = run_bot(bot, seed, 300)?;
+        assert!(artifact.metrics.frame_count > 0, "bot={bot}");
+        assert_eq!(artifact.metrics.bot_id, bot, "bot id mismatch for {bot}");
+        assert!(artifact.tape.len() > 72 + 12, "tape too small for {bot}");
+    }
     Ok(())
 }
 
@@ -34,20 +34,11 @@ fn representative_bots_generate_provable_tapes_on_multiple_seeds() -> Result<()>
                 "bot id mismatch for {bot} seed={seed:#x}"
             );
             assert!(
-                artifact.tape.len() > 16 + 12,
+                artifact.tape.len() > 72 + 12,
                 "tape too small for {bot} seed={seed:#x}"
             );
         }
     }
-
-    // Also exercise the replay path on its canonical seed.
-    let record_seed = 0x6046_C93D;
-    let record_lock_bot = "record-lock-endurancex-6046c93d";
-    let artifact = run_bot(record_lock_bot, record_seed, 900)?;
-    assert!(
-        artifact.metrics.frame_count > 0,
-        "bot={record_lock_bot} seed={record_seed:#x}"
-    );
 
     Ok(())
 }

@@ -6,4 +6,8 @@
 /evolve/journal/iteration-*.md
 /evolve/journal/*-output-*.log
 /evolve/journal/bench-output-*.log
-/codex-
+/codex-/
+/codex-tuner/runs
+/codex-tuner/records/record-*
+/codex-tuner/scripts/__pycache__/
+/codex-tuner/scripts/*.pyc

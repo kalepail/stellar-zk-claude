@@ -1,3 +1,4 @@
 runs/
+records/record-*/
 __pycache__/
 *.pyc

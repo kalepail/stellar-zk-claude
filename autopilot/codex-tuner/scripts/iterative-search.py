@@ -357,8 +357,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--anchor-mode",
         choices=["all", "core"],
-        default="all",
-        help="all=core anchors + auto champion-* profiles, core=base/champion_score/champion_insane only",
+        default="core",
+        help="core=base/champion anchors, all=core + auto champion-* archives",
     )
     parser.add_argument(
         "--selection-metric",
@@ -426,8 +426,7 @@ def main() -> int:
     anchor_profiles: List[Tuple[str, Dict[str, float]]] = []
     anchor_source_pairs: List[Tuple[str, Path]] = [
         ("base", base_profile_path),
-        ("champion_score", lab_root / "profiles" / "champion-score.json"),
-        ("champion_insane", lab_root / "profiles" / "champion-insane.json"),
+        ("champion", champion_profile_path),
     ]
     if args.anchor_mode == "all":
         seen_anchor_paths = {path.resolve() for _, path in anchor_source_pairs if path.exists()}

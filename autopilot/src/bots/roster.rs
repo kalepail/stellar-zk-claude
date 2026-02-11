@@ -387,19 +387,10 @@ fn offline_bot_configs() -> &'static [OfflineConfig] {
     ]
 }
 
-const RECORD_ENDURANCEX_TAPE_PATH: &str = concat!(
-    "checkpoints/",
-    "rank01-offline-wrap-endurancex-seed6046c93d-score289810-frames67109.tape"
-);
-
 pub(super) fn record_locked_bot_configs() -> &'static [ReplayConfig] {
-    &[ReplayConfig {
-        id: "record-lock-endurancex-6046c93d",
-        description: "Locked replay bot for canonical all-time run preservation (seed 0x6046c93d).",
-        expected_seed: 0x6046_C93D,
-        tape_rel_path: RECORD_ENDURANCEX_TAPE_PATH,
-        max_frames_hint: 108_000,
-    }]
+    // Intentionally empty after AST3 reset. Add record-lock bots only when
+    // a current-rules canonical tape is explicitly promoted.
+    &[]
 }
 
 pub fn bot_ids() -> Vec<&'static str> {

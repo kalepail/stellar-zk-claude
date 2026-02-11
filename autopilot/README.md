@@ -1,23 +1,27 @@
 # Autopilot Lab
 
-Rust-based autopilot programs for deterministic Asteroids tape generation, validation, and benchmarking.
+Rust-based autopilot programs for deterministic Asteroids tape generation, verification, and benchmarking.
 
-This folder is the consolidated home for all autopilot work (core bots, benchmarks, tuners, and evolution harnesses).
+This folder is the consolidated home for autopilot work (core bots, benchmarks, tuners, and evolution harnesses).
+
+## Ruleset Hygiene Policy
+
+- The maintained baseline is current rules only (`AST3` today).
+- Legacy/incompatible tapes are retired when rules evolve.
+- Code, algorithms, and benchmarking workflows are preserved; old result artifacts are not treated as canonical.
 
 ## Active Bot Roster
 
-The project now keeps a curated, high-performing set only.
-
-### Search bots (runtime-first)
+### Search bots
 
 - `omega-marathon`
 - `omega-lurk-breaker`
 - `omega-ace`
 - `omega-alltime-hunter`
 - `omega-supernova`
-- `evolve-candidate` (used by the `evolve/` loop)
+- `evolve-candidate`
 
-### Offline-control bots (deeper per-frame planning)
+### Offline-control bots
 
 - `offline-supernova-hunt`
 - `offline-wrap-endurancex`
@@ -26,19 +30,15 @@ The project now keeps a curated, high-performing set only.
 - `offline-wrap-apex-score`
 - `offline-wrap-sureshot`
 
-### Record-lock bot
-
-- `record-lock-endurancex-6046c93d` (replays the canonical all-time tape for seed `0x6046C93D`)
-
 ## Code Layout
 
-- `src/bots/mod.rs`: core bot engines, physics-aware targeting, planning/search logic
-- `src/bots/roster.rs`: curated bot catalog + construction (`bot_ids`, `describe_bots`, `create_bot`)
+- `src/bots/mod.rs`: core bot engines and planning/search logic
+- `src/bots/roster.rs`: curated bot catalog + construction
 - `src/benchmark.rs`: benchmark runner + report/tape export
 - `src/runner.rs`: single-run execution + tape verification plumbing
-- `tests/provable_tapes.rs`: smoke tests ensuring all roster bots generate valid tapes
-- `tests/champion_registry.rs`: validates champion registry, fingerprints, and artifact keep-lists
-- `records/`: champion provenance + keep-lists + roster manifest snapshots
+- `tests/provable_tapes.rs`: smoke tests for roster tape generation
+- `tests/champion_registry.rs`: registry + keep-list + strict artifact checks
+- `records/`: champion provenance and keep-lists
 
 ## Quick Start
 
@@ -52,46 +52,26 @@ cargo run --release -- list-bots
 Generate one tape:
 
 ```bash
-cargo run --release -- generate \
-  --bot omega-marathon \
-  --seed 0xDEADBEEF \
-  --max-frames 18000 \
-  --output checkpoints/omega-marathon-seeddeadbeef.tape
+cargo run --release -- generate   --bot omega-marathon   --seed 0xDEADBEEF   --max-frames 18000   --output checkpoints/omega-marathon-seeddeadbeef.tape
 ```
 
-Verify an existing tape against current rules:
+Verify a tape:
 
 ```bash
-cargo run --release -- verify-tape \
-  --input checkpoints/rank01-offline-wrap-endurancex-seed6046c93d-score289810-frames67109.tape \
-  --max-frames 108000
+cargo run --release -- verify-tape   --input checkpoints/omega-marathon-seeddeadbeef.tape   --max-frames 108000
 ```
 
-Run a direct benchmark:
+Run a benchmark:
 
 ```bash
-cargo run --release -- benchmark \
-  --bots offline-wrap-endurancex,offline-wrap-sniper30,omega-marathon,omega-ace \
-  --seed-start 0x00000001 \
-  --seed-count 24 \
-  --max-frames 108000 \
-  --objective survival \
-  --jobs 8
+cargo run --release -- benchmark   --bots offline-wrap-endurancex,offline-wrap-sniper30,omega-marathon,omega-ace   --seed-start 0x00000001   --seed-count 24   --max-frames 108000   --objective survival   --jobs 8
 ```
 
-Export bot manifest + fingerprints:
+## Tuning and Evolution
 
-```bash
-cargo run --release -- roster-manifest --output records/latest-roster-manifest.json
-```
-
-## Tuning & Evolution
-
-- `codex-tuner/`: automated adaptive-profile tuner for `codex-potential-adaptive`
-  - Run: `./codex-tuner/scripts/run-super-score-loop.sh`
-- `evolve/`: harness-agnostic evolution loop for the `evolve-candidate` SearchBot config
-  - Run: `./evolve/evolve.sh --harness codex` (or `claude`, `goose`, etc.)
-- `archive/claude-autopilot/`: standalone action-search lab kept for reference/comparison
+- `codex-tuner/`: adaptive-profile tuner for `codex-potential-adaptive`
+- `evolve/`: evolution loop for `evolve-candidate`
+- `archive/claude-autopilot/`: archived standalone lab code (reference only)
 
 ## Scripted Benchmarks
 
@@ -107,15 +87,12 @@ Canonical roster defaults are centralized in `scripts/bot-roster.sh`.
 - `./scripts/sync-records.sh`
 - `./scripts/prune-artifacts.sh` (`--mode apply` to execute deletion)
 
-## Output Artifacts
+## Artifact Retention
 
-Each benchmark output directory contains:
+- `checkpoints/` and `benchmarks/` are local artifact dirs and are gitignored.
+- Promote only AST3-compatible artifacts to `records/champions.json` + keep-lists.
+- Use strict checks before committing promoted artifacts:
 
-- `summary.json` complete structured benchmark report
-- `runs.csv` per-run metrics (`action_frames`, `turn_frames`, `thrust_frames`, `fire_frames` included)
-- `rankings.csv` aggregate leaderboard
-- `top-objective/`, `top-score/`, `top-survival/` tapes + metadata JSON
-
-## Proof Compatibility
-
-Each generated tape is verified immediately by `asteroids-verifier-core::verify_tape` with the provided frame bound, so all outputs remain rule-abiding and reproducible.
+```bash
+AUTOPILOT_STRICT_ARTIFACTS=1 cargo test --release --manifest-path autopilot/Cargo.toml --test champion_registry
+```
