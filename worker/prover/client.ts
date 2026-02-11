@@ -242,6 +242,14 @@ export async function getValidatedProverHealth(
     );
   }
 
+  const ruleset = typeof payload.ruleset === "string" ? payload.ruleset.trim() : "";
+  if (ruleset !== EXPECTED_RULESET) {
+    throw new ProverHealthCheckError(
+      `prover health ruleset mismatch: ${ruleset || "missing"} (expected ${EXPECTED_RULESET})`,
+      false,
+    );
+  }
+
   const expectedImageIdRaw = env.PROVER_EXPECTED_IMAGE_ID?.trim();
   if (expectedImageIdRaw && expectedImageIdRaw.length > 0) {
     const normalizedExpectedImageId = normalizeHex32Bytes(expectedImageIdRaw);
@@ -260,7 +268,7 @@ export async function getValidatedProverHealth(
     imageId: normalizedImageId,
     rulesDigest,
     rulesDigestHex: `0x${rulesDigest.toString(16).padStart(8, "0")}`,
-    ruleset: typeof payload.ruleset === "string" ? payload.ruleset : EXPECTED_RULESET,
+    ruleset,
   };
 
   proverHealthCache = {
