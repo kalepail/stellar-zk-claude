@@ -110,7 +110,7 @@ function shortestDeltaQ12_4(from: number, to: number, size: number): number {
   let delta = to - from;
   const half = size >> 1;
   if (delta > half) delta -= size;
-  if (delta < -half) delta += size;
+  else if (delta < -half) delta += size;
   return delta;
 }
 
