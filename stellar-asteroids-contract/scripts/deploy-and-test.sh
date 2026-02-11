@@ -287,7 +287,6 @@ test_submit_fixture() {
   fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   # Compute journal digest and generate mock seal
   local journal_digest_hex
@@ -310,6 +309,7 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -342,6 +342,7 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "duplicate $label rejected" "$dup_exit"
 }
@@ -370,7 +371,6 @@ test_reject_fixture() {
   fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -389,6 +389,7 @@ test_reject_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "$label rejected" "$exit_code"
@@ -539,7 +540,6 @@ test_submit_groth16_fixture() {
   fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -557,6 +557,7 @@ test_submit_groth16_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score (Groth16) failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -589,6 +590,7 @@ test_submit_groth16_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "Groth16 duplicate $label rejected" "$dup_exit"
 }
@@ -621,7 +623,6 @@ test_reject_groth16_fixture() {
   fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -635,6 +636,7 @@ test_reject_groth16_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "Groth16 $label rejected" "$exit_code"

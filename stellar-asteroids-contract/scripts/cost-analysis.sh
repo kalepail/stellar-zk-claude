@@ -303,7 +303,6 @@ measure_submit_score_groth16() {
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   measure_operation "submit_score (groth16)" \
     --id "$SCORE_CONTRACT_ID" \
@@ -312,7 +311,8 @@ measure_submit_score_groth16() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex"
+    --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR"
 }
 
 measure_submit_score_mock() {
@@ -328,7 +328,6 @@ measure_submit_score_mock() {
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-  journal_hex=$(append_claimant_to_journal_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -344,7 +343,8 @@ measure_submit_score_mock() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex"
+    --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR"
 }
 
 measure_set_image_id() {

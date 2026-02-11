@@ -40,25 +40,8 @@ fn base_journal_24(seed: u32, final_score: u32, rules_digest: u32) -> [u8; 24] {
     buf
 }
 
-fn claimant_strkey_bytes(claimant: &Address) -> Bytes {
-    claimant.to_string().to_bytes()
-}
-
-fn make_journal_with_claimant(env: &Env, seed: u32, final_score: u32, claimant: &Address) -> Bytes {
-    let mut journal =
-        Bytes::from_slice(env, &base_journal_24(seed, final_score, RULES_DIGEST_AST3));
-    let claimant_bytes = claimant_strkey_bytes(claimant);
-    journal.extend_from_slice(&claimant_bytes.len().to_le_bytes());
-    journal.append(&claimant_bytes);
-    journal
-}
-
-fn append_claimant(_env: &Env, base_journal_24: &Bytes, claimant: &Address) -> Bytes {
-    let mut out = base_journal_24.clone();
-    let claimant_bytes = claimant_strkey_bytes(claimant);
-    out.extend_from_slice(&claimant_bytes.len().to_le_bytes());
-    out.append(&claimant_bytes);
-    out
+fn make_journal(env: &Env, seed: u32, final_score: u32) -> Bytes {
+    Bytes::from_slice(env, &base_journal_24(seed, final_score, RULES_DIGEST_AST3))
 }
 
 fn force_ast3_rules_digest(env: &Env, journal_raw_24: &Bytes) -> Bytes {
@@ -78,9 +61,8 @@ fn dummy_seal(env: &Env) -> Bytes {
     Bytes::from_slice(env, &[0u8; 64])
 }
 
-fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address, Address) {
+fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address) {
     let admin = Address::generate(env);
-    let claimant = Address::generate(env);
 
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token_addr = sac.address();
@@ -96,7 +78,7 @@ fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address, Addr
     sac_admin.set_admin(&contract_id);
 
     let client = AsteroidsScoreContractClient::new(env, &contract_id);
-    (client, claimant, admin, token_addr)
+    (client, admin, token_addr)
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +90,7 @@ fn test_initialize() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _claimant, _admin, token_addr) = setup(&env);
+    let (client, _admin, token_addr) = setup(&env);
 
     assert_eq!(client.image_id(), dummy_image_id(&env));
     assert_eq!(client.token_id(), token_addr);
@@ -121,11 +103,12 @@ fn test_submit_score_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, token_addr) = setup(&env);
-    let journal = make_journal_with_claimant(&env, 1, 42, &claimant);
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let journal = make_journal(&env, 1, 42);
     let seal = dummy_seal(&env);
 
-    let score = client.submit_score(&seal, &journal);
+    let score = client.submit_score(&seal, &journal, &claimant);
     assert_eq!(score, 42);
     assert_eq!(client.best_score(&claimant, &1), 42);
 
@@ -137,16 +120,33 @@ fn test_submit_score_success() {
 }
 
 #[test]
-fn test_submit_score_duplicate_journal_rejected() {
+fn test_submit_score_duplicate_journal_rejected_same_claimant() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, _token_addr) = setup(&env);
-    let journal = make_journal_with_claimant(&env, 7, 77, &claimant);
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let journal = make_journal(&env, 7, 77);
     let seal = dummy_seal(&env);
 
-    client.submit_score(&seal, &journal);
-    let result = client.try_submit_score(&seal, &journal);
+    client.submit_score(&seal, &journal, &claimant);
+    let result = client.try_submit_score(&seal, &journal, &claimant);
+    assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
+}
+
+#[test]
+fn test_submit_score_duplicate_journal_rejected_different_claimant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant_a = Address::generate(&env);
+    let claimant_b = Address::generate(&env);
+    let journal = make_journal(&env, 7, 77);
+    let seal = dummy_seal(&env);
+
+    client.submit_score(&seal, &journal, &claimant_a);
+    let result = client.try_submit_score(&seal, &journal, &claimant_b);
     assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
 }
 
@@ -155,14 +155,15 @@ fn test_submit_score_not_improved_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, token_addr) = setup(&env);
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
-    let journal_a = make_journal_with_claimant(&env, 9, 80, &claimant);
-    client.submit_score(&seal, &journal_a);
+    let journal_a = make_journal(&env, 9, 80);
+    client.submit_score(&seal, &journal_a, &claimant);
 
-    let journal_b = make_journal_with_claimant(&env, 9, 79, &claimant);
-    let result = client.try_submit_score(&seal, &journal_b);
+    let journal_b = make_journal(&env, 9, 79);
+    let result = client.try_submit_score(&seal, &journal_b, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::ScoreNotImproved)));
 
     let token = TokenClient::new(&env, &token_addr);
@@ -175,14 +176,15 @@ fn test_submit_score_improvement_mints_delta() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, token_addr) = setup(&env);
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
-    let journal_a = make_journal_with_claimant(&env, 10, 10, &claimant);
-    assert_eq!(client.submit_score(&seal, &journal_a), 10);
+    let journal_a = make_journal(&env, 10, 10);
+    assert_eq!(client.submit_score(&seal, &journal_a, &claimant), 10);
 
-    let journal_b = make_journal_with_claimant(&env, 10, 25, &claimant);
-    assert_eq!(client.submit_score(&seal, &journal_b), 25);
+    let journal_b = make_journal(&env, 10, 25);
+    assert_eq!(client.submit_score(&seal, &journal_b, &claimant), 25);
     assert_eq!(client.best_score(&claimant, &10), 25);
 
     let token = TokenClient::new(&env, &token_addr);
@@ -194,17 +196,12 @@ fn test_submit_score_different_seeds_track_independently() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, token_addr) = setup(&env);
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
-    assert_eq!(
-        client.submit_score(&seal, &make_journal_with_claimant(&env, 1, 10, &claimant)),
-        10
-    );
-    assert_eq!(
-        client.submit_score(&seal, &make_journal_with_claimant(&env, 2, 20, &claimant)),
-        20
-    );
+    assert_eq!(client.submit_score(&seal, &make_journal(&env, 1, 10), &claimant), 10);
+    assert_eq!(client.submit_score(&seal, &make_journal(&env, 2, 20), &claimant), 20);
 
     assert_eq!(client.best_score(&claimant, &1), 10);
     assert_eq!(client.best_score(&claimant, &2), 20);
@@ -218,36 +215,17 @@ fn test_submit_score_invalid_journal_length() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _claimant, _admin, _token_addr) = setup(&env);
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
     let short_journal = Bytes::from_slice(&env, &[0u8; 20]);
-    let result = client.try_submit_score(&seal, &short_journal);
+    let result = client.try_submit_score(&seal, &short_journal, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::InvalidJournalLength)));
 
-    // Base fields + claimant_len=4, but no claimant bytes present.
-    let invalid_len = {
-        let mut j = Bytes::from_slice(&env, &base_journal_24(1, 5, RULES_DIGEST_AST3));
-        j.extend_from_slice(&4u32.to_le_bytes());
-        j
-    };
-    let result = client.try_submit_score(&seal, &invalid_len);
+    let long_journal = Bytes::from_slice(&env, &[0u8; 32]);
+    let result = client.try_submit_score(&seal, &long_journal, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::InvalidJournalLength)));
-}
-
-#[test]
-fn test_submit_score_invalid_claimant_address_length() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _claimant, _admin, _token_addr) = setup(&env);
-    let seal = dummy_seal(&env);
-
-    let mut journal = Bytes::from_slice(&env, &base_journal_24(1, 5, RULES_DIGEST_AST3));
-    journal.extend_from_slice(&0u32.to_le_bytes());
-
-    let result = client.try_submit_score(&seal, &journal);
-    assert_eq!(result, Err(Ok(ScoreError::InvalidClaimantAddressLength)));
 }
 
 #[test]
@@ -255,14 +233,12 @@ fn test_submit_score_wrong_rules_digest() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, _token_addr) = setup(&env);
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
-    let mut bad = Bytes::from_slice(&env, &base_journal_24(1, 42, 0xBAAD_F00D));
-    let claimant_bytes = claimant_strkey_bytes(&claimant);
-    bad.extend_from_slice(&claimant_bytes.len().to_le_bytes());
-    bad.append(&claimant_bytes);
+    let bad = Bytes::from_slice(&env, &base_journal_24(1, 42, 0xBAAD_F00D));
 
-    let result = client.try_submit_score(&seal, &bad);
+    let result = client.try_submit_score(&seal, &bad, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::InvalidRulesDigest)));
 }
 
@@ -271,11 +247,12 @@ fn test_submit_score_zero_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, claimant, _admin, token_addr) = setup(&env);
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
-    let journal = make_journal_with_claimant(&env, 1, 0, &claimant);
+    let journal = make_journal(&env, 1, 0);
 
-    let result = client.try_submit_score(&seal, &journal);
+    let result = client.try_submit_score(&seal, &journal, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
 
     let token = TokenClient::new(&env, &token_addr);
@@ -308,7 +285,7 @@ fn test_set_image_id_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _claimant, _admin, _token_addr) = setup(&env);
+    let (client, _admin, _token_addr) = setup(&env);
     let new_image_id = BytesN::from_array(&env, &[0xBB; 32]);
     client.set_image_id(&new_image_id);
     assert_eq!(client.image_id(), new_image_id);
@@ -319,7 +296,7 @@ fn test_set_admin() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _claimant, _admin, _token_addr) = setup(&env);
+    let (client, _admin, _token_addr) = setup(&env);
     let new_admin = Address::generate(&env);
     client.set_admin(&new_admin);
 
@@ -361,12 +338,7 @@ fn parse_image_id(env: &Env, hex: &str) -> BytesN<32> {
     BytesN::from_array(env, &id_arr)
 }
 
-fn run_fixture_test(
-    seal_hex: &str,
-    journal_raw_hex: &str,
-    image_id_hex: &str,
-    expected_score: u32,
-) {
+fn run_fixture_test(seal_hex: &str, journal_raw_hex: &str, image_id_hex: &str, expected_score: u32) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -385,11 +357,10 @@ fn run_fixture_test(
     let client = AsteroidsScoreContractClient::new(&env, &contract_id);
 
     let seal = hex_to_soroban_bytes(&env, seal_hex);
-    let base_journal_24 =
+    let journal_raw =
         force_ast3_rules_digest(&env, &hex_to_soroban_bytes(&env, journal_raw_hex));
-    let journal_raw = append_claimant(&env, &base_journal_24, &claimant);
 
-    let score = client.submit_score(&seal, &journal_raw);
+    let score = client.submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(score, expected_score);
 
     let token = TokenClient::new(&env, &token_addr);
@@ -398,7 +369,7 @@ fn run_fixture_test(
     let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
     assert!(client.is_claimed(&journal_digest));
 
-    let result = client.try_submit_score(&seal, &journal_raw);
+    let result = client.try_submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
 }
 
@@ -428,16 +399,15 @@ fn test_fixture_short_tape_score_0_rejected() {
         &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
     );
-    let base_journal_24 = force_ast3_rules_digest(
+    let journal_raw = force_ast3_rules_digest(
         &env,
         &hex_to_soroban_bytes(
             &env,
             include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
         ),
     );
-    let journal_raw = append_claimant(&env, &base_journal_24, &claimant);
 
-    let result = client.try_submit_score(&seal, &journal_raw);
+    let result = client.try_submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
     assert_eq!(TokenClient::new(&env, &token_addr).balance(&claimant), 0);
 
@@ -493,16 +463,15 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
     );
-    let short_base = force_ast3_rules_digest(
+    let short_journal = force_ast3_rules_digest(
         &env,
         &hex_to_soroban_bytes(
             &env,
             include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
         ),
     );
-    let short_journal = append_claimant(&env, &short_base, &claimant);
     assert_eq!(
-        client.try_submit_score(&short_seal, &short_journal),
+        client.try_submit_score(&short_seal, &short_journal, &claimant),
         Err(Ok(ScoreError::ZeroScoreNotAllowed))
     );
     assert_eq!(token.balance(&claimant), 0);
@@ -512,15 +481,14 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-medium-groth16.seal"),
     );
-    let medium_base = force_ast3_rules_digest(
+    let medium_journal = force_ast3_rules_digest(
         &env,
         &hex_to_soroban_bytes(
             &env,
             include_str!("../../../../test-fixtures/proof-medium-groth16.journal_raw"),
         ),
     );
-    let medium_journal = append_claimant(&env, &medium_base, &claimant);
-    assert_eq!(client.submit_score(&medium_seal, &medium_journal), 90);
+    assert_eq!(client.submit_score(&medium_seal, &medium_journal, &claimant), 90);
     assert_eq!(token.balance(&claimant), 90);
 
     // real game (score 32860, different seed)
@@ -528,14 +496,13 @@ fn test_fixture_all_three_cumulative() {
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
     );
-    let real_base = force_ast3_rules_digest(
+    let real_journal = force_ast3_rules_digest(
         &env,
         &hex_to_soroban_bytes(
             &env,
             include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
         ),
     );
-    let real_journal = append_claimant(&env, &real_base, &claimant);
-    assert_eq!(client.submit_score(&real_seal, &real_journal), 32860);
+    assert_eq!(client.submit_score(&real_seal, &real_journal, &claimant), 32860);
     assert_eq!(token.balance(&claimant), 90 + 32860);
 }

@@ -15,7 +15,7 @@
  * Output fixture format:
  *   {
  *     "seal":        "hex string (260 bytes = 4-byte selector + 256-byte proof)",
- *     "journal_raw": "hex string (24-byte base + claimant payload)",
+ *     "journal_raw": "hex string (24-byte base)",
  *     "image_id":    "hex string (32 bytes LE)",
  *     "journal":     { seed, frame_count, final_score, ... },
  *     "receipt_kind": "groth16",
@@ -122,7 +122,6 @@ interface ProverJobResponse {
         final_rng_state: number;
         tape_checksum: number;
         rules_digest: number;
-        claimant_address: string;
       };
       receipt: any;
       requested_receipt_kind: string;
@@ -259,14 +258,8 @@ function extractSeal(receipt: any): Uint8Array {
 }
 
 function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
-  const claimant = journal.claimant_address.trim();
-  const claimantBytes = new TextEncoder().encode(claimant);
-
-  // Journal format:
-  //   24-byte base (6 x u32 LE)
-  //   claimant_len u32 LE
-  //   claimant bytes
-  const buf = new Uint8Array(24 + 4 + claimantBytes.length);
+  // Journal format: 24-byte base (6 x u32 LE)
+  const buf = new Uint8Array(24);
   const view = new DataView(buf.buffer);
 
   view.setUint32(0, journal.seed, true);
@@ -275,8 +268,6 @@ function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journa
   view.setUint32(12, journal.final_rng_state, true);
   view.setUint32(16, journal.tape_checksum, true);
   view.setUint32(20, journal.rules_digest, true);
-  view.setUint32(24, claimantBytes.length >>> 0, true);
-  buf.set(claimantBytes, 28);
 
   return buf;
 }
@@ -363,7 +354,6 @@ async function main() {
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
   console.log(`  Rules digest: 0x${rulesDigest.toString(16)}`);
-  console.log(`  Claimant: ${proof.journal.claimant_address}`);
   console.log(
     `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
   );

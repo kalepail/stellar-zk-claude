@@ -21,9 +21,6 @@ enum DataKey {
 
 const RULES_DIGEST: u32 = 0x4153_5433; // "AST3"
 const JOURNAL_BASE_LEN: u32 = 24; // 6 x u32 (seed..rules_digest)
-const CLAIMANT_LEN_OFFSET: u32 = JOURNAL_BASE_LEN;
-const CLAIMANT_BYTES_OFFSET: u32 = JOURNAL_BASE_LEN + 4;
-const MAX_CLAIMANT_ADDR_LEN: u32 = 128;
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 14 days
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
 
@@ -35,8 +32,7 @@ pub enum ScoreError {
     InvalidRulesDigest = 2,
     JournalAlreadyClaimed = 3,
     ZeroScoreNotAllowed = 4,
-    InvalidClaimantAddressLength = 5,
-    ScoreNotImproved = 6,
+    ScoreNotImproved = 5,
 }
 
 #[contractevent]
@@ -69,35 +65,24 @@ impl AsteroidsScoreContract {
         extend_instance_ttl(&env);
     }
 
-    /// Verify a RISC Zero proof and mint score tokens to the claimant address
-    /// embedded in the journal.
+    /// Verify a RISC Zero proof and mint score tokens to the claimant address.
     ///
     /// - `seal`: variable-length proof seal bytes
-    /// - `journal_raw`: raw journal bytes:
-    ///   - 24-byte base (6 × u32 LE)
-    ///   - u32 claimant_address_len (LE)
-    ///   - claimant_address bytes (Stellar strkey, ASCII)
+    /// - `journal_raw`: raw 24-byte journal bytes (6 × u32 LE)
+    /// - `claimant`: recipient address for token minting and best-score tracking
     ///
     /// Returns the claimant's new best score for this seed.
-    pub fn submit_score(env: Env, seal: Bytes, journal_raw: Bytes) -> Result<u32, ScoreError> {
+    pub fn submit_score(
+        env: Env,
+        seal: Bytes,
+        journal_raw: Bytes,
+        claimant: Address,
+    ) -> Result<u32, ScoreError> {
         extend_instance_ttl(&env);
 
-        // Journal must contain base fields and claimant length.
-        if journal_raw.len() < CLAIMANT_BYTES_OFFSET {
+        if journal_raw.len() != JOURNAL_BASE_LEN {
             return Err(ScoreError::InvalidJournalLength);
         }
-
-        let claimant_len = read_u32_le(&journal_raw, CLAIMANT_LEN_OFFSET);
-        if claimant_len == 0 || claimant_len > MAX_CLAIMANT_ADDR_LEN {
-            return Err(ScoreError::InvalidClaimantAddressLength);
-        }
-        if journal_raw.len() != CLAIMANT_BYTES_OFFSET + claimant_len {
-            return Err(ScoreError::InvalidJournalLength);
-        }
-
-        let claimant_bytes =
-            journal_raw.slice(CLAIMANT_BYTES_OFFSET..(CLAIMANT_BYTES_OFFSET + claimant_len));
-        let claimant = Address::from_string_bytes(&claimant_bytes);
 
         // Decode seed and score.
         let seed = read_u32_le(&journal_raw, 0);
