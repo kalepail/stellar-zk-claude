@@ -1,9 +1,10 @@
 import type { ProofCoordinatorDO } from "./durable/coordinator";
-import type { ProofQueueMessage } from "./types";
+import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 
 export interface WorkerEnv {
   ASSETS: Fetcher;
   PROOF_QUEUE: Queue<ProofQueueMessage>;
+  CLAIM_QUEUE: Queue<ClaimQueueMessage>;
   PROOF_COORDINATOR: DurableObjectNamespace<ProofCoordinatorDO>;
   PROOF_ARTIFACTS: R2Bucket;
   PROVER_BASE_URL: string;
@@ -21,4 +22,7 @@ export interface WorkerEnv {
   MAX_COMPLETED_JOBS?: string;
   COMPLETED_JOB_RETENTION_MS?: string;
   ALLOW_INSECURE_PROVER_URL?: string;
+  CLAIM_RELAY_URL?: string;
+  CLAIM_RELAY_API_KEY?: string;
+  CLAIM_RELAY_REQUEST_TIMEOUT_MS?: string;
 }

@@ -35,6 +35,28 @@ export interface ProverTracking {
   recoveryAttempts: number;
 }
 
+export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
+
+export interface ClaimFallbackPayload {
+  claimantAddress: string;
+  journalRawHex: string;
+  journalDigestHex: string;
+  proofArtifactKey: string;
+  note: string;
+}
+
+export interface ClaimTracking {
+  claimantAddress: string;
+  status: ClaimStatus;
+  attempts: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  submittedAt: string | null;
+  txHash: string | null;
+  fallbackPayload: ClaimFallbackPayload | null;
+}
+
 export interface ProofJournal {
   seed: number;
   frame_count: number;
@@ -42,7 +64,6 @@ export interface ProofJournal {
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
-  claimant_address: string;
 }
 
 export interface ProofStats {
@@ -76,6 +97,7 @@ export interface ProofJobPublic {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
@@ -183,10 +205,14 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function submitProofJob(tapeBytes: Uint8Array): Promise<SubmitProofJobResponse> {
+export async function submitProofJob(
+  tapeBytes: Uint8Array,
+  claimantAddress: string,
+): Promise<SubmitProofJobResponse> {
   const body = new Uint8Array(tapeBytes).buffer;
   const headers: Record<string, string> = {
     "content-type": "application/octet-stream",
+    "x-claimant-address": claimantAddress,
   };
 
   const response = await fetchWithTimeout(

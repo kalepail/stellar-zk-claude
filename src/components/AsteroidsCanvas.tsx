@@ -6,7 +6,6 @@ export interface CompletedGameRun {
   record: GameRunRecord;
   frameCount: number;
   endedAtMs: number;
-  claimantLock: string | null;
 }
 
 interface AsteroidsCanvasProps {
@@ -46,7 +45,6 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
             record,
             frameCount: record.inputs.length,
             endedAtMs: Date.now(),
-            claimantLock: null,
           });
         }
       }

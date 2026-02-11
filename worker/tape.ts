@@ -5,7 +5,6 @@ import {
   TAPE_MAGIC,
   TAPE_VERSION,
 } from "./constants";
-import { validateClaimantStrKey } from "../shared/stellar/strkey";
 import type { TapeMetadata } from "./types";
 
 function crc32AndValidateInputs(data: Uint8Array, inputsStart: number, inputsEnd: number): number {
@@ -64,29 +63,6 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
   if (bytes.length !== expectedLength) {
     throw new Error(`tape size mismatch: expected ${expectedLength} bytes, got ${bytes.length}`);
   }
-
-  // Claimant address: 56 bytes at offset 16 (ASCII Stellar strkey, no padding).
-  const claimantRaw = bytes.subarray(16, 72);
-  let claimantEnd = claimantRaw.length;
-  while (claimantEnd > 0 && claimantRaw[claimantEnd - 1] === 0) {
-    claimantEnd -= 1;
-  }
-  if (claimantEnd === 0) {
-    throw new Error("tape claimantAddress must be non-empty");
-  }
-  if (claimantEnd !== claimantRaw.length) {
-    throw new Error("tape claimantAddress must be a 56-char stellar strkey (no padding)");
-  }
-  for (let i = 0; i < claimantRaw.length; i += 1) {
-    if (claimantRaw[i] === 0) {
-      throw new Error("tape claimantAddress contains embedded NUL bytes");
-    }
-  }
-  let claimantAddress = "";
-  for (let i = 0; i < claimantRaw.length; i += 1) {
-    claimantAddress += String.fromCharCode(claimantRaw[i]);
-  }
-  validateClaimantStrKey(claimantAddress);
 
   const footerOffset = TAPE_HEADER_SIZE + frameCount;
   const finalScore = view.getUint32(footerOffset, true);

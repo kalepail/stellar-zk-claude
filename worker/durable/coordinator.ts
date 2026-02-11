@@ -14,6 +14,7 @@ import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
 import type {
+  ClaimFallbackPayload,
   CreateJobResult,
   ProofJobRecord,
   ProofResultSummary,
@@ -28,6 +29,12 @@ import {
   retryDelaySeconds,
   safeErrorMessage,
 } from "../utils";
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
@@ -48,6 +55,7 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     queue: job.queue,
     prover: job.prover,
     result: job.result,
+    claim: job.claim,
     error: job.error,
   };
 }
@@ -179,11 +187,19 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return null;
     }
 
-    if (typeof job.prover.recoveryAttempts !== "number") {
-      job.prover.recoveryAttempts = 0;
-    }
-    if (typeof job.prover.segmentLimitPo2 !== "number") {
-      job.prover.segmentLimitPo2 = null;
+    const hasRecoveryAttempts = typeof job.prover?.recoveryAttempts === "number";
+    const hasValidSegmentLimit =
+      typeof job.prover?.segmentLimitPo2 === "number" || job.prover?.segmentLimitPo2 === null;
+    const hasClaimMetadata = typeof job.claim?.claimantAddress === "string";
+
+    if (!hasRecoveryAttempts || !hasValidSegmentLimit || !hasClaimMetadata) {
+      console.warn(
+        `[proof-worker] dropping unsupported legacy job schema for ${jobId}; clearing stale record`,
+      );
+      await this.ctx.storage.delete(jobKey(jobId));
+      await this.releaseActiveIfMatches(jobId);
+      await this.deleteArtifact(job.tape?.key);
+      return null;
     }
 
     return job;
@@ -221,7 +237,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return fallbackSegment;
   }
 
-  async createJob(tapeInfo: Omit<ProofTapeInfo, "key">): Promise<CreateJobResult> {
+  async createJob(
+    tapeInfo: Omit<ProofTapeInfo, "key"> & { claimantAddress: string },
+  ): Promise<CreateJobResult> {
+    const { claimantAddress, ...proofTape } = tapeInfo;
     const activeJobId = await this.getActiveJobId();
     if (activeJobId) {
       const activeJob = await this.loadJob(activeJobId);
@@ -264,7 +283,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       updatedAt: now,
       completedAt: null,
       tape: {
-        ...tapeInfo,
+        ...proofTape,
         key: tapeKey(jobId),
       },
       queue: {
@@ -283,6 +302,17 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         recoveryAttempts: 0,
       },
       result: null,
+      claim: {
+        claimantAddress,
+        status: "queued",
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: null,
+        txHash: null,
+        fallbackPayload: null,
+      },
       error: null,
     };
 
@@ -420,9 +450,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       summary,
     };
     job.error = null;
+    job.claim.status = "queued";
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    job.claim.fallbackPayload = null;
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
+    await this.enqueueClaimJob(jobId);
     try {
       await this.pruneCompletedJobs();
     } catch (error) {
@@ -448,6 +483,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.prover.status = "failed";
       job.prover.lastPolledAt = now;
     }
+    if (job.claim.status !== "succeeded") {
+      job.claim.status = "failed";
+      job.claim.lastError = `proof failed before on-chain claim: ${reason}`;
+      job.claim.nextRetryAt = null;
+      job.claim.fallbackPayload = null;
+    }
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
@@ -456,6 +497,158 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     } catch (error) {
       console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
     }
+    return job;
+  }
+
+  private async buildClaimFallbackPayload(
+    job: ProofJobRecord,
+    note: string,
+  ): Promise<ClaimFallbackPayload | null> {
+    if (!job.result?.summary) {
+      return null;
+    }
+
+    const journal = job.result.summary.journal;
+    const journalRaw = new Uint8Array(24);
+    const view = new DataView(journalRaw.buffer);
+    view.setUint32(0, journal.seed >>> 0, true);
+    view.setUint32(4, journal.frame_count >>> 0, true);
+    view.setUint32(8, journal.final_score >>> 0, true);
+    view.setUint32(12, journal.final_rng_state >>> 0, true);
+    view.setUint32(16, journal.tape_checksum >>> 0, true);
+    view.setUint32(20, journal.rules_digest >>> 0, true);
+
+    let digestBytes: Uint8Array;
+    try {
+      digestBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", journalRaw));
+    } catch (error) {
+      console.warn(
+        `[proof-worker] failed hashing journal for fallback payload: ${safeErrorMessage(error)}`,
+      );
+      return null;
+    }
+
+    return {
+      claimantAddress: job.claim.claimantAddress,
+      journalRawHex: bytesToHex(journalRaw),
+      journalDigestHex: bytesToHex(digestBytes),
+      proofArtifactKey: job.result.artifactKey,
+      note,
+    };
+  }
+
+  private async enqueueClaimJob(jobId: string): Promise<void> {
+    const job = await this.loadJob(jobId);
+    if (!job || !job.result) {
+      return;
+    }
+    if (job.claim.status === "succeeded") {
+      return;
+    }
+
+    try {
+      await this.env.CLAIM_QUEUE.send(
+        { jobId },
+        {
+          contentType: "json",
+        },
+      );
+      job.claim.status = "queued";
+      job.claim.nextRetryAt = null;
+      await this.saveJob(job);
+    } catch (error) {
+      job.claim.status = "failed";
+      job.claim.lastError = `failed enqueueing claim job: ${safeErrorMessage(error)}`;
+      job.claim.nextRetryAt = null;
+      job.claim.fallbackPayload = await this.buildClaimFallbackPayload(
+        job,
+        "relay queue enqueue failed; submit manually",
+      );
+      await this.saveJob(job);
+    }
+  }
+
+  async beginClaimAttempt(jobId: string, attempts: number): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || job.status !== "succeeded") {
+      return job;
+    }
+    if (job.claim.status === "succeeded") {
+      return job;
+    }
+    if (!job.result?.summary) {
+      return job;
+    }
+
+    job.claim.status = "submitting";
+    job.claim.attempts = Math.max(job.claim.attempts, attempts);
+    job.claim.lastAttemptAt = nowIso();
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+    return job;
+  }
+
+  async markClaimRetry(
+    jobId: string,
+    reason: string,
+    nextRetryAt: string,
+  ): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || job.status !== "succeeded") {
+      return job;
+    }
+    if (job.claim.status === "succeeded") {
+      return job;
+    }
+
+    job.claim.status = "retrying";
+    job.claim.lastError = reason;
+    job.claim.nextRetryAt = nextRetryAt;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+    return job;
+  }
+
+  async markClaimSucceeded(jobId: string, txHash: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || job.status !== "succeeded") {
+      return job;
+    }
+    if (job.claim.status === "succeeded") {
+      return job;
+    }
+
+    job.claim.status = "succeeded";
+    job.claim.submittedAt = nowIso();
+    job.claim.txHash = txHash;
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    job.claim.fallbackPayload = null;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+    return job;
+  }
+
+  async markClaimFailed(jobId: string, reason: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || job.status !== "succeeded") {
+      return job;
+    }
+    if (job.claim.status === "succeeded") {
+      return job;
+    }
+
+    job.claim.status = "failed";
+    job.claim.lastError = reason;
+    job.claim.nextRetryAt = null;
+    job.claim.fallbackPayload = await this.buildClaimFallbackPayload(
+      job,
+      "relay claim failed; submit manually",
+    );
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
     return job;
   }
 

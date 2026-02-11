@@ -1,8 +1,8 @@
 export const COORDINATOR_OBJECT_NAME = "global-proof-coordinator";
 
 export const TAPE_MAGIC = 0x5a4b5450;
-export const TAPE_VERSION = 1;
-export const TAPE_HEADER_SIZE = 72;
+export const TAPE_VERSION = 2;
+export const TAPE_HEADER_SIZE = 16;
 export const TAPE_FOOTER_SIZE = 12;
 
 export const DEFAULT_MAX_TAPE_BYTES = 2 * 1024 * 1024;

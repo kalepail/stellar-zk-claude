@@ -6,6 +6,7 @@ import { resultKey } from "../keys";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
+import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -172,10 +173,19 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, safeErrorMessage(error));
     }
 
+    const rawClaimant = c.req.header("x-claimant-address") ?? "";
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimant);
+    } catch (error) {
+      return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
+    }
+
     const coordinator = coordinatorStub(c.env);
     const createResult = await coordinator.createJob({
       sizeBytes: tapeBytes.byteLength,
       metadata,
+      claimantAddress,
     });
 
     if (!createResult.accepted) {

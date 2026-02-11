@@ -11,7 +11,7 @@ import {
   type ProofJobPublic,
   type ProofJobStatus,
 } from "./proof/api";
-import { deserializeTape, serializeTape } from "./game/tape";
+import { deserializeTape, serializeTape, TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE } from "./game/tape";
 import type {
   SmartAccountConfig,
   SmartAccountRelayerMode,
@@ -70,6 +70,25 @@ function statusLabel(status: ProofJobStatus): string {
 
 function statusClassName(status: ProofJobStatus | "idle"): string {
   return `status-chip status-chip--${status}`;
+}
+
+function claimStatusLabel(
+  status: "queued" | "submitting" | "retrying" | "succeeded" | "failed",
+): string {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "submitting":
+      return "Submitting";
+    case "retrying":
+      return "Retrying";
+    case "succeeded":
+      return "Submitted";
+    case "failed":
+      return "Failed";
+    default:
+      return status;
+  }
 }
 
 type WalletAction = "idle" | "restoring" | "connecting" | "creating" | "disconnecting";
@@ -178,7 +197,6 @@ function App() {
             },
             frameCount: tape.header.frameCount,
             endedAtMs: Date.now(),
-            claimantLock: tape.header.claimantAddress,
           });
           setProofError(null);
           setProofJob((current) =>
@@ -201,12 +219,6 @@ function App() {
       setProofError("zero-score runs are not accepted for proving or token minting");
       return;
     }
-    if (latestRun.claimantLock && latestRun.claimantLock !== claimantAddress) {
-      setProofError(
-        `this tape is locked to claimant ${latestRun.claimantLock}; connect that wallet to submit`,
-      );
-      return;
-    }
     if (claimantAddress.trim().length === 0) {
       setProofError("connect a smart wallet before submitting a proof");
       return;
@@ -219,7 +231,6 @@ function App() {
         latestRun.record.inputs,
         latestRun.record.finalScore,
         latestRun.record.finalRngState,
-        claimantAddress,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed to serialize tape";
@@ -231,7 +242,7 @@ function App() {
     setProofError(null);
 
     try {
-      const response = await submitProofJob(tapeBytes);
+      const response = await submitProofJob(tapeBytes, claimantAddress);
       setProofJob(response.job);
     } catch (error) {
       if (error instanceof ProofApiError) {
@@ -442,18 +453,13 @@ function App() {
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
   const walletConnected = claimantAddress.trim().length > 0;
   const walletBusy = walletAction !== "idle";
-  const claimantLockMismatch =
-    Boolean(latestRun?.claimantLock) &&
-    walletConnected &&
-    latestRun?.claimantLock !== claimantAddress;
   const canSubmit =
     Boolean(latestRun) &&
     hasPositiveScore &&
     !isSubmitting &&
     !proofBusy &&
     walletConnected &&
-    !walletBusy &&
-    !claimantLockMismatch;
+    !walletBusy;
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
@@ -545,7 +551,9 @@ function App() {
             </div>
             <div>
               <dt>Tape Bytes</dt>
-              <dd>{(72 + latestRun.frameCount + 12).toLocaleString()}</dd>
+              <dd>
+                {(TAPE_HEADER_SIZE + latestRun.frameCount + TAPE_FOOTER_SIZE).toLocaleString()}
+              </dd>
             </div>
             <div>
               <dt>Captured</dt>
@@ -563,18 +571,11 @@ function App() {
         {latestRun && !walletConnected ? (
           <p className="proof-warning">Connect a smart wallet before submitting a proof.</p>
         ) : null}
-        {latestRun && claimantLockMismatch ? (
-          <p className="proof-warning">
-            Loaded tape claimant does not match the connected wallet. Connect{" "}
-            <code>{latestRun.claimantLock}</code> to submit.
-          </p>
-        ) : null}
-
         <div className="wallet-panel">
           <div className="wallet-panel__header">
             <div className="wallet-panel__copy">
               <h3>Smart Wallet</h3>
-              <p>Proof claims are locked to the connected smart-account contract address.</p>
+              <p>Proof claims are relayed on-chain to the connected smart-account address.</p>
             </div>
             <span className={walletStatusClassName}>{walletStatusText}</span>
           </div>
@@ -702,7 +703,34 @@ function App() {
                   <strong>Segments:</strong>{" "}
                   {proofJob.result.summary.stats.segments.toLocaleString()}
                 </p>
+                <p>
+                  <strong>Claim:</strong> {claimStatusLabel(proofJob.claim.status)}
+                </p>
+                {proofJob.claim.txHash ? (
+                  <p>
+                    <strong>Tx Hash:</strong> <code>{proofJob.claim.txHash}</code>
+                  </p>
+                ) : null}
               </div>
+            ) : null}
+            {proofJob.claim.lastError ? (
+              <p className="proof-warning">
+                <strong>Claim Relay:</strong> {proofJob.claim.lastError}
+              </p>
+            ) : null}
+            {proofJob.claim.fallbackPayload ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const payload = JSON.stringify(proofJob.claim.fallbackPayload, null, 2);
+                  const blob = new Blob([payload], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  window.open(url, "_blank");
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Open Manual Claim Payload
+              </button>
             ) : null}
             {proofJob.error ? (
               <p className="proof-error-inline">

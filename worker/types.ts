@@ -12,6 +12,10 @@ export interface ProofQueueMessage {
   jobId: string;
 }
 
+export interface ClaimQueueMessage {
+  jobId: string;
+}
+
 export interface TapeMetadata {
   seed: number;
   frameCount: number;
@@ -33,7 +37,6 @@ export interface ProofJournal {
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
-  claimant_address: string;
 }
 
 export interface ProofStats {
@@ -74,6 +77,28 @@ export interface ProverTracking {
   recoveryAttempts: number;
 }
 
+export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
+
+export interface ClaimFallbackPayload {
+  claimantAddress: string;
+  journalRawHex: string;
+  journalDigestHex: string;
+  proofArtifactKey: string;
+  note: string;
+}
+
+export interface ClaimTracking {
+  claimantAddress: string;
+  status: ClaimStatus;
+  attempts: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  submittedAt: string | null;
+  txHash: string | null;
+  fallbackPayload: ClaimFallbackPayload | null;
+}
+
 export interface ProofJobRecord {
   jobId: string;
   status: ProofJobStatus;
@@ -84,6 +109,7 @@ export interface ProofJobRecord {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
@@ -102,6 +128,7 @@ export interface PublicProofJob {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
