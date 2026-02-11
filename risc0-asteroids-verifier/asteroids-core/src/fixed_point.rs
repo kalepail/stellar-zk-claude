@@ -146,8 +146,7 @@ pub fn shortest_delta_q12_4(from: i32, to: i32, size: i32) -> i32 {
 
     if delta > half {
         delta -= size;
-    }
-    if delta < -half {
+    } else if delta < -half {
         delta += size;
     }
 
