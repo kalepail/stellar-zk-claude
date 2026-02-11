@@ -71,8 +71,7 @@ const configuredNetworkPassphrase =
 const config: SmartAccountConfig = {
   rpcUrl: getEnvValue("VITE_SMART_ACCOUNT_RPC_URL") ?? TESTNET_RPC_URL,
   networkPassphrase: configuredNetworkPassphrase,
-  accountWasmHash:
-    getEnvValue("VITE_SMART_ACCOUNT_WASM_HASH") ?? TESTNET_ACCOUNT_WASM_HASH,
+  accountWasmHash: getEnvValue("VITE_SMART_ACCOUNT_WASM_HASH") ?? TESTNET_ACCOUNT_WASM_HASH,
   webauthnVerifierAddress:
     getEnvValue("VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS") ?? TESTNET_WEBAUTHN_VERIFIER,
   relayerUrl:

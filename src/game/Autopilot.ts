@@ -415,7 +415,10 @@ export class Autopilot {
     };
   }
 
-  private calculateLeadPosition(ship: Ship, entity: { x: number; y: number; vx: number; vy: number }): Vec2 {
+  private calculateLeadPosition(
+    ship: Ship,
+    entity: { x: number; y: number; vx: number; vy: number },
+  ): Vec2 {
     const delta = shortestDelta(ship.x, ship.y, entity.x, entity.y);
     const distance = Math.sqrt(delta.x * delta.x + delta.y * delta.y);
 

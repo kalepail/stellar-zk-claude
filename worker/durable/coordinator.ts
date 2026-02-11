@@ -565,9 +565,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           const submitResult = await submitToProver(
             this.env,
             tapeBytes,
-            fallbackSegmentPo2 !== null
-              ? { segmentLimitPo2: fallbackSegmentPo2 }
-              : {},
+            fallbackSegmentPo2 !== null ? { segmentLimitPo2: fallbackSegmentPo2 } : {},
           );
 
           if (submitResult.type === "success") {

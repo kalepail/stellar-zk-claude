@@ -183,19 +183,21 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function submitProofJob(
-  tapeBytes: Uint8Array,
-): Promise<SubmitProofJobResponse> {
+export async function submitProofJob(tapeBytes: Uint8Array): Promise<SubmitProofJobResponse> {
   const body = new Uint8Array(tapeBytes).buffer;
   const headers: Record<string, string> = {
     "content-type": "application/octet-stream",
   };
 
-  const response = await fetchWithTimeout("/api/proofs/jobs", {
-    method: "POST",
-    headers,
-    body,
-  }, 30_000);
+  const response = await fetchWithTimeout(
+    "/api/proofs/jobs",
+    {
+      method: "POST",
+      headers,
+      body,
+    },
+    30_000,
+  );
 
   if (!response.ok) {
     throw await parseError(response);
@@ -205,9 +207,13 @@ export async function submitProofJob(
 }
 
 export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
-  const response = await fetchWithTimeout(`/api/proofs/jobs/${jobId}`, {
-    method: "GET",
-  }, 10_000);
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}`,
+    {
+      method: "GET",
+    },
+    10_000,
+  );
 
   if (!response.ok) {
     throw await parseError(response);
@@ -217,9 +223,13 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
 }
 
 export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse> {
-  const response = await fetchWithTimeout(`/api/proofs/jobs/${jobId}`, {
-    method: "DELETE",
-  }, 10_000);
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}`,
+    {
+      method: "DELETE",
+    },
+    10_000,
+  );
 
   if (!response.ok) {
     throw await parseError(response);
@@ -229,9 +239,13 @@ export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse
 }
 
 export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
-  const response = await fetchWithTimeout("/api/health", {
-    method: "GET",
-  }, 10_000);
+  const response = await fetchWithTimeout(
+    "/api/health",
+    {
+      method: "GET",
+    },
+    10_000,
+  );
 
   if (!response.ok) {
     throw await parseError(response);

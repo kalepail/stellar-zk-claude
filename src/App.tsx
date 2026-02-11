@@ -135,11 +135,9 @@ function App() {
   const [walletAction, setWalletAction] = useState<WalletAction>("idle");
   const [walletUserName, setWalletUserName] = useState("");
   const [walletError, setWalletError] = useState<string | null>(null);
-  const [walletConfig, setWalletConfig] = useState<Pick<SmartAccountConfig, "networkPassphrase">>(
-    {
-      networkPassphrase: "Test SDF Network ; September 2015",
-    },
-  );
+  const [walletConfig, setWalletConfig] = useState<Pick<SmartAccountConfig, "networkPassphrase">>({
+    networkPassphrase: "Test SDF Network ; September 2015",
+  });
   const [walletRelayerMode, setWalletRelayerMode] = useState<SmartAccountRelayerMode>("disabled");
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResponse | null>(null);
   const [gatewayHealthError, setGatewayHealthError] = useState<string | null>(null);

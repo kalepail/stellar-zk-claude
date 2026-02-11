@@ -1,10 +1,4 @@
-import {
-  MAX_DEBRIS,
-  MAX_PARTICLES,
-  SHAKE_DECAY,
-  WORLD_HEIGHT,
-  WORLD_WIDTH,
-} from "./constants";
+import { MAX_DEBRIS, MAX_PARTICLES, SHAKE_DECAY, WORLD_HEIGHT, WORLD_WIDTH } from "./constants";
 import { BAMToRadians, displaceQ12_4, fromQ12_4 } from "./fixed-point";
 import { clamp, visualRandomInt, visualRandomRange, wrapX, wrapY } from "./math";
 import type {
@@ -459,11 +453,7 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  private drawAsteroids(
-    ctx: CanvasRenderingContext2D,
-    asteroids: Asteroid[],
-    alpha: number,
-  ): void {
+  private drawAsteroids(ctx: CanvasRenderingContext2D, asteroids: Asteroid[], alpha: number): void {
     ctx.shadowBlur = 10;
     ctx.shadowColor = "#6b7280";
 
@@ -473,9 +463,23 @@ export class GameRenderer {
       const vertices = asteroid.vertices;
       const vertexCount = vertices.length;
 
-      const renderX = lerpWrap(fromQ12_4(asteroid.prevX), fromQ12_4(asteroid.x), alpha, WORLD_WIDTH);
-      const renderY = lerpWrap(fromQ12_4(asteroid.prevY), fromQ12_4(asteroid.y), alpha, WORLD_HEIGHT);
-      const renderAngle = lerpAngle(BAMToRadians(asteroid.prevAngle), BAMToRadians(asteroid.angle), alpha);
+      const renderX = lerpWrap(
+        fromQ12_4(asteroid.prevX),
+        fromQ12_4(asteroid.x),
+        alpha,
+        WORLD_WIDTH,
+      );
+      const renderY = lerpWrap(
+        fromQ12_4(asteroid.prevY),
+        fromQ12_4(asteroid.y),
+        alpha,
+        WORLD_HEIGHT,
+      );
+      const renderAngle = lerpAngle(
+        BAMToRadians(asteroid.prevAngle),
+        BAMToRadians(asteroid.angle),
+        alpha,
+      );
 
       ctx.save();
       ctx.translate(renderX, renderY);
