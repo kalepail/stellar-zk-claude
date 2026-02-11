@@ -72,33 +72,17 @@ impl JobStore {
                 opt_max_frames        INTEGER NOT NULL,
                 opt_receipt_kind      TEXT NOT NULL,
                 opt_segment_limit_po2 INTEGER NOT NULL,
-                opt_proof_mode        TEXT NOT NULL,
-                opt_verify_mode       TEXT NOT NULL,
-                opt_accelerator       TEXT NOT NULL,
-                result_path         TEXT,
-                error               TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-            CREATE INDEX IF NOT EXISTS idx_jobs_finished_at ON jobs(finished_at);",
+                 opt_proof_mode        TEXT NOT NULL,
+                 opt_verify_mode       TEXT NOT NULL,
+                 opt_accelerator       TEXT NOT NULL,
+                 result_path         TEXT,
+                 error               TEXT,
+                 error_code          TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+             CREATE INDEX IF NOT EXISTS idx_jobs_finished_at ON jobs(finished_at);",
         )
         .map_err(|e| format!("failed to create schema: {e}"))?;
-
-        // Idempotent migration: add error_code column if it doesn't exist.
-        conn.execute("ALTER TABLE jobs ADD COLUMN error_code TEXT", [])
-            .ok();
-
-        // Forward migration: ensure explicit mode columns exist on older DBs.
-        // Old rows default to secure/policy; no boolean-column backfill is retained.
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN opt_proof_mode TEXT NOT NULL DEFAULT 'secure'",
-            [],
-        )
-        .ok();
-        conn.execute(
-            "ALTER TABLE jobs ADD COLUMN opt_verify_mode TEXT NOT NULL DEFAULT 'policy'",
-            [],
-        )
-        .ok();
         let store = Self {
             conn: Mutex::new(conn),
             results_dir,

@@ -41,7 +41,7 @@ Health check:
 curl -s http://127.0.0.1:8080/health | jq
 ```
 
-Health includes compatibility fields (`image_id`, `rules_digest`, `rules_digest_hex`, `ruleset`)
+Health includes prover identity fields (`image_id`, `rules_digest`, `rules_digest_hex`, `ruleset`)
 so downstream services can verify they are targeting the expected prover build.
 
 Submit a job:
