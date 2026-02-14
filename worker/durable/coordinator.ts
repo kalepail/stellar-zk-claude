@@ -381,6 +381,73 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return out;
   }
 
+  async listLeaderboardProfiles(): Promise<PlayerProfileRecord[]> {
+    const listPageSize = 256;
+    const profiles: PlayerProfileRecord[] = [];
+    let startAfter: string | undefined;
+
+    /* eslint-disable no-await-in-loop */
+    while (true) {
+      const page = await this.listLeaderboardProfilesPage({
+        startAfter,
+        limit: listPageSize,
+      });
+      if (page.profiles.length === 0) {
+        break;
+      }
+
+      profiles.push(...page.profiles);
+      if (!page.nextStartAfter || page.done) {
+        break;
+      }
+      startAfter = page.nextStartAfter;
+    }
+    /* eslint-enable no-await-in-loop */
+
+    return profiles;
+  }
+
+  async listLeaderboardProfilesPage(options?: {
+    startAfter?: string | null;
+    limit?: number | null;
+  }): Promise<{
+    profiles: PlayerProfileRecord[];
+    nextStartAfter: string | null;
+    done: boolean;
+  }> {
+    const limitRaw = options?.limit ?? 256;
+    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
+    const startAfter = options?.startAfter ?? undefined;
+    const page = await this.ctx.storage.list<PlayerProfileRecord>({
+      prefix: PROFILE_KEY_PREFIX,
+      startAfter: startAfter ?? undefined,
+      limit,
+    });
+    if (page.size === 0) {
+      return {
+        profiles: [],
+        nextStartAfter: null,
+        done: true,
+      };
+    }
+
+    const profiles: PlayerProfileRecord[] = [];
+    for (const [, value] of page) {
+      if (value?.claimantAddress) {
+        profiles.push(value);
+      }
+    }
+
+    const pageKeys = Array.from(page.keys());
+    const lastKey = pageKeys[pageKeys.length - 1];
+    const done = !lastKey || page.size < limit;
+    return {
+      profiles,
+      nextStartAfter: done ? null : lastKey,
+      done,
+    };
+  }
+
   async upsertProfile(
     claimantAddress: string,
     updates: { username: string | null; linkUrl: string | null },
@@ -403,31 +470,64 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     /* eslint-disable no-await-in-loop */
     while (true) {
-      const page = await this.ctx.storage.list<LeaderboardEventRecord>({
-        prefix: LEADERBOARD_EVENT_KEY_PREFIX,
+      const page = await this.listLeaderboardEventsPage({
         startAfter,
         limit: listPageSize,
       });
-      if (page.size === 0) {
+      if (page.events.length === 0) {
         break;
       }
 
-      for (const [, value] of page) {
-        if (value?.eventId) {
-          events.push(value);
-        }
-      }
-
-      const pageKeys = Array.from(page.keys());
-      const lastKey = pageKeys[pageKeys.length - 1];
-      if (!lastKey || page.size < listPageSize) {
+      events.push(...page.events);
+      if (!page.nextStartAfter || page.done) {
         break;
       }
-      startAfter = lastKey;
+      startAfter = page.nextStartAfter;
     }
     /* eslint-enable no-await-in-loop */
 
     return events;
+  }
+
+  async listLeaderboardEventsPage(options?: {
+    startAfter?: string | null;
+    limit?: number | null;
+  }): Promise<{
+    events: LeaderboardEventRecord[];
+    nextStartAfter: string | null;
+    done: boolean;
+  }> {
+    const limitRaw = options?.limit ?? 256;
+    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
+    const startAfter = options?.startAfter ?? undefined;
+    const page = await this.ctx.storage.list<LeaderboardEventRecord>({
+      prefix: LEADERBOARD_EVENT_KEY_PREFIX,
+      startAfter: startAfter ?? undefined,
+      limit,
+    });
+    if (page.size === 0) {
+      return {
+        events: [],
+        nextStartAfter: null,
+        done: true,
+      };
+    }
+
+    const events: LeaderboardEventRecord[] = [];
+    for (const [, value] of page) {
+      if (value?.eventId) {
+        events.push(value);
+      }
+    }
+
+    const pageKeys = Array.from(page.keys());
+    const lastKey = pageKeys[pageKeys.length - 1];
+    const done = !lastKey || page.size < limit;
+    return {
+      events,
+      nextStartAfter: done ? null : lastKey,
+      done,
+    };
   }
 
   async upsertLeaderboardEvents(

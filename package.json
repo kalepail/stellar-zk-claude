@@ -27,24 +27,26 @@
   "dependencies": {
     "@fontsource/monaspace-krypton": "^5.2.5",
     "@fontsource/monaspace-neon": "^5.2.5",
-    "@openzeppelin/relayer-plugin-channels": "^0.7.0",
+    "@openzeppelin/relayer-plugin-channels": "^0.8.0",
+    "@simplewebauthn/browser": "^13.2.2",
+    "@simplewebauthn/server": "^13.2.2",
     "@stellar/stellar-base": "^14.0.4",
     "fzstd": "^0.1.1",
-    "hono": "^4.11.8",
+    "hono": "^4.11.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "smart-account-kit": "^0.2.9"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.23.1",
-    "@types/node": "^25.2.1",
-    "@types/react": "^19.2.13",
+    "@cloudflare/vite-plugin": "^1.25.0",
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.3",
-    "oxfmt": "^0.28.0",
-    "oxlint": "^1.43.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "oxfmt": "^0.32.0",
+    "oxlint": "^1.47.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "wrangler": "^4.63.0"
+    "wrangler": "^4.65.0"
   }
 }

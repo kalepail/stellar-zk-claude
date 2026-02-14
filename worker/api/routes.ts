@@ -1,4 +1,10 @@
 import { Hono } from "hono";
+import {
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+  type AuthenticationResponseJSON,
+  type AuthenticatorTransportFuture,
+} from "@simplewebauthn/server";
 import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST, EXPECTED_RULESET } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
@@ -6,18 +12,59 @@ import { resultKey } from "../keys";
 import { recordLeaderboardSyncFailure, runLeaderboardSync } from "../leaderboard-sync";
 import { parseLeaderboardSourceMode } from "../leaderboard-ingestion";
 import {
-  computeLeaderboard,
   DEFAULT_LEADERBOARD_LIMIT,
-  extractLeaderboardRuns,
   MAX_LEADERBOARD_LIMIT,
+  MAX_LEADERBOARD_OFFSET,
   parseLeaderboardWindow,
 } from "../leaderboard";
+import {
+  countLeaderboardEvents,
+  createLeaderboardProfileAuthChallenge,
+  getLeaderboardIngestionState,
+  getLeaderboardPage,
+  getLeaderboardPlayer,
+  getLeaderboardProfileAuthChallenge,
+  getLeaderboardProfileCredential,
+  markLeaderboardProfileAuthChallengeUsed,
+  purgeExpiredLeaderboardProfileAuthChallenges,
+  setLeaderboardIngestionState,
+  updateLeaderboardProfileCredentialCounter,
+  upsertLeaderboardEvents,
+  upsertLeaderboardProfileCredential,
+  upsertLeaderboardProfile,
+  upsertLeaderboardProfiles,
+} from "../leaderboard-store";
+import {
+  DEFAULT_SMART_ACCOUNT_INDEXER_TIMEOUT_MS,
+  LeaderboardCredentialBindingError,
+  assertCredentialBelongsToClaimantContract,
+  encodeRawP256PublicKeyBase64UrlToCose,
+  normalizeAuthenticatorTransports,
+} from "../leaderboard-profile-auth";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
-import type { LeaderboardRankedEntry, PlayerProfileRecord } from "../types";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
 import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import type { LeaderboardResolvedSourceMode } from "../leaderboard-ingestion";
+import { LEADERBOARD_CACHE_CONTROL, LEADERBOARD_PRIVATE_CACHE_CONTROL } from "../cache-control";
+
+const LEADERBOARD_VIEW_CACHE_TTL_MS = 5_000;
+const LEADERBOARD_VIEW_CACHE_MAX_ENTRIES = 256;
+const LEADERBOARD_ROLLING_CACHE_BUCKET_MS = 5_000;
+const LEADERBOARD_RESPONSE_SCHEMA_VERSION = "2026-02-14.2";
+const LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS = 120_000;
+const LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MAX_MS = 600_000;
+const LEADERBOARD_PROFILE_AUTH_MIN_INTERVAL_MS = 1_500;
+const LEADERBOARD_PROFILE_AUTH_RATE_LIMIT_ENTRIES = 1024;
+const textEncoder = new TextEncoder();
+
+interface LeaderboardViewCacheEntry {
+  payload: unknown;
+  expiresAtMs: number;
+}
+
+const leaderboardViewCache = new Map<string, LeaderboardViewCacheEntry>();
+const profileAuthLastAttemptByKey = new Map<string, number>();
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -49,7 +96,7 @@ function parseOffset(raw: string | undefined): number {
   if (!Number.isFinite(parsed) || parsed < 0) {
     return 0;
   }
-  return parsed;
+  return Math.min(parsed, MAX_LEADERBOARD_OFFSET);
 }
 
 function parseLimit(raw: string | undefined): number {
@@ -80,6 +127,14 @@ function parseSyncLimit(raw: unknown): number | undefined {
   return Math.min(Math.max(parsed, 1), 1000);
 }
 
+function parseMigrationChunkSize(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? "500", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 500;
+  }
+  return Math.min(Math.max(parsed, 50), 2000);
+}
+
 function parseSyncSource(raw: unknown): LeaderboardResolvedSourceMode | "default" | null {
   if (raw === null || raw === undefined || raw === "") {
     return null;
@@ -104,6 +159,17 @@ function normalizeOptionalClaimantAddress(raw: string | undefined): string | nul
   return validateClaimantStrKeyFromUserInput(raw);
 }
 
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBytes = textEncoder.encode(left);
+  const rightBytes = textEncoder.encode(right);
+  const maxLength = Math.max(leftBytes.length, rightBytes.length);
+  let diff = leftBytes.length ^ rightBytes.length;
+  for (let index = 0; index < maxLength; index += 1) {
+    diff |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return diff === 0;
+}
+
 function requireLeaderboardAdmin(c: {
   req: { header: (name: string) => string | undefined };
   env: WorkerEnv;
@@ -117,7 +183,7 @@ function requireLeaderboardAdmin(c: {
   if (provided.length === 0) {
     throw new Error("x-leaderboard-admin-key is required");
   }
-  if (provided !== configured) {
+  if (!constantTimeEqual(provided, configured)) {
     throw new Error("invalid x-leaderboard-admin-key");
   }
 
@@ -175,14 +241,181 @@ function sanitizeProfileLinkUrl(raw: unknown): string | null {
   return url.toString();
 }
 
-function attachProfilesToEntry(
-  entry: LeaderboardRankedEntry,
-  profiles: Record<string, PlayerProfileRecord>,
-): LeaderboardRankedEntry & { profile: PlayerProfileRecord | null } {
+function parseProfileAuthChallengeTtlMs(raw: string | undefined): number {
+  const parsed = parseInteger(raw, LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS, 10_000);
+  return Math.min(parsed, LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MAX_MS);
+}
+
+function parseIndexerTimeoutMs(raw: string | undefined): number {
+  return parseInteger(raw, DEFAULT_SMART_ACCOUNT_INDEXER_TIMEOUT_MS, 1_000);
+}
+
+function ensureObject(raw: unknown, errorMessage: string): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(errorMessage);
+  }
+  return raw as Record<string, unknown>;
+}
+
+function parseRequiredString(
+  payload: Record<string, unknown>,
+  key: string,
+  message: string,
+): string {
+  const value = payload[key];
+  if (typeof value !== "string") {
+    throw new Error(message);
+  }
+
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new Error(message);
+  }
+  return normalized;
+}
+
+function parseOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseOptionalAuthenticatorAttachment(
+  value: unknown,
+): AuthenticationResponseJSON["authenticatorAttachment"] {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (value === "platform" || value === "cross-platform") {
+    return value;
+  }
+  throw new Error(
+    'auth.response.authenticatorAttachment must be "platform" or "cross-platform" when provided',
+  );
+}
+
+function parseProfileAuthOptionsPayload(payload: Record<string, unknown>): {
+  credentialId: string;
+  credentialPublicKey: string;
+  transports: AuthenticatorTransportFuture[] | null;
+} {
+  const credentialId = parseRequiredString(payload, "credential_id", "credential_id is required");
+  const credentialPublicKey = parseRequiredString(
+    payload,
+    "credential_public_key",
+    "credential_public_key is required",
+  );
+  const transports = normalizeAuthenticatorTransports(payload.transports);
   return {
-    ...entry,
-    profile: profiles[entry.claimantAddress] ?? null,
+    credentialId,
+    credentialPublicKey,
+    transports,
   };
+}
+
+function parseAuthenticationResponsePayload(raw: unknown): AuthenticationResponseJSON {
+  const payload = ensureObject(raw, "auth.response must be an object");
+  const responsePayload = ensureObject(
+    payload.response,
+    "auth.response.response must be an object",
+  );
+
+  const id = parseRequiredString(payload, "id", "auth.response.id is required");
+  const rawId = parseRequiredString(payload, "rawId", "auth.response.rawId is required");
+  if (id !== rawId) {
+    throw new Error("auth.response.id must equal auth.response.rawId");
+  }
+
+  const type = parseRequiredString(payload, "type", "auth.response.type is required");
+  if (type !== "public-key") {
+    throw new Error('auth.response.type must be "public-key"');
+  }
+
+  const clientDataJSON = parseRequiredString(
+    responsePayload,
+    "clientDataJSON",
+    "auth.response.response.clientDataJSON is required",
+  );
+  const authenticatorData = parseRequiredString(
+    responsePayload,
+    "authenticatorData",
+    "auth.response.response.authenticatorData is required",
+  );
+  const signature = parseRequiredString(
+    responsePayload,
+    "signature",
+    "auth.response.response.signature is required",
+  );
+
+  const clientExtensionResults = ensureObject(
+    payload.clientExtensionResults,
+    "auth.response.clientExtensionResults must be an object",
+  );
+
+  const userHandleRaw = responsePayload.userHandle;
+  if (userHandleRaw !== undefined && userHandleRaw !== null && typeof userHandleRaw !== "string") {
+    throw new Error("auth.response.response.userHandle must be a string when provided");
+  }
+
+  const authenticatorAttachment = parseOptionalAuthenticatorAttachment(
+    payload.authenticatorAttachment,
+  );
+
+  return {
+    id,
+    rawId,
+    type: "public-key",
+    response: {
+      clientDataJSON,
+      authenticatorData,
+      signature,
+      userHandle: parseOptionalString(userHandleRaw),
+    },
+    clientExtensionResults,
+    authenticatorAttachment,
+  };
+}
+
+function parseProfileAuthAssertionPayload(payload: Record<string, unknown>): {
+  challengeId: string;
+  response: AuthenticationResponseJSON;
+} {
+  const authPayload = ensureObject(payload.auth, "auth payload must be an object");
+  const challengeId = parseRequiredString(
+    authPayload,
+    "challenge_id",
+    "auth.challenge_id is required",
+  );
+  const response = parseAuthenticationResponsePayload(authPayload.response);
+  return {
+    challengeId,
+    response,
+  };
+}
+
+function resolveProfileExpectedOrigin(c: { req: { url: string }; env: WorkerEnv }): string {
+  const configured = c.env.LEADERBOARD_PROFILE_WEBAUTHN_ORIGIN?.trim();
+  if (!configured) {
+    return new URL(c.req.url).origin;
+  }
+
+  try {
+    return new URL(configured).origin;
+  } catch (error) {
+    throw new Error(`invalid LEADERBOARD_PROFILE_WEBAUTHN_ORIGIN: ${safeErrorMessage(error)}`, {
+      cause: error,
+    });
+  }
+}
+
+function resolveProfileExpectedRpId(c: { req: { url: string }; env: WorkerEnv }): string {
+  const configured = c.env.LEADERBOARD_PROFILE_WEBAUTHN_RP_ID?.trim();
+  if (configured && configured.length > 0) {
+    return configured;
+  }
+  return new URL(c.req.url).hostname;
 }
 
 async function readRequestBodyWithLimit(
@@ -245,6 +478,110 @@ function jsonError(
   );
 }
 
+function weakHashHex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function leaderboardEtag(cacheKey: string): string {
+  return `W/"${weakHashHex(cacheKey)}"`;
+}
+
+function rollingCacheBucket(nowMs: number): string {
+  return `${Math.floor(nowMs / LEADERBOARD_ROLLING_CACHE_BUCKET_MS)}`;
+}
+
+function readLeaderboardViewCache(cacheKey: string): unknown | null {
+  const current = leaderboardViewCache.get(cacheKey);
+  if (!current) {
+    return null;
+  }
+
+  if (Date.now() > current.expiresAtMs) {
+    leaderboardViewCache.delete(cacheKey);
+    return null;
+  }
+
+  return current.payload;
+}
+
+function writeLeaderboardViewCache(cacheKey: string, payload: unknown): void {
+  if (leaderboardViewCache.size >= LEADERBOARD_VIEW_CACHE_MAX_ENTRIES) {
+    const oldestKey = leaderboardViewCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      leaderboardViewCache.delete(oldestKey);
+    }
+  }
+
+  leaderboardViewCache.set(cacheKey, {
+    payload,
+    expiresAtMs: Date.now() + LEADERBOARD_VIEW_CACHE_TTL_MS,
+  });
+}
+
+function isRateLimitedProfileAuthAttempt(throttleKey: string, nowMs: number): boolean {
+  const lastAttemptMs = profileAuthLastAttemptByKey.get(throttleKey) ?? 0;
+  if (lastAttemptMs > 0 && nowMs - lastAttemptMs < LEADERBOARD_PROFILE_AUTH_MIN_INTERVAL_MS) {
+    return true;
+  }
+
+  if (profileAuthLastAttemptByKey.size >= LEADERBOARD_PROFILE_AUTH_RATE_LIMIT_ENTRIES) {
+    const oldestKey = profileAuthLastAttemptByKey.keys().next().value;
+    if (typeof oldestKey === "string") {
+      profileAuthLastAttemptByKey.delete(oldestKey);
+    }
+  }
+  profileAuthLastAttemptByKey.set(throttleKey, nowMs);
+  return false;
+}
+
+function respondWithLeaderboardCaching(
+  c: {
+    req: { header: (name: string) => string | undefined };
+    json: (body: unknown, status?: number) => Response;
+  },
+  payload: unknown,
+  {
+    cacheKey,
+    generatedAt,
+    privateScope,
+  }: {
+    cacheKey: string;
+    generatedAt: string | null | undefined;
+    privateScope: boolean;
+  },
+): Response {
+  const etag = leaderboardEtag(cacheKey);
+  const ifNoneMatch = c.req.header("if-none-match");
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    const response = new Response(null, { status: 304 });
+    response.headers.set(
+      "cache-control",
+      privateScope ? LEADERBOARD_PRIVATE_CACHE_CONTROL : LEADERBOARD_CACHE_CONTROL,
+    );
+    response.headers.set("etag", etag);
+    if (generatedAt) {
+      response.headers.set("last-modified", generatedAt);
+    }
+    return response;
+  }
+
+  const response = c.json(payload);
+  response.headers.set(
+    "cache-control",
+    privateScope ? LEADERBOARD_PRIVATE_CACHE_CONTROL : LEADERBOARD_CACHE_CONTROL,
+  );
+  response.headers.set("etag", etag);
+  if (generatedAt) {
+    response.headers.set("last-modified", generatedAt);
+  }
+  return response;
+}
+
 export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
   const api = new Hono<{ Bindings: WorkerEnv }>();
 
@@ -304,10 +641,9 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 401, safeErrorMessage(error));
     }
 
-    const coordinator = coordinatorStub(c.env);
-    const [state, events] = await Promise.all([
-      coordinator.getLeaderboardIngestionState(),
-      coordinator.listLeaderboardEvents(),
+    const [state, eventCount] = await Promise.all([
+      getLeaderboardIngestionState(c.env),
+      countLeaderboardEvents(c.env),
     ]);
 
     return c.json({
@@ -316,8 +652,11 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       provider: state.provider,
       provider_mode: parseLeaderboardSourceMode(c.env),
       source_mode: state.sourceMode,
-      event_count: events.length,
-      state,
+      event_count: eventCount,
+      state: {
+        ...state,
+        totalEvents: eventCount,
+      },
     });
   });
 
@@ -389,6 +728,102 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
   });
 
+  api.post("/leaderboard/migrate/do-to-d1", async (c) => {
+    try {
+      requireLeaderboardAdmin(c);
+    } catch (error) {
+      return jsonError(c, 401, safeErrorMessage(error));
+    }
+
+    const migrationConfirm = c.req.header("x-migration-confirm")?.trim().toLowerCase();
+    if (migrationConfirm !== "do-to-d1") {
+      return jsonError(
+        c,
+        400,
+        "x-migration-confirm header must be set to do-to-d1 for this operation",
+      );
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const chunkSize = parseMigrationChunkSize(c.req.query("chunk_size"));
+
+    try {
+      const state = await coordinator.getLeaderboardIngestionState();
+      let eventsRead = 0;
+      let profilesRead = 0;
+      let eventsInserted = 0;
+      let eventsUpdated = 0;
+      let eventCursor: string | null = null;
+      let profileCursor: string | null = null;
+
+      /* eslint-disable no-await-in-loop */
+      while (true) {
+        const page = await coordinator.listLeaderboardEventsPage({
+          startAfter: eventCursor,
+          limit: chunkSize,
+        });
+        if (page.events.length === 0) {
+          break;
+        }
+
+        const upsert = await upsertLeaderboardEvents(c.env, page.events);
+        eventsRead += page.events.length;
+        eventsInserted += upsert.inserted;
+        eventsUpdated += upsert.updated;
+
+        if (!page.nextStartAfter || page.done) {
+          break;
+        }
+        eventCursor = page.nextStartAfter;
+      }
+
+      while (true) {
+        const page = await coordinator.listLeaderboardProfilesPage({
+          startAfter: profileCursor,
+          limit: chunkSize,
+        });
+        if (page.profiles.length === 0) {
+          break;
+        }
+
+        await upsertLeaderboardProfiles(c.env, page.profiles);
+        profilesRead += page.profiles.length;
+
+        if (!page.nextStartAfter || page.done) {
+          break;
+        }
+        profileCursor = page.nextStartAfter;
+      }
+      /* eslint-enable no-await-in-loop */
+
+      const totalEvents = await countLeaderboardEvents(c.env);
+      await setLeaderboardIngestionState(c.env, {
+        ...state,
+        totalEvents,
+      });
+      leaderboardViewCache.clear();
+
+      return c.json({
+        success: true,
+        source: "events",
+        migrated: {
+          chunk_size: chunkSize,
+          events_read: eventsRead,
+          profiles_read: profilesRead,
+          events_inserted: eventsInserted,
+          events_updated: eventsUpdated,
+          total_events: totalEvents,
+        },
+      });
+    } catch (error) {
+      return jsonError(
+        c,
+        500,
+        `failed migrating leaderboard DO data to D1: ${safeErrorMessage(error)}`,
+      );
+    }
+  });
+
   api.get("/leaderboard", async (c) => {
     const window = parseLeaderboardWindow(c.req.query("window"));
     if (!window) {
@@ -397,6 +832,8 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
 
     const limit = parseLimit(c.req.query("limit"));
     const offset = parseOffset(c.req.query("offset"));
+    const nowMs = Date.now();
+    const rollingBucket = window === "all" ? "" : rollingCacheBucket(nowMs);
 
     let claimantAddress: string | null;
     try {
@@ -405,30 +842,39 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, `invalid address: ${safeErrorMessage(error)}`);
     }
 
-    const coordinator = coordinatorStub(c.env);
-    const [events, ingestionState] = await Promise.all([
-      coordinator.listLeaderboardEvents(),
-      coordinator.getLeaderboardIngestionState(),
-    ]);
-    const runs = extractLeaderboardRuns(events);
-    const computed = computeLeaderboard(runs, {
+    const ingestionState = await getLeaderboardIngestionState(c.env);
+    const cacheKey = [
+      LEADERBOARD_RESPONSE_SCHEMA_VERSION,
+      "leaderboard",
+      window,
+      limit,
+      offset,
+      rollingBucket,
+      claimantAddress ?? "",
+      ingestionState.provider,
+      ingestionState.sourceMode,
+      ingestionState.totalEvents,
+      ingestionState.highestLedger ?? "",
+      ingestionState.lastSyncedAt ?? "",
+    ].join("|");
+    const cachedPayload = readLeaderboardViewCache(cacheKey);
+    if (cachedPayload) {
+      return respondWithLeaderboardCaching(c, cachedPayload, {
+        cacheKey,
+        generatedAt: ingestionState.lastSyncedAt,
+        privateScope: claimantAddress !== null,
+      });
+    }
+
+    const computed = await getLeaderboardPage(c.env, {
       window,
       limit,
       offset,
       claimantAddress,
+      nowMs,
     });
 
-    const profileAddresses = new Set<string>();
-    for (const entry of computed.entries) {
-      profileAddresses.add(entry.claimantAddress);
-    }
-    if (computed.me) {
-      profileAddresses.add(computed.me.claimantAddress);
-    }
-
-    const profiles = await coordinator.getProfiles(Array.from(profileAddresses));
-
-    return c.json({
+    const payload = {
       success: true,
       source: "events",
       provider: ingestionState.provider,
@@ -446,13 +892,20 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
         total: computed.totalPlayers,
         next_offset: computed.nextOffset,
       },
-      entries: computed.entries.map((entry) => attachProfilesToEntry(entry, profiles)),
-      me: computed.me ? attachProfilesToEntry(computed.me, profiles) : null,
+      entries: computed.entries,
+      me: computed.me,
       ingestion: {
         last_synced_at: ingestionState.lastSyncedAt,
         highest_ledger: ingestionState.highestLedger,
         total_events: ingestionState.totalEvents,
       },
+    };
+
+    writeLeaderboardViewCache(cacheKey, payload);
+    return respondWithLeaderboardCaching(c, payload, {
+      cacheKey,
+      generatedAt: computed.generatedAt,
+      privateScope: claimantAddress !== null,
     });
   });
 
@@ -465,72 +918,179 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, `invalid claimant address: ${safeErrorMessage(error)}`);
     }
 
-    const coordinator = coordinatorStub(c.env);
-    const [profile, events] = await Promise.all([
-      coordinator.getProfile(claimantAddress),
-      coordinator.listLeaderboardEvents(),
-    ]);
-
-    const runs = extractLeaderboardRuns(events);
-    const playerRuns = runs.filter((run) => run.claimantAddress === claimantAddress);
-    // eslint-disable-next-line unicorn/no-array-sort
-    playerRuns.sort((left, right) => {
-      const leftMs = new Date(left.completedAt).getTime();
-      const rightMs = new Date(right.completedAt).getTime();
-      if (leftMs !== rightMs) {
-        return rightMs - leftMs;
-      }
-      if (left.score !== right.score) {
-        return right.score - left.score;
-      }
-      return left.jobId.localeCompare(right.jobId);
-    });
-
-    const bestRun = playerRuns.reduce<(typeof playerRuns)[number] | null>((best, run) => {
-      if (!best || run.score > best.score) {
-        return run;
-      }
-      if (run.score === best.score && run.completedAt < best.completedAt) {
-        return run;
-      }
-      return best;
-    }, null);
-
-    const rank10m = computeLeaderboard(runs, {
-      window: "10m",
+    const ingestionState = await getLeaderboardIngestionState(c.env);
+    const rollingBucket = rollingCacheBucket(Date.now());
+    const cacheKey = [
+      LEADERBOARD_RESPONSE_SCHEMA_VERSION,
+      "player",
       claimantAddress,
-      limit: 1,
-      offset: 0,
-    }).me?.rank;
-    const rankDay = computeLeaderboard(runs, {
-      window: "day",
-      claimantAddress,
-      limit: 1,
-      offset: 0,
-    }).me?.rank;
-    const rankAll = computeLeaderboard(runs, {
-      window: "all",
-      claimantAddress,
-      limit: 1,
-      offset: 0,
-    }).me?.rank;
+      rollingBucket,
+      ingestionState.provider,
+      ingestionState.sourceMode,
+      ingestionState.totalEvents,
+      ingestionState.highestLedger ?? "",
+      ingestionState.lastSyncedAt ?? "",
+    ].join("|");
+    const cachedPayload = readLeaderboardViewCache(cacheKey);
+    if (cachedPayload) {
+      return respondWithLeaderboardCaching(c, cachedPayload, {
+        cacheKey,
+        generatedAt: ingestionState.lastSyncedAt,
+        privateScope: false,
+      });
+    }
 
-    return c.json({
+    const player = await getLeaderboardPlayer(c.env, claimantAddress);
+
+    const payload = {
       success: true,
       player: {
         claimant_address: claimantAddress,
-        profile,
+        profile: player.profile,
         stats: {
-          total_runs: playerRuns.length,
-          best_score: bestRun?.score ?? 0,
-          last_played_at: playerRuns[0]?.completedAt ?? null,
+          total_runs: player.stats.totalRuns,
+          best_score: player.stats.bestScore,
+          total_minted: player.stats.totalMinted,
+          last_played_at: player.stats.lastPlayedAt,
         },
         ranks: {
-          ten_min: rank10m ?? null,
-          day: rankDay ?? null,
-          all: rankAll ?? null,
+          ten_min: player.ranks.tenMin,
+          day: player.ranks.day,
+          all: player.ranks.all,
         },
-        recent_runs: playerRuns.slice(0, 25),
+        recent_runs: player.recentRuns,
+      },
+    };
+
+    writeLeaderboardViewCache(cacheKey, payload);
+    return respondWithLeaderboardCaching(c, payload, {
+      cacheKey,
+      generatedAt: player.stats.lastPlayedAt ?? ingestionState.lastSyncedAt,
+      privateScope: false,
+    });
+  });
+
+  api.post("/leaderboard/player/:claimantAddress/profile/auth/options", async (c) => {
+    const rawClaimantAddress = c.req.param("claimantAddress");
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimantAddress);
+    } catch (error) {
+      return jsonError(c, 400, `invalid claimant address: ${safeErrorMessage(error)}`);
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = ensureObject(await c.req.json(), "profile auth payload must be an object");
+    } catch (error) {
+      return jsonError(c, 400, `invalid JSON payload: ${safeErrorMessage(error)}`);
+    }
+
+    let authInput: {
+      credentialId: string;
+      credentialPublicKey: string;
+      transports: AuthenticatorTransportFuture[] | null;
+    };
+    try {
+      authInput = parseProfileAuthOptionsPayload(payload);
+      // Ensure public key has the expected shape before storing it.
+      encodeRawP256PublicKeyBase64UrlToCose(authInput.credentialPublicKey);
+    } catch (error) {
+      return jsonError(c, 400, safeErrorMessage(error));
+    }
+
+    const throttleKey = `${claimantAddress}|${authInput.credentialId}`;
+    if (isRateLimitedProfileAuthAttempt(throttleKey, Date.now())) {
+      return jsonError(c, 429, "too many auth option requests; retry shortly");
+    }
+
+    const existingCredential = await getLeaderboardProfileCredential(c.env, authInput.credentialId);
+    if (!existingCredential) {
+      try {
+        await assertCredentialBelongsToClaimantContract({
+          claimantAddress,
+          credentialIdBase64Url: authInput.credentialId,
+          indexerBaseUrl: c.env.SMART_ACCOUNT_INDEXER_URL,
+          timeoutMs: parseIndexerTimeoutMs(c.env.SMART_ACCOUNT_INDEXER_TIMEOUT_MS),
+        });
+      } catch (error) {
+        if (error instanceof LeaderboardCredentialBindingError) {
+          return jsonError(c, error.statusCode, error.message);
+        }
+        return jsonError(c, 503, `failed verifying credential binding: ${safeErrorMessage(error)}`);
+      }
+    } else if (existingCredential.claimantAddress !== claimantAddress) {
+      return jsonError(c, 403, "credential is already bound to another claimant address");
+    }
+
+    let credentialRecord;
+    try {
+      credentialRecord = await upsertLeaderboardProfileCredential(c.env, {
+        claimantAddress,
+        credentialId: authInput.credentialId,
+        publicKey: authInput.credentialPublicKey,
+        transports: authInput.transports,
+      });
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      if (message.includes("already bound")) {
+        return jsonError(c, 403, message);
+      }
+      if (message.includes("public key mismatch")) {
+        return jsonError(c, 409, message);
+      }
+      return jsonError(c, 500, message);
+    }
+
+    let expectedOrigin: string;
+    let expectedRpId: string;
+    try {
+      expectedOrigin = resolveProfileExpectedOrigin(c);
+      expectedRpId = resolveProfileExpectedRpId(c);
+    } catch (error) {
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+
+    const challengeTtlMs = parseProfileAuthChallengeTtlMs(
+      c.env.LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS,
+    );
+    let options: Awaited<ReturnType<typeof generateAuthenticationOptions>>;
+    try {
+      options = await generateAuthenticationOptions({
+        rpID: expectedRpId,
+        allowCredentials: [
+          {
+            id: credentialRecord.credentialId,
+            transports:
+              (credentialRecord.transports as AuthenticatorTransportFuture[] | null) ?? undefined,
+          },
+        ],
+        timeout: challengeTtlMs,
+        userVerification: "required",
+      });
+    } catch (error) {
+      return jsonError(c, 500, `failed generating auth options: ${safeErrorMessage(error)}`);
+    }
+
+    const expiresAt = new Date(Date.now() + challengeTtlMs).toISOString();
+    const challengeId = crypto.randomUUID();
+    await purgeExpiredLeaderboardProfileAuthChallenges(c.env);
+    await createLeaderboardProfileAuthChallenge(c.env, {
+      challengeId,
+      claimantAddress,
+      credentialId: credentialRecord.credentialId,
+      challenge: options.challenge,
+      expectedOrigin,
+      expectedRpId,
+      expiresAt,
+    });
+
+    return c.json({
+      success: true,
+      auth: {
+        challenge_id: challengeId,
+        options,
+        expires_at: expiresAt,
       },
     });
   });
@@ -544,47 +1104,106 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, `invalid claimant address: ${safeErrorMessage(error)}`);
     }
 
-    const rawActor = c.req.header("x-claimant-address");
-    if (!rawActor) {
-      return jsonError(c, 401, "x-claimant-address is required to update profile");
-    }
-
-    let actorAddress: string;
-    try {
-      actorAddress = validateClaimantStrKeyFromUserInput(rawActor);
-    } catch (error) {
-      return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
-    }
-
-    if (actorAddress !== claimantAddress) {
-      return jsonError(c, 403, "profile updates are only allowed for the same claimant address");
-    }
-
     let payload: Record<string, unknown>;
     try {
-      const body = await c.req.json();
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        return jsonError(c, 400, "profile payload must be an object");
-      }
-      payload = body as Record<string, unknown>;
+      payload = ensureObject(await c.req.json(), "profile payload must be an object");
     } catch (error) {
       return jsonError(c, 400, `invalid JSON payload: ${safeErrorMessage(error)}`);
     }
 
     let username: string | null;
     let linkUrl: string | null;
+    let authAssertion: {
+      challengeId: string;
+      response: AuthenticationResponseJSON;
+    };
     try {
       username = sanitizeProfileUsername(payload.username);
       linkUrl = sanitizeProfileLinkUrl(payload.link_url ?? payload.linkUrl);
+      authAssertion = parseProfileAuthAssertionPayload(payload);
     } catch (error) {
       return jsonError(c, 400, safeErrorMessage(error));
     }
 
-    const coordinator = coordinatorStub(c.env);
-    const profile = await coordinator.upsertProfile(claimantAddress, {
+    const challenge = await getLeaderboardProfileAuthChallenge(c.env, authAssertion.challengeId);
+    if (!challenge) {
+      return jsonError(c, 401, "auth challenge not found");
+    }
+    if (challenge.claimantAddress !== claimantAddress) {
+      return jsonError(c, 403, "auth challenge claimant mismatch");
+    }
+    if (challenge.usedAt) {
+      return jsonError(c, 409, "auth challenge already used");
+    }
+
+    const expiresAtMs = new Date(challenge.expiresAt).getTime();
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      return jsonError(c, 401, "auth challenge expired");
+    }
+
+    if (authAssertion.response.id !== challenge.credentialId) {
+      return jsonError(c, 401, "auth credential mismatch");
+    }
+
+    const credential = await getLeaderboardProfileCredential(c.env, challenge.credentialId);
+    if (!credential) {
+      return jsonError(c, 401, "credential not found");
+    }
+    if (credential.claimantAddress !== claimantAddress) {
+      return jsonError(c, 403, "credential claimant mismatch");
+    }
+
+    let credentialPublicKey: Uint8Array;
+    try {
+      credentialPublicKey = encodeRawP256PublicKeyBase64UrlToCose(credential.publicKey);
+    } catch (error) {
+      return jsonError(
+        c,
+        500,
+        `stored credential public key is invalid: ${safeErrorMessage(error)}`,
+      );
+    }
+
+    const markedUsed = await markLeaderboardProfileAuthChallengeUsed(c.env, challenge.challengeId);
+    if (!markedUsed) {
+      return jsonError(c, 409, "auth challenge already used");
+    }
+
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: authAssertion.response,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: challenge.expectedOrigin,
+        expectedRPID: challenge.expectedRpId,
+        credential: {
+          id: credential.credentialId,
+          publicKey: credentialPublicKey as Uint8Array<ArrayBuffer>,
+          counter: credential.counter,
+          transports: (credential.transports as AuthenticatorTransportFuture[] | null) ?? undefined,
+        },
+        requireUserVerification: true,
+      });
+    } catch (error) {
+      return jsonError(c, 401, `passkey verification failed: ${safeErrorMessage(error)}`);
+    }
+
+    if (!verification.verified) {
+      return jsonError(c, 401, "passkey verification failed");
+    }
+
+    await updateLeaderboardProfileCredentialCounter(
+      c.env,
+      credential.credentialId,
+      verification.authenticationInfo.newCounter,
+    );
+
+    const profile = await upsertLeaderboardProfile(c.env, claimantAddress, {
       username,
       linkUrl,
     });
+    leaderboardViewCache.clear();
+    void purgeExpiredLeaderboardProfileAuthChallenges(c.env);
 
     return c.json({
       success: true,

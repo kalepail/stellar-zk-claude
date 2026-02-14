@@ -4,8 +4,10 @@ use crate::{
     AsteroidsScoreContract, AsteroidsScoreContractArgs, AsteroidsScoreContractClient, ScoreError,
 };
 use soroban_sdk::{
-    testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address, Bytes, BytesN,
-    Env,
+    testutils::{Address as _, Events as _},
+    token::StellarAssetClient,
+    token::TokenClient,
+    xdr, Address, Bytes, BytesN, Env,
 };
 
 const RULES_DIGEST_AST3: u32 = 0x4153_5433;
@@ -200,8 +202,14 @@ fn test_submit_score_different_seeds_track_independently() {
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
-    assert_eq!(client.submit_score(&seal, &make_journal(&env, 1, 10), &claimant), 10);
-    assert_eq!(client.submit_score(&seal, &make_journal(&env, 2, 20), &claimant), 20);
+    assert_eq!(
+        client.submit_score(&seal, &make_journal(&env, 1, 10), &claimant),
+        10
+    );
+    assert_eq!(
+        client.submit_score(&seal, &make_journal(&env, 2, 20), &claimant),
+        20
+    );
 
     assert_eq!(client.best_score(&claimant, &1), 10);
     assert_eq!(client.best_score(&claimant, &2), 20);
@@ -305,6 +313,41 @@ fn test_set_admin() {
     assert_eq!(client.image_id(), new_image_id);
 }
 
+#[test]
+fn test_upgrade_admin_only() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let router_addr = env.register(mock_router_ok::MockRouter, ());
+    let image_id = dummy_image_id(&env);
+
+    let contract_id = env.register(
+        AsteroidsScoreContract,
+        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+    );
+    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
+
+    let upgraded_wasm = Bytes::from_slice(&env, include_bytes!("../risc0_router.wasm"));
+    let upgraded_wasm_hash = env.deployer().upload_contract_wasm(upgraded_wasm);
+    let result = client.try_upgrade(&upgraded_wasm_hash);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_upgrade_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let upgraded_wasm = Bytes::from_slice(&env, include_bytes!("../risc0_router.wasm"));
+    let upgraded_wasm_hash = env.deployer().upload_contract_wasm(upgraded_wasm);
+
+    client.upgrade(&upgraded_wasm_hash);
+    assert!(client.try_rules_digest().is_err());
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests with real proof fixture data
 // ---------------------------------------------------------------------------
@@ -338,7 +381,30 @@ fn parse_image_id(env: &Env, hex: &str) -> BytesN<32> {
     BytesN::from_array(env, &id_arr)
 }
 
-fn run_fixture_test(seal_hex: &str, journal_raw_hex: &str, image_id_hex: &str, expected_score: u32) {
+fn event_map_get_xdr<'a>(map: &'a xdr::ScMap, key: &str) -> &'a xdr::ScVal {
+    for entry in map.iter() {
+        if let xdr::ScVal::Symbol(symbol) = &entry.key {
+            if symbol.0.to_utf8_string().expect("invalid symbol").as_str() == key {
+                return &entry.val;
+            }
+        }
+    }
+    panic!("missing event key: {key}");
+}
+
+fn event_map_get_xdr_u32(map: &xdr::ScMap, key: &str) -> u32 {
+    match event_map_get_xdr(map, key) {
+        xdr::ScVal::U32(value) => *value,
+        _ => panic!("event key '{key}' is not u32"),
+    }
+}
+
+fn run_fixture_test(
+    seal_hex: &str,
+    journal_raw_hex: &str,
+    image_id_hex: &str,
+    expected_score: u32,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -357,8 +423,7 @@ fn run_fixture_test(seal_hex: &str, journal_raw_hex: &str, image_id_hex: &str, e
     let client = AsteroidsScoreContractClient::new(&env, &contract_id);
 
     let seal = hex_to_soroban_bytes(&env, seal_hex);
-    let journal_raw =
-        force_ast3_rules_digest(&env, &hex_to_soroban_bytes(&env, journal_raw_hex));
+    let journal_raw = force_ast3_rules_digest(&env, &hex_to_soroban_bytes(&env, journal_raw_hex));
 
     let score = client.submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(score, expected_score);
@@ -371,6 +436,68 @@ fn run_fixture_test(seal_hex: &str, journal_raw_hex: &str, image_id_hex: &str, e
 
     let result = client.try_submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
+}
+
+#[test]
+fn test_submit_score_event_contains_journal_and_reward_context() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+    let journal = make_journal(&env, 123, 4_567);
+    let digest: BytesN<32> = env.crypto().sha256(&journal).into();
+
+    let before = env.events().all().events().len();
+    assert_eq!(client.submit_score(&seal, &journal, &claimant), 4_567);
+    let all_events = env.events().all();
+    let raw_events = all_events.events();
+    assert!(raw_events.len() > before);
+
+    let last_event = raw_events.last().expect("missing emitted event");
+    let body = match &last_event.body {
+        xdr::ContractEventBody::V0(v0) => v0,
+    };
+    let event_name = match body.topics.iter().next() {
+        Some(xdr::ScVal::Symbol(symbol)) => {
+            symbol.0.to_utf8_string().expect("invalid event symbol")
+        }
+        _ => panic!("missing score_submitted topic"),
+    };
+    assert_eq!(event_name, "score_submitted");
+
+    let event_map = match &body.data {
+        xdr::ScVal::Map(Some(map)) => map,
+        _ => panic!("score_submitted data is not a map"),
+    };
+    match event_map_get_xdr(event_map, "claimant") {
+        xdr::ScVal::Address(_) => {}
+        _ => panic!("claimant field is not an address"),
+    }
+    assert_eq!(event_map_get_xdr_u32(event_map, "seed"), 123);
+    assert_eq!(event_map_get_xdr_u32(event_map, "frame_count"), 100);
+    assert_eq!(event_map_get_xdr_u32(event_map, "final_score"), 4_567);
+    assert_eq!(event_map_get_xdr_u32(event_map, "final_rng_state"), 99);
+    assert_eq!(event_map_get_xdr_u32(event_map, "tape_checksum"), 0xDEAD);
+    assert_eq!(
+        event_map_get_xdr_u32(event_map, "rules_digest"),
+        RULES_DIGEST_AST3
+    );
+    assert_eq!(event_map_get_xdr_u32(event_map, "previous_best"), 0);
+    assert_eq!(event_map_get_xdr_u32(event_map, "new_best"), 4_567);
+    assert_eq!(event_map_get_xdr_u32(event_map, "minted_delta"), 4_567);
+
+    match event_map_get_xdr(event_map, "journal_digest") {
+        xdr::ScVal::Bytes(bytes) => {
+            assert_eq!(bytes.len(), 32);
+            let expected_digest = digest.to_array();
+            for (index, value) in bytes.iter().enumerate() {
+                assert_eq!(*value, expected_digest[index]);
+            }
+        }
+        _ => panic!("journal_digest field is not bytes"),
+    }
 }
 
 #[test]
@@ -488,7 +615,10 @@ fn test_fixture_all_three_cumulative() {
             include_str!("../../../../test-fixtures/proof-medium-groth16.journal_raw"),
         ),
     );
-    assert_eq!(client.submit_score(&medium_seal, &medium_journal, &claimant), 90);
+    assert_eq!(
+        client.submit_score(&medium_seal, &medium_journal, &claimant),
+        90
+    );
     assert_eq!(token.balance(&claimant), 90);
 
     // real game (score 32860, different seed)
@@ -503,6 +633,9 @@ fn test_fixture_all_three_cumulative() {
             include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
         ),
     );
-    assert_eq!(client.submit_score(&real_seal, &real_journal, &claimant), 32860);
+    assert_eq!(
+        client.submit_score(&real_seal, &real_journal, &claimant),
+        32860
+    );
     assert_eq!(token.balance(&claimant), 90 + 32860);
 }

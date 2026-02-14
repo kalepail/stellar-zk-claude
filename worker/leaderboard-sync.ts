@@ -1,6 +1,11 @@
-import { coordinatorStub } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { fetchLeaderboardEventsFromGalexie } from "./leaderboard-ingestion";
+import {
+  countLeaderboardEvents,
+  getLeaderboardIngestionState,
+  setLeaderboardIngestionState,
+  upsertLeaderboardEvents,
+} from "./leaderboard-store";
 import type { LeaderboardIngestionState } from "./types";
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
@@ -70,25 +75,72 @@ function shouldRunCatchup(
   return nowMs - lastBackfillMs >= intervalMinutes * 60_000;
 }
 
+function parseLedgerCursor(cursor: string | null | undefined): number | null {
+  if (!cursor || cursor.trim().length === 0) {
+    return null;
+  }
+
+  const trimmed = cursor.trim();
+  const normalized = trimmed.startsWith("ledger:")
+    ? trimmed.slice("ledger:".length).trim()
+    : trimmed;
+  if (!/^\d+$/.test(normalized)) {
+    return null;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseForwardReplayWindowLedgers(env: WorkerEnv): number {
+  return parseInteger(env.LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS, 8_000, 1);
+}
+
 export async function runLeaderboardSync(
   env: WorkerEnv,
   request: LeaderboardSyncRequest,
 ): Promise<LeaderboardSyncResult> {
-  const coordinator = coordinatorStub(env);
-  const existingState = await coordinator.getLeaderboardIngestionState();
+  const existingState = await getLeaderboardIngestionState(env);
 
-  const effectiveCursor =
-    request.mode === "forward" ? (request.cursor ?? existingState.cursor) : request.cursor;
+  const replayWindowLedgers = parseForwardReplayWindowLedgers(env);
+  const persistedCursor =
+    request.mode === "forward" ? (request.cursor ?? existingState.cursor) : null;
+  const persistedCursorLedger = parseLedgerCursor(persistedCursor);
+  const hasOpaquePersistedCursor = Boolean(persistedCursor && persistedCursorLedger === null);
+
+  let effectiveCursor = request.mode === "forward" ? persistedCursor : request.cursor;
+  let effectiveFromLedger = request.fromLedger ?? null;
+  let effectiveToLedger = request.toLedger ?? null;
+
+  if (request.mode === "forward" && effectiveFromLedger === null && !hasOpaquePersistedCursor) {
+    const anchorLedger = existingState.highestLedger ?? persistedCursorLedger;
+    if (anchorLedger !== null) {
+      effectiveFromLedger = Math.max(2, anchorLedger - replayWindowLedgers + 1);
+      effectiveCursor = null;
+      if (effectiveToLedger !== null && effectiveToLedger < effectiveFromLedger) {
+        effectiveToLedger = effectiveFromLedger;
+      }
+    }
+  }
 
   const fetched = await fetchLeaderboardEventsFromGalexie(env, {
     cursor: effectiveCursor,
-    fromLedger: request.fromLedger,
-    toLedger: request.toLedger,
+    fromLedger: effectiveFromLedger,
+    toLedger: effectiveToLedger,
     limit: request.limit,
     source: request.source ?? null,
   });
 
-  const upsert = await coordinator.upsertLeaderboardEvents(fetched.events);
+  const upsert = await upsertLeaderboardEvents(env, fetched.events);
+  const hasBaselineState =
+    existingState.totalEvents > 0 ||
+    existingState.cursor !== null ||
+    existingState.lastSyncedAt !== null;
+  const totalEvents = hasBaselineState
+    ? Math.max(existingState.totalEvents, 0) + upsert.inserted
+    : await countLeaderboardEvents(env);
   const ledgers = fetched.events
     .map((event) => event.ledger)
     .filter((value): value is number => typeof value === "number");
@@ -109,18 +161,18 @@ export async function runLeaderboardSync(
         : Math.max(existingState.highestLedger ?? 0, highestLedgerFromBatch),
     lastSyncedAt: nowIso,
     lastBackfillAt: request.mode === "backfill" ? nowIso : existingState.lastBackfillAt,
-    totalEvents: existingState.totalEvents + upsert.inserted,
+    totalEvents,
     lastError: null,
   };
 
-  await coordinator.setLeaderboardIngestionState(nextState);
+  await setLeaderboardIngestionState(env, nextState);
 
   return {
     mode: request.mode,
     requested: {
       cursor: effectiveCursor ?? null,
-      from_ledger: request.fromLedger ?? null,
-      to_ledger: request.toLedger ?? null,
+      from_ledger: effectiveFromLedger,
+      to_ledger: effectiveToLedger,
       limit: request.limit ?? null,
       source: request.source ?? "default",
     },
@@ -194,9 +246,8 @@ export async function runScheduledLeaderboardSync(
 }
 
 export async function recordLeaderboardSyncFailure(env: WorkerEnv, error: unknown): Promise<void> {
-  const coordinator = coordinatorStub(env);
-  const existingState = await coordinator.getLeaderboardIngestionState();
-  await coordinator.setLeaderboardIngestionState({
+  const existingState = await getLeaderboardIngestionState(env);
+  await setLeaderboardIngestionState(env, {
     ...existingState,
     lastError: safeErrorMessage(error),
     lastSyncedAt: new Date().toISOString(),

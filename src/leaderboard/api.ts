@@ -1,3 +1,8 @@
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser";
+
 export type LeaderboardWindow = "10m" | "day" | "all";
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -15,8 +20,12 @@ export interface LeaderboardEntry {
   claimantAddress: string;
   profile: PlayerProfile | null;
   score: number;
+  mintedDelta: number;
   seed: number;
   frameCount: number | null;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;
@@ -24,6 +33,10 @@ export interface LeaderboardEntry {
 
 export interface LeaderboardPageResponse {
   success: true;
+  source?: string;
+  provider?: string;
+  provider_mode?: string;
+  source_mode?: string;
   window: LeaderboardWindow;
   generated_at: string;
   window_range: {
@@ -38,6 +51,11 @@ export interface LeaderboardPageResponse {
   };
   entries: LeaderboardEntry[];
   me: LeaderboardEntry | null;
+  ingestion?: {
+    last_synced_at: string | null;
+    highest_ledger: number | null;
+    total_events: number | null;
+  };
 }
 
 export interface LeaderboardPlayerResponse {
@@ -48,6 +66,7 @@ export interface LeaderboardPlayerResponse {
     stats: {
       total_runs: number;
       best_score: number;
+      total_minted: number;
       last_played_at: string | null;
     };
     ranks: {
@@ -62,6 +81,21 @@ export interface LeaderboardPlayerResponse {
 interface ApiErrorResponse {
   success: false;
   error?: string;
+}
+
+interface LeaderboardProfileAuthOptionsResponse {
+  success: true;
+  auth: {
+    challenge_id: string;
+    options: PublicKeyCredentialRequestOptionsJSON;
+    expires_at: string;
+  };
+}
+
+export interface LeaderboardProfilePasskeyCredential {
+  credentialId: string;
+  credentialPublicKey: string;
+  credentialTransports?: string[] | null;
 }
 
 export class LeaderboardApiError extends Error {
@@ -132,7 +166,7 @@ export async function getLeaderboard({
 
   const response = await fetchWithTimeout(
     `/api/leaderboard?${params.toString()}`,
-    { method: "GET" },
+    { method: "GET", cache: "no-store" },
     10_000,
   );
   if (!response.ok) {
@@ -147,7 +181,7 @@ export async function getLeaderboardPlayer(
 ): Promise<LeaderboardPlayerResponse> {
   const response = await fetchWithTimeout(
     `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}`,
-    { method: "GET" },
+    { method: "GET", cache: "no-store" },
     10_000,
   );
   if (!response.ok) {
@@ -160,18 +194,54 @@ export async function getLeaderboardPlayer(
 export async function updateLeaderboardProfile(
   claimantAddress: string,
   updates: { username: string | null; linkUrl: string | null },
+  passkey: LeaderboardProfilePasskeyCredential,
 ): Promise<{ success: true; profile: PlayerProfile }> {
+  const authOptionsResponse = await fetchWithTimeout(
+    `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}/profile/auth/options`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        credential_id: passkey.credentialId,
+        credential_public_key: passkey.credentialPublicKey,
+        transports: passkey.credentialTransports ?? null,
+      }),
+    },
+    10_000,
+  );
+  if (!authOptionsResponse.ok) {
+    throw await parseError(authOptionsResponse);
+  }
+
+  const authOptions = await parseJson<LeaderboardProfileAuthOptionsResponse>(authOptionsResponse);
+
+  let authResponse: AuthenticationResponseJSON;
+  try {
+    const { startAuthentication } = await import("@simplewebauthn/browser");
+    authResponse = await startAuthentication({
+      optionsJSON: authOptions.auth.options,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "passkey authentication failed";
+    throw new LeaderboardApiError(message, 401);
+  }
+
   const response = await fetchWithTimeout(
     `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}/profile`,
     {
       method: "PUT",
       headers: {
         "content-type": "application/json",
-        "x-claimant-address": claimantAddress,
       },
       body: JSON.stringify({
         username: updates.username,
         link_url: updates.linkUrl,
+        auth: {
+          challenge_id: authOptions.auth.challenge_id,
+          response: authResponse,
+        },
       }),
     },
     10_000,

@@ -117,8 +117,12 @@ export interface LeaderboardRunRecord {
   jobId: string;
   claimantAddress: string;
   score: number;
+  mintedDelta: number;
   seed: number;
   frameCount: number | null;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;
@@ -149,6 +153,11 @@ export interface LeaderboardEventRecord {
   eventId: string;
   claimantAddress: string;
   seed: number;
+  frameCount: number | null;
+  finalScore: number;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;

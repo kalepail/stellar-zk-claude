@@ -6,7 +6,7 @@ import { scValToNative, xdr } from "@stellar/stellar-base";
 const PORT = Number.parseInt(process.env.ADAPTER_PORT || "4041", 10);
 const RPC_URL = process.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org";
 
-const SCORE_EVENT_KEYS = new Set(["score_submitted", "scoresubmitted"]);
+const SCORE_EVENT_KEYS = new Set(["score_submitted"]);
 
 function normalizeEventKey(value) {
   if (typeof value !== "string") {
@@ -50,6 +50,42 @@ function toInt(value) {
   return null;
 }
 
+function toHexString(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (value instanceof Uint8Array) {
+    return Array.from(value)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return toHexString(new Uint8Array(value));
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return value.toString("hex");
+  }
+
+  return null;
+}
+
+function normalizeDigestHex(value) {
+  const hexRaw = toHexString(value);
+  if (!hexRaw) {
+    return null;
+  }
+
+  const normalized = hexRaw.startsWith("0x") || hexRaw.startsWith("0X") ? hexRaw.slice(2) : hexRaw;
+  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
+    return null;
+  }
+  return normalized.toLowerCase();
+}
+
 function readMapValue(mapLike, keys) {
   if (mapLike instanceof Map) {
     for (const key of keys) {
@@ -91,17 +127,44 @@ function normalizeEvent(raw) {
     return null;
   }
 
-  const claimant = readMapValue(nativeData, ["claimant", "claimant_address", "claimantAddress"]);
+  const claimant = readMapValue(nativeData, ["claimant"]);
   const seed = toInt(readMapValue(nativeData, ["seed"]));
-  const previousBest = toInt(readMapValue(nativeData, ["previous_best", "previousBest"]));
-  const newBest = toInt(readMapValue(nativeData, ["new_best", "newBest", "score"]));
-  const mintedDelta = toInt(readMapValue(nativeData, ["minted_delta", "mintedDelta"]));
-  const journalDigest = readMapValue(nativeData, ["journal_digest", "journalDigest"]);
+  const frameCount = toInt(readMapValue(nativeData, ["frame_count"]));
+  const finalScore = toInt(readMapValue(nativeData, ["final_score"]));
+  const finalRngState = toInt(readMapValue(nativeData, ["final_rng_state"]));
+  const tapeChecksum = toInt(readMapValue(nativeData, ["tape_checksum"]));
+  const rulesDigest = toInt(readMapValue(nativeData, ["rules_digest"]));
+  const previousBest = toInt(readMapValue(nativeData, ["previous_best"]));
+  const newBest = toInt(readMapValue(nativeData, ["new_best"]));
+  const mintedDelta = toInt(readMapValue(nativeData, ["minted_delta"]));
+  const journalDigest = normalizeDigestHex(readMapValue(nativeData, ["journal_digest"]));
 
-  if (typeof claimant !== "string" || claimant.trim().length === 0) {
-    return null;
-  }
-  if (seed === null || seed < 0 || newBest === null || newBest <= 0) {
+  if (
+    typeof claimant !== "string" ||
+    claimant.trim().length === 0 ||
+    seed === null ||
+    seed < 0 ||
+    frameCount === null ||
+    frameCount < 0 ||
+    finalScore === null ||
+    finalScore <= 0 ||
+    finalRngState === null ||
+    finalRngState < 0 ||
+    tapeChecksum === null ||
+    tapeChecksum < 0 ||
+    rulesDigest === null ||
+    rulesDigest < 0 ||
+    previousBest === null ||
+    previousBest < 0 ||
+    newBest === null ||
+    newBest <= 0 ||
+    mintedDelta === null ||
+    mintedDelta < 0 ||
+    finalScore !== newBest ||
+    previousBest > newBest ||
+    mintedDelta !== newBest - previousBest ||
+    journalDigest === null
+  ) {
     return null;
   }
 
@@ -109,10 +172,15 @@ function normalizeEvent(raw) {
     id: raw.id,
     claimant,
     seed,
-    previous_best: previousBest !== null && previousBest >= 0 ? previousBest : 0,
+    frame_count: frameCount,
+    final_score: finalScore,
+    final_rng_state: finalRngState,
+    tape_checksum: tapeChecksum,
+    rules_digest: rulesDigest,
+    previous_best: previousBest,
     new_best: newBest,
-    minted_delta: mintedDelta !== null && mintedDelta >= 0 ? mintedDelta : null,
-    journal_digest: typeof journalDigest === "string" ? journalDigest : null,
+    minted_delta: mintedDelta,
+    journal_digest: journalDigest,
     tx_hash: typeof raw.txHash === "string" ? raw.txHash : null,
     event_index: Number.isFinite(raw.operationIndex) ? raw.operationIndex : 0,
     ledger: Number.isFinite(raw.ledger) ? raw.ledger : null,

@@ -12,6 +12,7 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export const DEFAULT_LEADERBOARD_LIMIT = 25;
 export const MAX_LEADERBOARD_LIMIT = 100;
+export const MAX_LEADERBOARD_OFFSET = 10_000;
 
 function timestampMs(value: string | null): number {
   if (!value) {
@@ -112,8 +113,24 @@ export function extractLeaderboardRuns(events: LeaderboardEventRecord[]): Leader
       jobId: event.eventId,
       claimantAddress: event.claimantAddress,
       score: event.newBest >>> 0,
+      mintedDelta: event.mintedDelta >>> 0,
       seed: event.seed >>> 0,
-      frameCount: null,
+      frameCount:
+        typeof event.frameCount === "number" && Number.isFinite(event.frameCount)
+          ? event.frameCount >>> 0
+          : null,
+      finalRngState:
+        typeof event.finalRngState === "number" && Number.isFinite(event.finalRngState)
+          ? event.finalRngState >>> 0
+          : null,
+      tapeChecksum:
+        typeof event.tapeChecksum === "number" && Number.isFinite(event.tapeChecksum)
+          ? event.tapeChecksum >>> 0
+          : null,
+      rulesDigest:
+        typeof event.rulesDigest === "number" && Number.isFinite(event.rulesDigest)
+          ? event.rulesDigest >>> 0
+          : null,
       completedAt: event.closedAt,
       claimStatus: "succeeded",
       claimTxHash: event.txHash,
@@ -145,7 +162,7 @@ export function computeLeaderboard(
     Math.max(limit ?? DEFAULT_LEADERBOARD_LIMIT, 1),
     MAX_LEADERBOARD_LIMIT,
   );
-  const effectiveOffset = Math.max(offset ?? 0, 0);
+  const effectiveOffset = Math.min(Math.max(offset ?? 0, 0), MAX_LEADERBOARD_OFFSET);
 
   const bestByClaimant = new Map<string, LeaderboardRunRecord>();
   for (const run of runs) {

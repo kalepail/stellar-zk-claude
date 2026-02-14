@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type ClaimStatus,
   getLeaderboard,
   getLeaderboardPlayer,
   LeaderboardApiError,
@@ -51,11 +52,46 @@ function windowLabel(window: LeaderboardWindow): string {
   return "All";
 }
 
+function windowSubtitle(window: LeaderboardWindow): string {
+  if (window === "10m") {
+    return "Last 10 minutes";
+  }
+  if (window === "day") {
+    return "Last 24 hours";
+  }
+  return "All-time history";
+}
+
+function claimStatusClass(status: ClaimStatus): string {
+  return `leaderboard-status leaderboard-status--${status}`;
+}
+
+function rankClass(rank: number): string {
+  if (rank === 1) {
+    return "leaderboard-rank leaderboard-rank--top1";
+  }
+  if (rank === 2) {
+    return "leaderboard-rank leaderboard-rank--top2";
+  }
+  if (rank === 3) {
+    return "leaderboard-rank leaderboard-rank--top3";
+  }
+  return "leaderboard-rank";
+}
+
+function formatMetric(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "n/a";
+}
+
+function isSmartAccountContractAddress(address: string): boolean {
+  return address.trim().startsWith("C");
+}
+
 export function LeaderboardPage() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/leaderboard";
   const playerAddress = useMemo(() => getPlayerAddressFromPath(pathname), [pathname]);
 
-  const [windowKey, setWindowKey] = useState<LeaderboardWindow>("10m");
+  const [windowKey, setWindowKey] = useState<LeaderboardWindow>("all");
   const [offset, setOffset] = useState(0);
   const [limit] = useState(25);
   const [searchInput, setSearchInput] = useState("");
@@ -172,16 +208,38 @@ export function LeaderboardPage() {
       return;
     }
 
+    const claimantAddress = playerData.player.claimant_address;
+    if (!isSmartAccountContractAddress(claimantAddress)) {
+      setProfileSavedAt(null);
+      setProfileSaveError(
+        "profile edits are only supported for smart-account claimant contract addresses",
+      );
+      return;
+    }
+
     setSavingProfile(true);
     setProfileSaveError(null);
     setProfileSavedAt(null);
 
     try {
-      const claimantAddress = playerData.player.claimant_address;
-      const updated = await updateLeaderboardProfile(claimantAddress, {
-        username: toNullableTrimmed(profileUsername),
-        linkUrl: toNullableTrimmed(profileLinkUrl),
-      });
+      const walletModule = await import("../wallet/smartAccount");
+      const walletSession =
+        await walletModule.resolveSmartWalletSessionForClaimant(claimantAddress);
+      if (!walletSession.credentialPublicKey) {
+        throw new Error("missing passkey public key in wallet session");
+      }
+      const updated = await updateLeaderboardProfile(
+        claimantAddress,
+        {
+          username: toNullableTrimmed(profileUsername),
+          linkUrl: toNullableTrimmed(profileLinkUrl),
+        },
+        {
+          credentialId: walletSession.credentialId,
+          credentialPublicKey: walletSession.credentialPublicKey,
+          credentialTransports: walletSession.credentialTransports,
+        },
+      );
 
       setPlayerData((current) => {
         if (!current) {
@@ -207,10 +265,13 @@ export function LeaderboardPage() {
     }
   }, [playerData, profileLinkUrl, profileUsername]);
 
+  const supportsPlayerProfileAuth =
+    playerData !== null && isSmartAccountContractAddress(playerData.player.claimant_address);
+
   if (playerAddress) {
     return (
       <main className="leaderboard-shell">
-        <header className="leaderboard-header">
+        <header className="leaderboard-header leaderboard-surface leaderboard-surface--hero">
           <div>
             <h1>Player</h1>
             <p>Profile, rankings, and recent proved runs.</p>
@@ -231,7 +292,8 @@ export function LeaderboardPage() {
                   abbreviateAddress(playerData.player.claimant_address)}
               </h2>
               <p>
-                <strong>Address:</strong> <code>{playerData.player.claimant_address}</code>
+                <strong>Address:</strong>{" "}
+                <code className="leaderboard-address">{playerData.player.claimant_address}</code>
               </p>
               {playerData.player.profile?.linkUrl ? (
                 <p>
@@ -241,7 +303,7 @@ export function LeaderboardPage() {
                   </a>
                 </p>
               ) : null}
-              <div className="leaderboard-grid">
+              <dl className="leaderboard-grid">
                 <div>
                   <dt>Total Runs</dt>
                   <dd>{playerData.player.stats.total_runs.toLocaleString()}</dd>
@@ -251,6 +313,10 @@ export function LeaderboardPage() {
                   <dd>{playerData.player.stats.best_score.toLocaleString()}</dd>
                 </div>
                 <div>
+                  <dt>Total Minted</dt>
+                  <dd>{formatMetric(playerData.player.stats.total_minted)}</dd>
+                </div>
+                <div>
                   <dt>Last Played</dt>
                   <dd>
                     {playerData.player.stats.last_played_at
@@ -258,8 +324,12 @@ export function LeaderboardPage() {
                       : "n/a"}
                   </dd>
                 </div>
-              </div>
-              <div className="leaderboard-grid">
+              </dl>
+              <p className="leaderboard-note">
+                Leaderboard rank uses each claimant's single best proved run in the selected window;
+                this page also shows your full recent run history and total minted.
+              </p>
+              <dl className="leaderboard-grid">
                 <div>
                   <dt>10m Rank</dt>
                   <dd>{playerData.player.ranks.ten_min ?? "n/a"}</dd>
@@ -272,52 +342,64 @@ export function LeaderboardPage() {
                   <dt>All-Time Rank</dt>
                   <dd>{playerData.player.ranks.all ?? "n/a"}</dd>
                 </div>
-              </div>
+              </dl>
             </section>
 
-            <section className="leaderboard-card">
-              <h3>Edit Profile</h3>
-              <p className="leaderboard-note">
-                Updates are currently tied to the claimant address header and intended for
-                connected-wallet flows.
-              </p>
-              <div className="leaderboard-form-grid">
-                <label>
-                  Username
-                  <input
-                    type="text"
-                    value={profileUsername}
-                    onChange={(event) => setProfileUsername(event.target.value)}
-                    placeholder="Your leaderboard name"
-                    maxLength={32}
-                  />
-                </label>
-                <label>
-                  Link URL
-                  <input
-                    type="url"
-                    value={profileLinkUrl}
-                    onChange={(event) => setProfileLinkUrl(event.target.value)}
-                    placeholder="https://"
-                    maxLength={240}
-                  />
-                </label>
-              </div>
-              <div className="leaderboard-actions">
-                <button type="button" onClick={saveProfile} disabled={savingProfile}>
-                  {savingProfile ? "Saving..." : "Save Profile"}
-                </button>
-                {profileSavedAt ? (
-                  <span className="leaderboard-note">
-                    Saved {formatUtcDateTime(profileSavedAt)}
-                  </span>
-                ) : null}
-              </div>
-              {profileSaveError ? <p className="leaderboard-error">{profileSaveError}</p> : null}
-            </section>
+            {supportsPlayerProfileAuth ? (
+              <section className="leaderboard-card">
+                <h3>Edit Profile</h3>
+                <p className="leaderboard-note">
+                  Saving requires a passkey prompt for the claimant wallet tied to this address.
+                </p>
+                <div className="leaderboard-form-grid">
+                  <label>
+                    Username
+                    <input
+                      type="text"
+                      value={profileUsername}
+                      onChange={(event) => setProfileUsername(event.target.value)}
+                      placeholder="Your leaderboard name"
+                      maxLength={32}
+                    />
+                  </label>
+                  <label>
+                    Link URL
+                    <input
+                      type="url"
+                      value={profileLinkUrl}
+                      onChange={(event) => setProfileLinkUrl(event.target.value)}
+                      placeholder="https://"
+                      maxLength={240}
+                    />
+                  </label>
+                </div>
+                <div className="leaderboard-actions">
+                  <button type="button" onClick={saveProfile} disabled={savingProfile}>
+                    {savingProfile ? "Saving..." : "Save Profile"}
+                  </button>
+                  {profileSavedAt ? (
+                    <span className="leaderboard-note">
+                      Saved {formatUtcDateTime(profileSavedAt)}
+                    </span>
+                  ) : null}
+                </div>
+                {profileSaveError ? <p className="leaderboard-error">{profileSaveError}</p> : null}
+              </section>
+            ) : (
+              <section className="leaderboard-card">
+                <h3>Edit Profile</h3>
+                <p className="leaderboard-note">
+                  Profile edits are available only for smart-account claimant contract addresses.
+                </p>
+              </section>
+            )}
 
             <section className="leaderboard-card">
               <h3>Recent Runs</h3>
+              <p className="leaderboard-note">
+                Recent runs includes every proved submission for this claimant (not just the best
+                run).
+              </p>
               {playerData.player.recent_runs.length === 0 ? (
                 <p className="leaderboard-note">No proved runs yet.</p>
               ) : (
@@ -326,8 +408,9 @@ export function LeaderboardPage() {
                     <thead>
                       <tr>
                         <th>Score</th>
-                        <th>Seed</th>
                         <th>Frames</th>
+                        <th>Minted Δ (this run)</th>
+                        <th>Seed</th>
                         <th>Completed (UTC)</th>
                         <th>Claim</th>
                       </tr>
@@ -335,11 +418,16 @@ export function LeaderboardPage() {
                     <tbody>
                       {playerData.player.recent_runs.map((run) => (
                         <tr key={run.jobId}>
-                          <td>{run.score.toLocaleString()}</td>
-                          <td>{formatHex32(run.seed)}</td>
-                          <td>{run.frameCount === null ? "-" : run.frameCount.toLocaleString()}</td>
+                          <td className="leaderboard-cell--num">{run.score.toLocaleString()}</td>
+                          <td className="leaderboard-cell--num">{formatMetric(run.frameCount)}</td>
+                          <td className="leaderboard-cell--num">{formatMetric(run.mintedDelta)}</td>
+                          <td className="leaderboard-cell--mono">{formatHex32(run.seed)}</td>
                           <td>{formatUtcDateTime(run.completedAt)}</td>
-                          <td>{run.claimStatus}</td>
+                          <td>
+                            <span className={claimStatusClass(run.claimStatus)}>
+                              {run.claimStatus}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -362,20 +450,46 @@ export function LeaderboardPage() {
         leaderboard.pagination.offset + leaderboard.entries.length,
       )
     : 0;
+  const topEntry = leaderboard?.entries[0] ?? null;
+  const hasHistoricalData =
+    (leaderboard?.window !== "all" &&
+      leaderboard?.entries.length === 0 &&
+      (leaderboard?.ingestion?.total_events ?? 0) > 0) ||
+    false;
 
   return (
     <main className="leaderboard-shell">
-      <header className="leaderboard-header">
+      <header className="leaderboard-header leaderboard-surface leaderboard-surface--hero">
         <div>
           <h1>Leaderboard</h1>
           <p>Rolling 10m, 24h, and all-time rankings from proved runs.</p>
+          <p className="leaderboard-note">
+            {leaderboard
+              ? `${windowSubtitle(leaderboard.window)} window`
+              : "Loading current ranking window"}
+          </p>
         </div>
-        <a className="leaderboard-navlink" href="/">
-          Back To Game
-        </a>
+        <div className="leaderboard-header-actions">
+          {leaderboard?.ingestion?.last_synced_at ? (
+            <span className="leaderboard-sync-pill">
+              Synced {formatUtcDateTime(leaderboard.ingestion.last_synced_at)}
+            </span>
+          ) : (
+            <span className="leaderboard-sync-pill leaderboard-sync-pill--muted">
+              Sync in progress
+            </span>
+          )}
+          <a className="leaderboard-navlink" href="/">
+            Back To Game
+          </a>
+        </div>
       </header>
 
-      <section className="leaderboard-controls">
+      <section className="leaderboard-controls leaderboard-surface">
+        <div className="leaderboard-controls-copy">
+          <h2>Filters</h2>
+          <p>Switch horizon or lookup a claimant contract address.</p>
+        </div>
         <div className="leaderboard-window-buttons">
           {(["10m", "day", "all"] as LeaderboardWindow[]).map((window) => (
             <button
@@ -417,16 +531,38 @@ export function LeaderboardPage() {
 
       {leaderboard ? (
         <>
-          <section className="leaderboard-card">
-            <p>
-              <strong>Window:</strong> {windowLabel(leaderboard.window)}
-              {" · "}
-              <strong>Updated:</strong> {formatUtcDateTime(leaderboard.generated_at)}
-            </p>
-            <p>
-              <strong>Showing:</strong> {showingStart}-{showingEnd} of{" "}
-              {leaderboard.pagination.total.toLocaleString()} players
-            </p>
+          <section className="leaderboard-card leaderboard-surface">
+            <div className="leaderboard-summary-line">
+              <p>
+                <strong>Window:</strong> {windowLabel(leaderboard.window)}
+                {" · "}
+                <strong>Updated:</strong> {formatUtcDateTime(leaderboard.generated_at)}
+              </p>
+              <p>
+                <strong>Showing:</strong> {showingStart}-{showingEnd} of{" "}
+                {leaderboard.pagination.total.toLocaleString()} players
+              </p>
+            </div>
+
+            <dl className="leaderboard-kpi-grid">
+              <div>
+                <dt>Tracked Players</dt>
+                <dd>{leaderboard.pagination.total.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Top Score</dt>
+                <dd>{topEntry ? topEntry.score.toLocaleString() : "n/a"}</dd>
+              </div>
+              <div>
+                <dt>Event Rows</dt>
+                <dd>{leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a"}</dd>
+              </div>
+              <div>
+                <dt>Highest Ledger</dt>
+                <dd>{leaderboard.ingestion?.highest_ledger?.toLocaleString() ?? "n/a"}</dd>
+              </div>
+            </dl>
+
             {leaderboard.me ? (
               <p>
                 <strong>Your Rank:</strong> #{leaderboard.me.rank} (
@@ -435,9 +571,31 @@ export function LeaderboardPage() {
             ) : findAddress ? (
               <p className="leaderboard-note">Address not ranked in this window.</p>
             ) : null}
+
+            {hasHistoricalData ? (
+              <div className="leaderboard-empty-window-hint">
+                <p className="leaderboard-note">
+                  No proved runs landed in this short window. Historical rankings still exist.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWindowKey("all");
+                    setOffset(0);
+                  }}
+                >
+                  Show All-Time
+                </button>
+              </div>
+            ) : null}
           </section>
 
-          <section className="leaderboard-card">
+          <section className="leaderboard-card leaderboard-surface">
+            <h2 className="leaderboard-section-title">Rankings</h2>
+            <p className="leaderboard-note">
+              Rankings show one row per claimant (their best proved run in this window). Minted Δ is
+              the token delta minted for that specific submission.
+            </p>
             {leaderboard.entries.length === 0 ? (
               <p className="leaderboard-note">No proved runs in this window yet.</p>
             ) : (
@@ -448,8 +606,9 @@ export function LeaderboardPage() {
                       <th>Rank</th>
                       <th>Player</th>
                       <th>Score</th>
-                      <th>Seed</th>
                       <th>Frames</th>
+                      <th>Minted Δ (this run)</th>
+                      <th>Seed</th>
                       <th>Completed (UTC)</th>
                       <th>Claim</th>
                     </tr>
@@ -464,7 +623,7 @@ export function LeaderboardPage() {
                             : ""
                         }
                       >
-                        <td>#{entry.rank}</td>
+                        <td className={rankClass(entry.rank)}>#{entry.rank}</td>
                         <td>
                           <div className="leaderboard-player-cell">
                             <a href={`/leaderboard/${entry.claimantAddress}`}>
@@ -478,13 +637,16 @@ export function LeaderboardPage() {
                             ) : null}
                           </div>
                         </td>
-                        <td>{entry.score.toLocaleString()}</td>
-                        <td>{formatHex32(entry.seed)}</td>
-                        <td>
-                          {entry.frameCount === null ? "-" : entry.frameCount.toLocaleString()}
-                        </td>
+                        <td className="leaderboard-cell--num">{entry.score.toLocaleString()}</td>
+                        <td className="leaderboard-cell--num">{formatMetric(entry.frameCount)}</td>
+                        <td className="leaderboard-cell--num">{formatMetric(entry.mintedDelta)}</td>
+                        <td className="leaderboard-cell--mono">{formatHex32(entry.seed)}</td>
                         <td>{formatUtcDateTime(entry.completedAt)}</td>
-                        <td>{entry.claimStatus}</td>
+                        <td>
+                          <span className={claimStatusClass(entry.claimStatus)}>
+                            {entry.claimStatus}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

@@ -13,9 +13,14 @@ const MAX_GALEXIE_PAGE_LIMIT = 1_000;
 const DEFAULT_GALEXIE_DATA_ROOT_PATH = "/v1";
 const DEFAULT_GALEXIE_OBJECT_EXTENSION = "zst";
 const DEFAULT_FORWARD_LEDGER_WINDOW = 4_096;
-const DEFAULT_RPC_BASE_URL = "https://rpc-pro.lightsail.network";
-const SCORE_EVENT_NAMES = new Set(["score_submitted", "ScoreSubmitted", "scoreSubmitted"]);
-const SCORE_EVENT_KEYS = new Set(["score_submitted", "scoresubmitted"]);
+const DEFAULT_RPC_BASE_URL_MAINNET = "https://rpc-pro.lightsail.network";
+const DEFAULT_RPC_BASE_URL_TESTNET_LIGHTSAIL = "https://rpc-testnet.lightsail.network";
+const DEFAULT_RPC_BASE_URL_TESTNET_PUBLIC = "https://soroban-testnet.stellar.org";
+const DEFAULT_RPC_BASE_URL_TESTNET_GATEWAY = "https://soroban-rpc.testnet.stellar.gateway.fm";
+const DEFAULT_RPC_BASE_URL_TESTNET_ANKR = "https://rpc.ankr.com/stellar_testnet_soroban";
+const STELLAR_TESTNET_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+const SCORE_EVENT_NAMES = new Set(["score_submitted"]);
+const SCORE_EVENT_KEYS = new Set(["score_submitted"]);
 
 export type LeaderboardSourceMode = "auto" | "rpc" | "events_api" | "datalake";
 export type LeaderboardResolvedSourceMode = Exclude<LeaderboardSourceMode, "auto">;
@@ -46,6 +51,11 @@ interface GalexieDatastoreConfig {
   ledgersPerBatch: number;
   batchesPerPartition: number;
   compression: string;
+}
+
+interface RpcLedgerBounds {
+  latestLedger: number | null;
+  oldestLedger: number | null;
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -198,7 +208,7 @@ export function parseLeaderboardSourceMode(env: WorkerEnv): LeaderboardSourceMod
     }
   }
 
-  return "rpc";
+  return "auto";
 }
 
 function resolveRequestedSourceMode(
@@ -223,13 +233,20 @@ function parseLedgerCursor(cursor: string | null | undefined): number | null {
 
   const trimmed = cursor.trim();
   if (trimmed.startsWith("ledger:")) {
-    const parsed = Number.parseInt(trimmed.slice("ledger:".length), 10);
+    const numeric = trimmed.slice("ledger:".length).trim();
+    if (!/^\d+$/.test(numeric)) {
+      return null;
+    }
+    const parsed = Number.parseInt(numeric, 10);
     if (Number.isFinite(parsed) && parsed >= 0) {
       return parsed;
     }
     return null;
   }
 
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
   const parsed = Number.parseInt(trimmed, 10);
   if (Number.isFinite(parsed) && parsed >= 0) {
     return parsed;
@@ -344,9 +361,43 @@ function toHexString(value: unknown): string | null {
   return null;
 }
 
+function normalizeJournalDigest(value: unknown): string | null {
+  const hexRaw = toHexString(value);
+  if (!hexRaw) {
+    return null;
+  }
+
+  const normalized = hexRaw.startsWith("0x") || hexRaw.startsWith("0X") ? hexRaw.slice(2) : hexRaw;
+  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized.toLowerCase();
+}
+
+function hasCanonicalScoreInvariants(values: {
+  finalScore: number;
+  previousBest: number;
+  newBest: number;
+  mintedDelta: number;
+}): boolean {
+  if (values.finalScore !== values.newBest) {
+    return false;
+  }
+  if (values.previousBest > values.newBest) {
+    return false;
+  }
+  return values.mintedDelta === values.newBest - values.previousBest;
+}
+
 function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   claimantAddress: string;
   seed: number;
+  frameCount: number | null;
+  finalScore: number;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
@@ -357,11 +408,7 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
     return null;
   }
 
-  const claimantRaw = readNativeMapValue(mapLike, [
-    "claimant",
-    "claimant_address",
-    "claimantAddress",
-  ]);
+  const claimantRaw = readNativeMapValue(mapLike, ["claimant"]);
   if (typeof claimantRaw !== "string" || claimantRaw.trim().length === 0) {
     return null;
   }
@@ -374,27 +421,54 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   }
 
   const seed = toInteger(readNativeMapValue(mapLike, ["seed"]));
-  const newBest = toInteger(readNativeMapValue(mapLike, ["new_best", "newBest", "score"]));
-  const previousBestRaw = toInteger(readNativeMapValue(mapLike, ["previous_best", "previousBest"]));
-  const mintedDeltaRaw = toInteger(readNativeMapValue(mapLike, ["minted_delta", "mintedDelta"]));
+  const frameCount = toInteger(readNativeMapValue(mapLike, ["frame_count"]));
+  const finalScore = toInteger(readNativeMapValue(mapLike, ["final_score"]));
+  const newBest = toInteger(readNativeMapValue(mapLike, ["new_best"]));
+  const finalRngState = toInteger(readNativeMapValue(mapLike, ["final_rng_state"]));
+  const tapeChecksum = toInteger(readNativeMapValue(mapLike, ["tape_checksum"]));
+  const rulesDigest = toInteger(readNativeMapValue(mapLike, ["rules_digest"]));
+  const previousBest = toInteger(readNativeMapValue(mapLike, ["previous_best"]));
+  const mintedDelta = toInteger(readNativeMapValue(mapLike, ["minted_delta"]));
+  const journalDigest = normalizeJournalDigest(readNativeMapValue(mapLike, ["journal_digest"]));
 
-  if (seed === null || seed < 0 || newBest === null || newBest <= 0) {
+  if (
+    seed === null ||
+    seed < 0 ||
+    frameCount === null ||
+    frameCount < 0 ||
+    finalScore === null ||
+    finalScore <= 0 ||
+    newBest === null ||
+    newBest <= 0 ||
+    finalRngState === null ||
+    finalRngState < 0 ||
+    tapeChecksum === null ||
+    tapeChecksum < 0 ||
+    rulesDigest === null ||
+    rulesDigest < 0 ||
+    previousBest === null ||
+    previousBest < 0 ||
+    mintedDelta === null ||
+    mintedDelta < 0 ||
+    journalDigest === null ||
+    !hasCanonicalScoreInvariants({
+      finalScore,
+      previousBest,
+      newBest,
+      mintedDelta,
+    })
+  ) {
     return null;
   }
-
-  const previousBest = previousBestRaw !== null && previousBestRaw >= 0 ? previousBestRaw : 0;
-  const mintedDelta =
-    mintedDeltaRaw !== null && mintedDeltaRaw >= 0
-      ? mintedDeltaRaw
-      : Math.max(0, newBest - previousBest);
-
-  const journalDigest = toHexString(
-    readNativeMapValue(mapLike, ["journal_digest", "journalDigest"]),
-  );
 
   return {
     claimantAddress,
     seed: seed >>> 0,
+    frameCount: frameCount >>> 0,
+    finalScore: finalScore >>> 0,
+    finalRngState: finalRngState >>> 0,
+    tapeChecksum: tapeChecksum >>> 0,
+    rulesDigest: rulesDigest >>> 0,
     previousBest: previousBest >>> 0,
     newBest: newBest >>> 0,
     mintedDelta: mintedDelta >>> 0,
@@ -559,6 +633,11 @@ function extractScoreEventsFromLedgerBatch(
           eventId,
           claimantAddress: scoreEvent.claimantAddress,
           seed: scoreEvent.seed,
+          frameCount: scoreEvent.frameCount,
+          finalScore: scoreEvent.finalScore,
+          finalRngState: scoreEvent.finalRngState,
+          tapeChecksum: scoreEvent.tapeChecksum,
+          rulesDigest: scoreEvent.rulesDigest,
           previousBest: scoreEvent.previousBest,
           newBest: scoreEvent.newBest,
           mintedDelta: scoreEvent.mintedDelta,
@@ -680,6 +759,17 @@ function isGalexieConfigured(env: WorkerEnv): boolean {
   return Boolean(env.GALEXIE_API_BASE_URL?.trim());
 }
 
+function normalizeNetworkPassphrase(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+  return normalized.toLowerCase().replace(/\s+/g, " ");
+}
+
 function validateGalexieBaseUrl(env: WorkerEnv): URL {
   const raw = env.GALEXIE_API_BASE_URL?.trim();
   if (!raw) {
@@ -700,21 +790,73 @@ function validateGalexieBaseUrl(env: WorkerEnv): URL {
   return base;
 }
 
-function getRpcBaseUrl(env: WorkerEnv): URL {
-  const raw = env.GALEXIE_RPC_BASE_URL?.trim() ?? DEFAULT_RPC_BASE_URL;
+function isTestnetNetworkPassphrase(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  if (!normalized || normalized.length === 0) {
+    return false;
+  }
+  if (normalized === STELLAR_TESTNET_NETWORK_PASSPHRASE) {
+    return true;
+  }
+  return normalized.toLowerCase().includes("testnet");
+}
 
-  let base: URL;
+function isTestnetIngestionNetwork(env: WorkerEnv): boolean {
+  return isTestnetNetworkPassphrase(env.CLAIM_NETWORK_PASSPHRASE);
+}
+
+function isGalexieBaseUrlCompatibleWithNetwork(env: WorkerEnv): boolean {
+  if (!isGalexieConfigured(env)) {
+    return false;
+  }
+  if (!isTestnetIngestionNetwork(env)) {
+    return true;
+  }
+
   try {
-    base = new URL(raw);
+    const baseUrl = validateGalexieBaseUrl(env);
+    return baseUrl.hostname.toLowerCase().includes("testnet");
   } catch {
-    throw new Error("GALEXIE_RPC_BASE_URL is invalid");
+    return false;
+  }
+}
+
+function resolveRpcBaseUrlCandidates(env: WorkerEnv): URL[] {
+  const configured = env.GALEXIE_RPC_BASE_URL?.trim();
+  const candidateStrings =
+    configured && configured.length > 0
+      ? [configured]
+      : isTestnetIngestionNetwork(env)
+        ? [
+            DEFAULT_RPC_BASE_URL_TESTNET_LIGHTSAIL,
+            DEFAULT_RPC_BASE_URL_TESTNET_PUBLIC,
+            DEFAULT_RPC_BASE_URL_TESTNET_GATEWAY,
+            DEFAULT_RPC_BASE_URL_TESTNET_ANKR,
+          ]
+        : [DEFAULT_RPC_BASE_URL_MAINNET];
+
+  const unique = new Set<string>();
+  const urls: URL[] = [];
+  for (const raw of candidateStrings) {
+    if (unique.has(raw)) {
+      continue;
+    }
+    unique.add(raw);
+
+    let base: URL;
+    try {
+      base = new URL(raw);
+    } catch {
+      throw new Error("GALEXIE_RPC_BASE_URL is invalid");
+    }
+
+    if (base.protocol !== "https:" && base.protocol !== "http:") {
+      throw new Error("GALEXIE_RPC_BASE_URL must use http or https");
+    }
+    urls.push(base);
   }
 
-  if (base.protocol !== "https:" && base.protocol !== "http:") {
-    throw new Error("GALEXIE_RPC_BASE_URL must use http or https");
-  }
-
-  return base;
+  return urls;
 }
 
 async function fetchWithTimeout(url: URL, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -751,8 +893,33 @@ function getGalexieAuthHeaders(env: WorkerEnv): Record<string, string> {
   return headers;
 }
 
-async function fetchRpcLatestLedger(env: WorkerEnv, timeoutMs: number): Promise<number | null> {
-  const rpcBase = getRpcBaseUrl(env);
+function isLightsailHost(hostname: string): boolean {
+  return hostname.endsWith(".lightsail.network");
+}
+
+function getRpcAuthHeaders(env: WorkerEnv, rpcBase: URL): Record<string, string> {
+  if (isLightsailHost(rpcBase.hostname)) {
+    return getGalexieAuthHeaders(env);
+  }
+  return {
+    accept: "application/json",
+  };
+}
+
+async function fetchRpcLatestLedgerForBase(
+  env: WorkerEnv,
+  rpcBase: URL,
+  timeoutMs: number,
+): Promise<number | null> {
+  const bounds = await fetchRpcLedgerBoundsForBase(env, rpcBase, timeoutMs);
+  return bounds.latestLedger;
+}
+
+async function fetchRpcLedgerBoundsForBase(
+  env: WorkerEnv,
+  rpcBase: URL,
+  timeoutMs: number,
+): Promise<RpcLedgerBounds> {
   const body = {
     jsonrpc: "2.0",
     id: 1,
@@ -764,7 +931,7 @@ async function fetchRpcLatestLedger(env: WorkerEnv, timeoutMs: number): Promise<
     {
       method: "POST",
       headers: {
-        ...getGalexieAuthHeaders(env),
+        ...getRpcAuthHeaders(env, rpcBase),
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
@@ -773,21 +940,48 @@ async function fetchRpcLatestLedger(env: WorkerEnv, timeoutMs: number): Promise<
   );
 
   if (!response.ok) {
-    return null;
+    return {
+      latestLedger: null,
+      oldestLedger: null,
+    };
   }
 
   try {
     const payload = (await response.json()) as JsonRecord;
     const result = asRecord(payload.result);
     const latestLedger = toInteger(result?.latestLedger);
-    if (latestLedger !== null && latestLedger >= 0) {
-      return latestLedger;
-    }
+    const oldestLedger = toInteger(result?.oldestLedger);
+    return {
+      latestLedger: latestLedger !== null && latestLedger >= 0 ? latestLedger : null,
+      oldestLedger: oldestLedger !== null && oldestLedger >= 0 ? oldestLedger : null,
+    };
   } catch {
     // ignore parse errors and fallback to null
   }
 
+  return {
+    latestLedger: null,
+    oldestLedger: null,
+  };
+}
+
+async function fetchRpcLatestLedger(env: WorkerEnv, timeoutMs: number): Promise<number | null> {
+  const rpcBases = resolveRpcBaseUrlCandidates(env);
+  // Intentionally sequential: respect configured priority and stop on first healthy RPC.
+  // eslint-disable-next-line no-await-in-loop
+  for (const rpcBase of rpcBases) {
+    // eslint-disable-next-line no-await-in-loop
+    const latestLedger = await fetchRpcLatestLedgerForBase(env, rpcBase, timeoutMs);
+    if (latestLedger !== null) {
+      return latestLedger;
+    }
+  }
+
   return null;
+}
+
+function rpcRequiresStartLedger(rpcBase: URL): boolean {
+  return rpcBase.hostname === "soroban-testnet.stellar.org";
 }
 
 async function fetchGalexieDatastoreConfig(
@@ -935,6 +1129,11 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
       eventId,
       claimantAddress: scoreEvent.claimantAddress,
       seed: scoreEvent.seed,
+      frameCount: scoreEvent.frameCount,
+      finalScore: scoreEvent.finalScore,
+      finalRngState: scoreEvent.finalRngState,
+      tapeChecksum: scoreEvent.tapeChecksum,
+      rulesDigest: scoreEvent.rulesDigest,
       previousBest: scoreEvent.previousBest,
       newBest: scoreEvent.newBest,
       mintedDelta: scoreEvent.mintedDelta,
@@ -966,7 +1165,7 @@ async function fetchLeaderboardEventsFromRpcEvents(
   options: GalexieFetchOptions,
 ): Promise<GalexieFetchResult> {
   const timeoutMs = parseInteger(env.GALEXIE_REQUEST_TIMEOUT_MS, DEFAULT_GALEXIE_TIMEOUT_MS, 1_000);
-  const rpcBase = getRpcBaseUrl(env);
+  const rpcBases = resolveRpcBaseUrlCandidates(env);
   const limit = Math.min(
     Math.max(options.limit ?? DEFAULT_GALEXIE_PAGE_LIMIT, 1),
     MAX_GALEXIE_PAGE_LIMIT,
@@ -976,7 +1175,8 @@ async function fetchLeaderboardEventsFromRpcEvents(
   const pagination: JsonRecord = {
     limit,
   };
-  if (options.cursor && options.cursor.trim().length > 0) {
+  const hasLedgerCursor = parseLedgerCursor(options.cursor) !== null;
+  if (!hasLedgerCursor && options.cursor && options.cursor.trim().length > 0) {
     pagination.cursor = options.cursor.trim();
   }
 
@@ -998,64 +1198,182 @@ async function fetchLeaderboardEventsFromRpcEvents(
   if (typeof options.toLedger === "number" && options.toLedger >= 2) {
     params.endLedger = Math.trunc(options.toLedger);
   }
+  if (Object.prototype.hasOwnProperty.call(pagination, "cursor")) {
+    delete params.startLedger;
+    delete params.endLedger;
+  }
 
-  const response = await fetchWithTimeout(
-    rpcBase,
-    {
-      method: "POST",
-      headers: {
-        ...getGalexieAuthHeaders(env),
-        "content-type": "application/json",
+  const rpcErrors: string[] = [];
+  // Intentionally sequential: testnet Lightsail is preferred, with deterministic fallback.
+  for (const rpcBase of rpcBases) {
+    const requestParams: JsonRecord = {
+      ...params,
+      pagination: {
+        ...pagination,
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getEvents",
-        params,
-      }),
-    },
-    timeoutMs,
-  );
+    };
+    const requestPagination = requestParams.pagination as JsonRecord;
 
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    throw new Error(
-      detail.length > 0
-        ? `rpc getEvents request failed (${response.status}): ${detail}`
-        : `rpc getEvents request failed (${response.status})`,
-    );
+    let rpcBounds: RpcLedgerBounds | null = null;
+    const ensureRpcBounds = async (): Promise<RpcLedgerBounds> => {
+      if (rpcBounds) {
+        return rpcBounds;
+      }
+      rpcBounds = await fetchRpcLedgerBoundsForBase(env, rpcBase, timeoutMs);
+      return rpcBounds;
+    };
+
+    if (requestParams.startLedger !== undefined || requestParams.endLedger !== undefined) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const bounds = await ensureRpcBounds();
+        const latestLedger = bounds.latestLedger;
+        const oldestLedger = bounds.oldestLedger;
+
+        if (typeof requestParams.startLedger === "number") {
+          let nextStart = Math.trunc(requestParams.startLedger);
+          if (oldestLedger !== null) {
+            nextStart = Math.max(nextStart, oldestLedger);
+          }
+          if (latestLedger !== null) {
+            nextStart = Math.min(nextStart, latestLedger);
+          }
+          requestParams.startLedger = Math.max(2, nextStart);
+        }
+
+        if (typeof requestParams.endLedger === "number") {
+          let nextEnd = Math.trunc(requestParams.endLedger);
+          if (oldestLedger !== null) {
+            nextEnd = Math.max(nextEnd, oldestLedger);
+          }
+          if (latestLedger !== null) {
+            nextEnd = Math.min(nextEnd, latestLedger);
+          }
+          requestParams.endLedger = Math.max(2, nextEnd);
+        }
+      } catch {
+        // Ignore health clamp errors and continue with caller-provided bounds.
+      }
+    }
+
+    if (
+      rpcRequiresStartLedger(rpcBase) &&
+      requestParams.startLedger === undefined &&
+      !Object.prototype.hasOwnProperty.call(requestPagination, "cursor")
+    ) {
+      let latestLedger: number | null = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        latestLedger = (await ensureRpcBounds()).latestLedger;
+      } catch (error) {
+        rpcErrors.push(`${rpcBase.origin}: failed fetching rpc health: ${safeErrorMessage(error)}`);
+        continue;
+      }
+      if (latestLedger === null) {
+        rpcErrors.push(`${rpcBase.origin}: failed fetching rpc health`);
+        continue;
+      }
+      requestParams.startLedger = Math.max(2, latestLedger - DEFAULT_FORWARD_LEDGER_WINDOW + 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(requestPagination, "cursor")) {
+      delete requestParams.startLedger;
+      delete requestParams.endLedger;
+    } else if (
+      typeof requestParams.startLedger === "number" &&
+      typeof requestParams.endLedger === "number" &&
+      requestParams.endLedger < requestParams.startLedger
+    ) {
+      requestParams.endLedger = requestParams.startLedger;
+    }
+
+    const requestVariants: JsonRecord[] = [requestParams];
+    if (
+      requestParams.endLedger !== undefined &&
+      !Object.prototype.hasOwnProperty.call(requestPagination, "cursor")
+    ) {
+      requestVariants.push({
+        ...requestParams,
+        endLedger: undefined,
+      });
+    }
+
+    for (let attemptIndex = 0; attemptIndex < requestVariants.length; attemptIndex += 1) {
+      const variantParams = requestVariants[attemptIndex];
+      let response: Response;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        response = await fetchWithTimeout(
+          rpcBase,
+          {
+            method: "POST",
+            headers: {
+              ...getRpcAuthHeaders(env, rpcBase),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getEvents",
+              params: variantParams,
+            }),
+          },
+          timeoutMs,
+        );
+      } catch (error) {
+        rpcErrors.push(`${rpcBase.origin}: ${safeErrorMessage(error)}`);
+        break;
+      }
+
+      if (!response.ok) {
+        // eslint-disable-next-line no-await-in-loop
+        const detail = (await response.text()).slice(0, 300);
+        rpcErrors.push(
+          detail.length > 0
+            ? `${rpcBase.origin}: rpc getEvents request failed (${response.status}): ${detail}`
+            : `${rpcBase.origin}: rpc getEvents request failed (${response.status})`,
+        );
+        break;
+      }
+
+      let payload: unknown;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        payload = await response.json();
+      } catch (error) {
+        rpcErrors.push(
+          `${rpcBase.origin}: rpc getEvents response was not valid JSON: ${safeErrorMessage(error)}`,
+        );
+        break;
+      }
+
+      const root = asRecord(payload);
+      const errorPayload = asRecord(root?.error);
+      if (errorPayload) {
+        const code = toInteger(errorPayload.code);
+        const message =
+          typeof errorPayload.message === "string" ? errorPayload.message.trim() : null;
+        const details = typeof errorPayload.data === "string" ? errorPayload.data.trim() : null;
+        const pieces = [
+          "rpc getEvents returned an error",
+          code !== null ? `code=${code}` : null,
+          message ? `message=${message}` : null,
+          details ? `data=${details}` : null,
+        ].filter((value): value is string => value !== null);
+        rpcErrors.push(`${rpcBase.origin}: ${pieces.join(", ")}`);
+        continue;
+      }
+
+      const result = asRecord(root?.result);
+      if (!result) {
+        rpcErrors.push(`${rpcBase.origin}: rpc getEvents response missing result`);
+        continue;
+      }
+
+      return normalizeRpcGetEventsPayload(result);
+    }
   }
 
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    throw new Error(`rpc getEvents response was not valid JSON: ${safeErrorMessage(error)}`, {
-      cause: error,
-    });
-  }
-
-  const root = asRecord(payload);
-  const errorPayload = asRecord(root?.error);
-  if (errorPayload) {
-    const code = toInteger(errorPayload.code);
-    const message = typeof errorPayload.message === "string" ? errorPayload.message.trim() : null;
-    const details = typeof errorPayload.data === "string" ? errorPayload.data.trim() : null;
-    const pieces = [
-      "rpc getEvents returned an error",
-      code !== null ? `code=${code}` : null,
-      message ? `message=${message}` : null,
-      details ? `data=${details}` : null,
-    ].filter((value): value is string => value !== null);
-    throw new Error(pieces.join(", "));
-  }
-
-  const result = asRecord(root?.result);
-  if (!result) {
-    throw new Error("rpc getEvents response missing result");
-  }
-
-  return normalizeRpcGetEventsPayload(result);
+  throw new Error(`rpc getEvents failed across candidates (${rpcErrors.join(" | ")})`);
 }
 
 async function fetchLeaderboardEventsFromGalexieDatastore(
@@ -1065,6 +1383,18 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
   const timeoutMs = parseInteger(env.GALEXIE_REQUEST_TIMEOUT_MS, DEFAULT_GALEXIE_TIMEOUT_MS, 1_000);
   const baseUrl = validateGalexieBaseUrl(env);
   const datastoreConfig = await fetchGalexieDatastoreConfig(env, baseUrl, timeoutMs);
+  const expectedPassphrase = normalizeNetworkPassphrase(env.CLAIM_NETWORK_PASSPHRASE);
+  const datastorePassphrase = normalizeNetworkPassphrase(datastoreConfig.networkPassphrase);
+  if (
+    expectedPassphrase !== null &&
+    datastorePassphrase !== null &&
+    datastorePassphrase !== "unknown" &&
+    expectedPassphrase !== datastorePassphrase
+  ) {
+    throw new Error(
+      `galexie datastore network mismatch (expected '${env.CLAIM_NETWORK_PASSPHRASE}', got '${datastoreConfig.networkPassphrase}')`,
+    );
+  }
   const latestLedger = await fetchRpcLatestLedger(env, timeoutMs);
 
   const ledgerRange = normalizeLedgerRange(options, latestLedger);
@@ -1172,84 +1502,76 @@ export function normalizeGalexieScoreEvents(
       asRecord(root.event),
     ].filter((value): value is JsonRecord => value !== null);
 
-    const claimantRaw = pickValue(nested, ["claimant", "claimant_address", "claimantAddress"]);
-    const claimantString =
-      typeof claimantRaw === "string"
-        ? claimantRaw
-        : (() => {
-            const claimantObj = asRecord(claimantRaw);
-            if (!claimantObj) {
-              return null;
-            }
-            const nestedAddress = pickValue(
-              [claimantObj],
-              ["address", "value", "id", "contract_id"],
-            );
-            return typeof nestedAddress === "string" ? nestedAddress : null;
-          })();
-    if (!claimantString) {
+    const claimantRaw = pickValue(nested, ["claimant"]);
+    if (typeof claimantRaw !== "string" || claimantRaw.trim().length === 0) {
       continue;
     }
 
     let claimantAddress: string;
     try {
-      claimantAddress = validateClaimantStrKeyFromUserInput(claimantString);
+      claimantAddress = validateClaimantStrKeyFromUserInput(claimantRaw);
     } catch {
       continue;
     }
 
     const seed = toInteger(pickValue(nested, ["seed"]));
-    const newBest = toInteger(pickValue(nested, ["new_best", "newBest", "score", "final_score"]));
-    if (seed === null || seed < 0 || newBest === null || newBest <= 0) {
+    const frameCount = toInteger(pickValue(nested, ["frame_count"]));
+    const finalScore = toInteger(pickValue(nested, ["final_score"]));
+    const newBest = toInteger(pickValue(nested, ["new_best"]));
+    const finalRngState = toInteger(pickValue(nested, ["final_rng_state"]));
+    const tapeChecksum = toInteger(pickValue(nested, ["tape_checksum"]));
+    const rulesDigest = toInteger(pickValue(nested, ["rules_digest"]));
+    const previousBest = toInteger(pickValue(nested, ["previous_best"]));
+    const mintedDelta = toInteger(pickValue(nested, ["minted_delta"]));
+    const journalDigestRaw = pickValue(nested, ["journal_digest"]);
+    const closedAt = toIsoTimestamp(pickValue(nested, ["closed_at"]));
+
+    if (
+      seed === null ||
+      seed < 0 ||
+      frameCount === null ||
+      frameCount < 0 ||
+      finalScore === null ||
+      finalScore <= 0 ||
+      newBest === null ||
+      newBest <= 0 ||
+      finalRngState === null ||
+      finalRngState < 0 ||
+      tapeChecksum === null ||
+      tapeChecksum < 0 ||
+      rulesDigest === null ||
+      rulesDigest < 0 ||
+      previousBest === null ||
+      previousBest < 0 ||
+      mintedDelta === null ||
+      mintedDelta < 0 ||
+      !closedAt
+    ) {
+      continue;
+    }
+    const journalDigest = normalizeJournalDigest(journalDigestRaw);
+    if (
+      journalDigest === null ||
+      !hasCanonicalScoreInvariants({
+        finalScore,
+        previousBest,
+        newBest,
+        mintedDelta,
+      })
+    ) {
       continue;
     }
 
-    const previousBestRaw = toInteger(pickValue(nested, ["previous_best", "previousBest"]));
-    const previousBest = previousBestRaw !== null && previousBestRaw >= 0 ? previousBestRaw : 0;
-    const mintedDeltaRaw = toInteger(pickValue(nested, ["minted_delta", "mintedDelta"]));
-    const mintedDelta =
-      mintedDeltaRaw !== null && mintedDeltaRaw >= 0
-        ? mintedDeltaRaw
-        : Math.max(0, newBest - previousBest);
-
-    const journalDigestRaw = pickValue(nested, ["journal_digest", "journalDigest", "digest"]);
-    const journalDigest =
-      typeof journalDigestRaw === "string" && journalDigestRaw.trim().length > 0
-        ? journalDigestRaw.trim()
-        : null;
-
-    const txHashRaw = pickValue(nested, [
-      "tx_hash",
-      "txHash",
-      "transaction_hash",
-      "transactionHash",
-    ]);
+    const txHashRaw = pickValue(nested, ["tx_hash"]);
     const txHash =
       typeof txHashRaw === "string" && txHashRaw.trim().length > 0 ? txHashRaw.trim() : null;
 
-    const eventIndexRaw = toInteger(
-      pickValue(nested, ["event_index", "eventIndex", "index", "log_index"]),
-    );
+    const eventIndexRaw = toInteger(pickValue(nested, ["event_index"]));
     const eventIndex = eventIndexRaw !== null && eventIndexRaw >= 0 ? eventIndexRaw : null;
-    const ledgerRaw = toInteger(pickValue(nested, ["ledger", "ledger_sequence", "ledgerSequence"]));
+    const ledgerRaw = toInteger(pickValue(nested, ["ledger"]));
     const ledger = ledgerRaw !== null && ledgerRaw >= 0 ? ledgerRaw : null;
 
-    const closedAt = toIsoTimestamp(
-      pickValue(nested, [
-        "closed_at",
-        "closedAt",
-        "ledger_closed_at",
-        "ledgerClosedAt",
-        "timestamp",
-        "created_at",
-        "createdAt",
-      ]),
-    );
-    if (!closedAt) {
-      continue;
-    }
-
-    const explicitEventId = pickValue(nested, ["event_id", "eventId", "id", "cursor"]);
+    const explicitEventId = pickValue(nested, ["event_id", "id"]);
     let eventId =
       typeof explicitEventId === "string" && explicitEventId.trim().length > 0
         ? explicitEventId.trim()
@@ -1269,6 +1591,11 @@ export function normalizeGalexieScoreEvents(
       eventId,
       claimantAddress,
       seed: seed >>> 0,
+      frameCount: frameCount >>> 0,
+      finalScore: finalScore >>> 0,
+      finalRngState: finalRngState >>> 0,
+      tapeChecksum: tapeChecksum >>> 0,
+      rulesDigest: rulesDigest >>> 0,
       previousBest: previousBest >>> 0,
       newBest: newBest >>> 0,
       mintedDelta: mintedDelta >>> 0,
@@ -1306,7 +1633,7 @@ async function fetchLeaderboardEventsFromGalexieEventsApi(
   );
   url.searchParams.set("limit", `${limit}`);
   url.searchParams.set("order", "asc");
-  url.searchParams.set("event_name", "ScoreSubmitted");
+  url.searchParams.set("event_name", "score_submitted");
 
   const scoreContractId = env.SCORE_CONTRACT_ID?.trim();
   if (scoreContractId) {
@@ -1365,6 +1692,7 @@ export async function fetchLeaderboardEventsFromGalexie(
   const configuredMode = parseLeaderboardSourceMode(env);
   const overrideMode = resolveRequestedSourceMode(options);
   const effectiveMode = overrideMode ?? configuredMode;
+  const hasCompatibleGalexieFallback = isGalexieBaseUrlCompatibleWithNetwork(env);
 
   const tryMode = async (mode: LeaderboardResolvedSourceMode): Promise<GalexieFetchResult> => {
     if (mode === "rpc") {
@@ -1378,10 +1706,10 @@ export async function fetchLeaderboardEventsFromGalexie(
 
   const fallbackModes: LeaderboardResolvedSourceMode[] = (() => {
     if (effectiveMode === "rpc") {
-      return isGalexieConfigured(env) ? ["rpc", "datalake", "events_api"] : ["rpc"];
+      return hasCompatibleGalexieFallback ? ["rpc", "datalake", "events_api"] : ["rpc"];
     }
     if (effectiveMode === "auto") {
-      return isGalexieConfigured(env) ? ["rpc", "datalake", "events_api"] : ["rpc"];
+      return hasCompatibleGalexieFallback ? ["rpc", "datalake", "events_api"] : ["rpc"];
     }
     if (effectiveMode === "datalake") {
       return ["datalake", "rpc"];

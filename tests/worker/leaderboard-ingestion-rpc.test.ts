@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { fetchLeaderboardEventsFromGalexie } from "../../worker/leaderboard-ingestion";
+import {
+  fetchLeaderboardEventsFromGalexie,
+  parseLeaderboardSourceMode,
+} from "../../worker/leaderboard-ingestion";
 import type { WorkerEnv } from "../../worker/env";
 
 const originalFetch = globalThis.fetch;
@@ -26,13 +29,18 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     PROOF_ARTIFACTS: {} as R2Bucket,
     PROVER_BASE_URL: "http://127.0.0.1:8088",
     GALEXIE_RPC_BASE_URL: "https://rpc-pro.lightsail.network",
+    CLAIM_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015",
     ...overrides,
   } as WorkerEnv;
 }
 
 describe("leaderboard ingestion source selection", () => {
+  it("defaults source mode to auto so rpc uses fallback chain when configured", () => {
+    expect(parseLeaderboardSourceMode(makeEnv({ GALEXIE_SOURCE_MODE: undefined }))).toBe("auto");
+  });
+
   it("defaults to rpc getEvents when source mode is not configured", async () => {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url === "https://rpc-pro.lightsail.network/") {
         return jsonResponse({
@@ -127,5 +135,197 @@ describe("leaderboard ingestion source selection", () => {
     expect(result.provider).toBe("rpc");
     expect(result.sourceMode).toBe("rpc");
     expect(result.nextCursor).toBe("rpc-cursor-2");
+  });
+
+  it("prefers testnet Lightsail RPC and falls back to soroban-testnet when unresolved", async () => {
+    const calledUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calledUrls.push(url);
+      if (url === "https://rpc-testnet.lightsail.network/") {
+        return new Response("rpc down", { status: 503 });
+      }
+      if (url === "https://soroban-testnet.stellar.org/") {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        if (payload?.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 1_000_000,
+            },
+          });
+        }
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-testnet",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_RPC_BASE_URL: "",
+        CLAIM_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
+      }),
+      {
+        limit: 50,
+      },
+    );
+
+    expect(result.provider).toBe("rpc");
+    expect(result.sourceMode).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-testnet");
+    expect(calledUrls[0]).toBe("https://rpc-testnet.lightsail.network/");
+    expect(calledUrls).toContain("https://soroban-testnet.stellar.org/");
+  });
+
+  it("does not forward datalake ledger cursors as rpc pagination cursor", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://rpc-pro.lightsail.network/") {
+        requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-3",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(makeEnv(), {
+      cursor: "ledger:61186328",
+      limit: 50,
+    });
+
+    expect(result.provider).toBe("rpc");
+    const params = requestBody?.params as Record<string, unknown>;
+    const pagination = params.pagination as Record<string, unknown>;
+    expect(pagination.cursor).toBeUndefined();
+  });
+
+  it("injects startLedger for soroban-testnet rpc when no cursor is available", async () => {
+    const requestPayloads: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://soroban-testnet.stellar.org/") {
+        const payload = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        requestPayloads.push(payload);
+        if (payload.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 1_000_000,
+            },
+          });
+        }
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-testnet-2",
+          },
+        });
+      }
+      return new Response("unavailable", { status: 503 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_RPC_BASE_URL: "https://soroban-testnet.stellar.org",
+        CLAIM_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
+      }),
+      {
+        limit: 50,
+      },
+    );
+
+    expect(result.provider).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-testnet-2");
+    const getEventsPayload = requestPayloads.find((payload) => payload.method === "getEvents");
+    expect(getEventsPayload).toBeDefined();
+    const params = getEventsPayload?.params as Record<string, unknown>;
+    expect(params.startLedger).toBe(995905);
+  });
+
+  it("keeps auto mode rpc-only on testnet when galexie base is not testnet-compatible", async () => {
+    let rpcCalls = 0;
+    const calledUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calledUrls.push(url);
+      if (url === "https://soroban-testnet.stellar.org/") {
+        const payload = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        if (payload.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 1_000_000,
+              oldestLedger: 900_000,
+            },
+          });
+        }
+        rpcCalls += 1;
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-testnet-only",
+          },
+        });
+      }
+      return new Response("unavailable", { status: 503 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_RPC_BASE_URL: "https://soroban-testnet.stellar.org",
+        GALEXIE_SOURCE_MODE: "auto",
+        GALEXIE_API_BASE_URL: "https://galexie-pro.lightsail.network",
+        CLAIM_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
+      }),
+      {
+        limit: 50,
+      },
+    );
+
+    expect(result.provider).toBe("rpc");
+    expect(result.sourceMode).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-testnet-only");
+    expect(rpcCalls).toBe(1);
+    expect(calledUrls.some((url) => url.includes("galexie-pro.lightsail.network"))).toBe(false);
+  });
+
+  it("omits start/end ledger when rpc pagination cursor is provided", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://rpc-pro.lightsail.network/") {
+        requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-opaque-next",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(makeEnv(), {
+      cursor: "0004302736891858944-0000000001",
+      fromLedger: 995000,
+      toLedger: 1008000,
+      limit: 100,
+    });
+
+    expect(result.provider).toBe("rpc");
+    expect(result.sourceMode).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-opaque-next");
+    const params = requestBody?.params as Record<string, unknown>;
+    const pagination = params.pagination as Record<string, unknown>;
+    expect(pagination.cursor).toBe("0004302736891858944-0000000001");
+    expect(params.startLedger).toBeUndefined();
+    expect(params.endLedger).toBeUndefined();
   });
 });

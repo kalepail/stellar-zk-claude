@@ -68,7 +68,9 @@ Validation and execution in order:
 9. Cross-contract call: `router.verify(seal, image_id, journal_digest)`
 10. Store `Claimed(journal_digest)` and `Best(claimant, seed) = final_score`
 11. Mint `minted_delta` tokens to `claimant` via `StellarAssetClient`
-12. Emit `ScoreSubmitted { claimant, seed, previous_best, new_best: final_score, minted_delta, journal_digest }`
+12. Emit `ScoreSubmitted` with full journal mirror + payout context:
+   - Journal mirror: `seed`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`
+   - Payout context: `claimant`, `previous_best`, `new_best`, `minted_delta`, `journal_digest`
 13. Return `Ok(final_score)`
 
 Note: `image_id` is **not** a parameter — it is read from storage. The contract
@@ -87,6 +89,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 
 - `set_image_id(new_image_id: BytesN<32>)` — requires admin auth; version rotation
 - `set_admin(new_admin: Address)` — requires admin auth; transfer admin role
+- `upgrade(new_wasm_hash: BytesN<32>)` — requires admin auth; upgrades the contract code in place
 
 ## Journal Layout
 
@@ -107,6 +110,11 @@ trusts its own stored image ID rather than accepting one from the caller.
 struct ScoreSubmitted {
     claimant: Address,
     seed: u32,
+    frame_count: u32,
+    final_score: u32,
+    final_rng_state: u32,
+    tape_checksum: u32,
+    rules_digest: u32,
     previous_best: u32,
     new_best: u32,
     minted_delta: u32,

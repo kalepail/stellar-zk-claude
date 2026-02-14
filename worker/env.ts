@@ -7,6 +7,7 @@ export interface WorkerEnv {
   CLAIM_QUEUE: Queue<ClaimQueueMessage>;
   PROOF_COORDINATOR: DurableObjectNamespace<ProofCoordinatorDO>;
   PROOF_ARTIFACTS: R2Bucket;
+  LEADERBOARD_DB?: D1Database;
   PROVER_BASE_URL: string;
   PROVER_API_KEY?: string;
   PROVER_ACCESS_CLIENT_ID?: string;
@@ -25,6 +26,7 @@ export interface WorkerEnv {
   CLAIM_RELAY_URL?: string;
   CLAIM_RELAY_API_KEY?: string;
   CLAIM_RELAY_REQUEST_TIMEOUT_MS?: string;
+  CLAIM_NETWORK_PASSPHRASE?: string;
   LEADERBOARD_ADMIN_KEY?: string;
   SCORE_CONTRACT_ID?: string;
   GALEXIE_API_BASE_URL?: string;
@@ -39,4 +41,10 @@ export interface WorkerEnv {
   LEADERBOARD_SYNC_CRON_LIMIT?: string;
   LEADERBOARD_CATCHUP_INTERVAL_MINUTES?: string;
   LEADERBOARD_CATCHUP_WINDOW_LEDGERS?: string;
+  LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS?: string;
+  SMART_ACCOUNT_INDEXER_URL?: string;
+  SMART_ACCOUNT_INDEXER_TIMEOUT_MS?: string;
+  LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS?: string;
+  LEADERBOARD_PROFILE_WEBAUTHN_ORIGIN?: string;
+  LEADERBOARD_PROFILE_WEBAUTHN_RP_ID?: string;
 }

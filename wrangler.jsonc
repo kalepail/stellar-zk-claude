@@ -33,12 +33,20 @@
     "LEADERBOARD_SYNC_CRON_ENABLED": "1",
     "LEADERBOARD_SYNC_CRON_LIMIT": "400",
     "LEADERBOARD_CATCHUP_INTERVAL_MINUTES": "30",
-    "LEADERBOARD_CATCHUP_WINDOW_LEDGERS": "8000"
+    "LEADERBOARD_CATCHUP_WINDOW_LEDGERS": "8000",
+    "LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS": "8000"
   },
   "r2_buckets": [
     {
       "binding": "PROOF_ARTIFACTS",
       "bucket_name": "stellar-zk-proof-artifacts"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "LEADERBOARD_DB",
+      "database_name": "stellar-zk-leaderboard",
+      "database_id": "replace-with-your-d1-database-id"
     }
   ],
   "queues": {
