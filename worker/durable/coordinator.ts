@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_SEGMENT_LIMIT_PO2,
+  MIN_PROVER_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
   LEADERBOARD_EVENT_KEY_PREFIX,
   LEADERBOARD_INGESTION_STATE_KEY,
@@ -615,7 +616,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       const pollIntervalMs = parseInteger(
         this.env.PROVER_POLL_INTERVAL_MS,
         DEFAULT_POLL_INTERVAL_MS,
-        500,
+        MIN_PROVER_POLL_INTERVAL_MS,
       );
       await this.scheduleAlarm(pollIntervalMs);
     }
@@ -677,7 +678,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const pollIntervalMs = parseInteger(
       this.env.PROVER_POLL_INTERVAL_MS,
       DEFAULT_POLL_INTERVAL_MS,
-      500,
+      MIN_PROVER_POLL_INTERVAL_MS,
     );
     await this.scheduleAlarm(pollIntervalMs);
 
@@ -878,7 +879,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const pollIntervalMs = parseInteger(
       this.env.PROVER_POLL_INTERVAL_MS,
       DEFAULT_POLL_INTERVAL_MS,
-      500,
+      MIN_PROVER_POLL_INTERVAL_MS,
     );
 
     if (pollResult.type === "running") {
@@ -1067,7 +1068,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (!proverJobId) {
       // No prover job yet — the queue consumer handles submission.
       // Just ensure the alarm is scheduled.
-      await this.scheduleAlarm(500);
+      await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
       return;
     }
 

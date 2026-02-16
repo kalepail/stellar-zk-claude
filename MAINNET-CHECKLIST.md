@@ -67,14 +67,14 @@ Switch all Stellar references from testnet to mainnet.
       spec (`docs/games/asteroids/10-CLIENT-INTEGRATION-SPEC.md:106-112`)
       defines these — they need actual values:
       ```
-      VITE_SMART_ACCOUNT_RPC_URL=<mainnet RPC>
-      VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
-      VITE_SMART_ACCOUNT_WASM_HASH=<mainnet account contract wasm hash>
-      VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS=<mainnet webauthn verifier contract ID>
-      VITE_SMART_ACCOUNT_RELAYER_URL=https://channels.openzeppelin.com
-      VITE_SMART_ACCOUNT_RELAYER_API_KEY=<mainnet relayer API key>
-      VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID=<optional relayer plugin ID>
-      VITE_SMART_ACCOUNT_RP_NAME="Stellar ZK"
+      VITE_RPC_URL=<mainnet RPC>
+      VITE_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+      VITE_ACCOUNT_WASM_HASH=<mainnet account contract wasm hash>
+      VITE_WEBAUTHN_VERIFIER_ADDRESS=<mainnet webauthn verifier contract ID>
+      VITE_RELAYER_URL=https://channels.openzeppelin.com
+      VITE_RELAYER_API_KEY=<mainnet relayer API key>
+      VITE_RELAYER_PLUGIN_ID=<optional relayer plugin ID>
+      VITE_RP_NAME="Stellar ZK"
       ```
 - [ ] **Confirm the RISC Zero router contract exists on mainnet**. The testnet
       router is `CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD` and

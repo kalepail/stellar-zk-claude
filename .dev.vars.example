@@ -4,11 +4,22 @@
 # Required
 PROVER_BASE_URL=https://replace-with-your-prover.example.com
 
+# Claim contract (required for relayer-only submission)
+SCORE_CONTRACT_ID=CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU
+
 # Required for remote provers. For localhost/127.0.0.1 you may omit auth.
 PROVER_API_KEY=
 # Optional alternative auth for remote provers (must set both fields).
 PROVER_ACCESS_CLIENT_ID=
 PROVER_ACCESS_CLIENT_SECRET=
+
+# Claim submission (relayer-only via OpenZeppelin Channels `func+auth`)
+RELAYER_URL=
+RELAYER_API_KEY=
+# Optional for self-hosted OpenZeppelin Relayer plugin routes.
+# Leave blank for managed Channels URLs.
+RELAYER_PLUGIN_ID=
+RELAYER_REQUEST_TIMEOUT_MS=30000
 
 # Prover behavior / policy
 PROVER_EXPECTED_IMAGE_ID=

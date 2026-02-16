@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js dev",
+    "dev:rpc-proxy": "node scripts/dev-rpc-proxy.mjs",
     "build": "vite build",
     "preview": "node node_modules/vite/bin/vite.js preview",
     "deploy": "wrangler deploy",
@@ -21,6 +22,7 @@
     "check": "bun run typecheck && bun run lint && bun run format:check",
     "verify-tape": "bun run scripts/verify-tape.ts",
     "generate-tape": "bun run scripts/generate-tape.ts",
+    "generate:score-bindings": "bash ./scripts/generate-score-bindings.sh",
     "verify-tape:risc0": "bun run scripts/verify-tape-risc0.ts",
     "bench:risc0": "bash ./scripts/bench-risc0.sh"
   },
@@ -28,10 +30,6 @@
     "@fontsource/monaspace-krypton": "^5.2.5",
     "@fontsource/monaspace-neon": "^5.2.5",
     "@openzeppelin/relayer-plugin-channels": "^0.8.0",
-    "@simplewebauthn/browser": "^13.2.2",
-    "@simplewebauthn/server": "^13.2.2",
-    "@stellar/stellar-base": "^14.0.4",
-    "fzstd": "^0.1.1",
     "hono": "^4.11.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

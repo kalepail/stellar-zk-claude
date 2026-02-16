@@ -3,7 +3,9 @@ import { AsteroidsCanvas, type CompletedGameRun } from "./components/AsteroidsCa
 import {
   cancelProofJob,
   getGatewayHealth,
+  getProofArtifact,
   ProofApiError,
+  type ClaimStatus,
   type GatewayHealthResponse,
   getProofJob,
   isTerminalProofStatus,
@@ -17,7 +19,22 @@ import type {
   SmartAccountRelayerMode,
   SmartWalletSession,
 } from "./wallet/smartAccount";
-import { LeaderboardPage } from "./leaderboard/LeaderboardPage";
+import {
+  explainScoreSubmissionError,
+  getScoreContractIdFromEnv,
+  getTokenContractIdFromEnv,
+  readTokenBalance,
+  submitScoreTransaction,
+} from "./chain/score";
+import { extractGroth16SealFromArtifact, packJournalRaw } from "./proof/artifact";
+import {
+  GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS,
+  GATEWAY_HEALTH_POLL_INTERVAL_MS,
+  PROOF_STATUS_ERROR_POLL_INTERVAL_MS,
+  PROOF_STATUS_INITIAL_POLL_DELAY_MS,
+  PROOF_STATUS_POLL_INTERVAL_MS,
+  TESTNET_NETWORK_PASSPHRASE,
+} from "./consts";
 import "./App.css";
 import { formatUtcDateTime } from "./time";
 
@@ -49,6 +66,12 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const leftoverSeconds = Math.round(seconds % 60);
   return `${minutes}m ${leftoverSeconds}s`;
+}
+
+function formatWholeNumber(value: bigint): string {
+  const sign = value < 0n ? "-" : "";
+  const digits = (value < 0n ? -value : value).toString();
+  return `${sign}${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
 function statusLabel(status: ProofJobStatus): string {
@@ -93,6 +116,10 @@ function claimStatusLabel(
   }
 }
 
+function isTerminalClaimStatus(status: ClaimStatus): boolean {
+  return status === "succeeded" || status === "failed";
+}
+
 type WalletAction = "idle" | "restoring" | "connecting" | "creating" | "disconnecting";
 
 function walletActionLabel(action: WalletAction, connected: boolean): string {
@@ -124,14 +151,10 @@ function walletChipClassName(action: WalletAction, connected: boolean): string {
 
 function relayerModeLabel(mode: SmartAccountRelayerMode): string {
   switch (mode) {
-    case "channels-api-key":
-      return "OpenZeppelin Channels (API Key)";
-    case "channels-missing-key":
-      return "Channels URL Set (Missing API Key)";
-    case "proxy":
-      return "Relayer Proxy";
+    case "configured":
+      return "Relayer Configured";
     default:
-      return "Not Configured";
+      return "Not Configured (relayer required)";
   }
 }
 
@@ -147,7 +170,7 @@ async function loadSmartWalletModule(): Promise<SmartWalletModule> {
   return smartWalletModulePromise;
 }
 
-function GamePage() {
+function App() {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
   const [proofJob, setProofJob] = useState<ProofJobPublic | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
@@ -157,14 +180,26 @@ function GamePage() {
   const [walletUserName, setWalletUserName] = useState("");
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletConfig, setWalletConfig] = useState<Pick<SmartAccountConfig, "networkPassphrase">>({
-    networkPassphrase: "Test SDF Network ; September 2015",
+    networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
   });
   const [walletRelayerMode, setWalletRelayerMode] = useState<SmartAccountRelayerMode>("disabled");
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResponse | null>(null);
   const [gatewayHealthError, setGatewayHealthError] = useState<string | null>(null);
+  const [manualClaimStatus, setManualClaimStatus] = useState<
+    "idle" | "submitting" | "succeeded" | "failed"
+  >("idle");
+  const [manualClaimTxHash, setManualClaimTxHash] = useState<string | null>(null);
+  const [manualClaimError, setManualClaimError] = useState<string | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
+  const [tokenContractId, setTokenContractId] = useState<string | null>(null);
+  const [tokenBalanceError, setTokenBalanceError] = useState<string | null>(null);
+  const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
   const activeProofJobId = proofJob?.jobId ?? null;
   const activeProofJobStatus = proofJob?.status ?? null;
+  const activeClaimStatus = proofJob?.claim.status ?? null;
   const claimantAddress = walletSession?.contractId ?? "";
+  const scoreContractId = getScoreContractIdFromEnv();
+  const tokenContractOverride = getTokenContractIdFromEnv();
 
   const handleGameOver = useCallback((run: CompletedGameRun) => {
     setLatestRun(run);
@@ -334,8 +369,111 @@ function GamePage() {
     }
   }, [proofJob]);
 
+  const refreshBalance = useCallback(async () => {
+    if (claimantAddress.trim().length === 0) {
+      setTokenBalance(null);
+      setTokenContractId(null);
+      setTokenBalanceError(null);
+      return;
+    }
+
+    if (!scoreContractId && !tokenContractOverride) {
+      setTokenBalance(null);
+      setTokenContractId(null);
+      setTokenBalanceError(
+        "set VITE_SCORE_CONTRACT_ID (or VITE_TOKEN_CONTRACT_ID) to show on-chain token balance",
+      );
+      return;
+    }
+
+    setIsRefreshingBalance(true);
+    try {
+      const next = await readTokenBalance({
+        walletAddress: claimantAddress,
+        scoreContractId,
+        tokenContractId: tokenContractOverride,
+      });
+      setTokenBalance(next.balance);
+      setTokenContractId(next.tokenContractId);
+      setTokenBalanceError(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "failed to load token balance";
+      setTokenBalanceError(detail);
+    } finally {
+      setIsRefreshingBalance(false);
+    }
+  }, [claimantAddress, scoreContractId, tokenContractOverride]);
+
+  const submitProvenScoreOnChain = useCallback(async () => {
+    if (!proofJob?.result?.summary) {
+      setManualClaimStatus("failed");
+      setManualClaimError("proof result is not available yet");
+      return;
+    }
+
+    if (claimantAddress.trim().length === 0) {
+      setManualClaimStatus("failed");
+      setManualClaimError("connect a smart wallet before submitting on-chain");
+      return;
+    }
+
+    if (!scoreContractId) {
+      setManualClaimStatus("failed");
+      setManualClaimError("missing VITE_SCORE_CONTRACT_ID in frontend env");
+      return;
+    }
+
+    setManualClaimStatus("submitting");
+    setManualClaimError(null);
+    setManualClaimTxHash(null);
+
+    try {
+      const artifact = await getProofArtifact(proofJob.jobId);
+      const seal = extractGroth16SealFromArtifact(artifact);
+      const journalRaw = packJournalRaw(proofJob.result.summary.journal);
+
+      if (walletRelayerMode === "disabled") {
+        throw new Error("relayer is not configured for this wallet session");
+      }
+
+      const tx = await submitScoreTransaction({
+        scoreContractId,
+        claimantAddress,
+        seal,
+        journalRaw,
+      });
+
+      if (!tx.success) {
+        throw new Error(tx.error ?? "on-chain submission failed");
+      }
+
+      setManualClaimStatus("succeeded");
+      setManualClaimTxHash(tx.hash || null);
+      setManualClaimError(null);
+      void refreshBalance();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "on-chain submission failed";
+      setManualClaimStatus("failed");
+      setManualClaimError(explainScoreSubmissionError(detail));
+    }
+  }, [
+    claimantAddress,
+    proofJob,
+    refreshBalance,
+    scoreContractId,
+    walletRelayerMode,
+  ]);
+
   useEffect(() => {
-    if (!activeProofJobId || !activeProofJobStatus || isTerminalProofStatus(activeProofJobStatus)) {
+    if (!activeProofJobId || !activeProofJobStatus) {
+      return;
+    }
+    const keepPolling =
+      !isTerminalProofStatus(activeProofJobStatus) ||
+      (activeProofJobStatus === "succeeded" &&
+        activeClaimStatus !== null &&
+        !isTerminalClaimStatus(activeClaimStatus));
+    if (!keepPolling) {
       return;
     }
 
@@ -350,8 +488,12 @@ function GamePage() {
         }
 
         setProofJob(response.job);
-        if (!isTerminalProofStatus(response.job.status)) {
-          timeoutId = window.setTimeout(poll, 3000);
+        const shouldContinuePolling =
+          !isTerminalProofStatus(response.job.status) ||
+          (response.job.status === "succeeded" &&
+            !isTerminalClaimStatus(response.job.claim.status));
+        if (shouldContinuePolling) {
+          timeoutId = window.setTimeout(poll, PROOF_STATUS_POLL_INTERVAL_MS);
           return;
         }
       } catch (error) {
@@ -361,11 +503,11 @@ function GamePage() {
 
         const message = error instanceof Error ? error.message : "failed to refresh proof status";
         setProofError(message);
-        timeoutId = window.setTimeout(poll, 5000);
+        timeoutId = window.setTimeout(poll, PROOF_STATUS_ERROR_POLL_INTERVAL_MS);
       }
     };
 
-    timeoutId = window.setTimeout(poll, 1200);
+    timeoutId = window.setTimeout(poll, PROOF_STATUS_INITIAL_POLL_DELAY_MS);
 
     return () => {
       cancelled = true;
@@ -373,7 +515,7 @@ function GamePage() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [activeProofJobId, activeProofJobStatus]);
+  }, [activeClaimStatus, activeProofJobId, activeProofJobStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -398,12 +540,12 @@ function GamePage() {
         setGatewayHealthError(message);
       } finally {
         if (!cancelled) {
-          timeoutId = window.setTimeout(pollHealth, 15_000);
+          timeoutId = window.setTimeout(pollHealth, GATEWAY_HEALTH_POLL_INTERVAL_MS);
         }
       }
     };
 
-    timeoutId = window.setTimeout(pollHealth, 300);
+    timeoutId = window.setTimeout(pollHealth, GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS);
 
     return () => {
       cancelled = true;
@@ -451,7 +593,37 @@ function GamePage() {
     };
   }, []);
 
+  useEffect(() => {
+    setManualClaimStatus("idle");
+    setManualClaimError(null);
+    setManualClaimTxHash(null);
+  }, [proofJob?.jobId]);
+
+  useEffect(() => {
+    if (proofJob?.claim.status === "succeeded") {
+      setManualClaimStatus("succeeded");
+      setManualClaimError(null);
+      if (proofJob.claim.txHash) {
+        setManualClaimTxHash(proofJob.claim.txHash);
+      }
+      void refreshBalance();
+    }
+  }, [proofJob?.claim.status, proofJob?.claim.txHash, refreshBalance]);
+
+  useEffect(() => {
+    if (claimantAddress.trim().length === 0) {
+      setTokenBalance(null);
+      setTokenContractId(null);
+      setTokenBalanceError(null);
+      return;
+    }
+
+    void refreshBalance();
+  }, [claimantAddress, refreshBalance]);
+
   const proofBusy = proofJob ? !isTerminalProofStatus(proofJob.status) : false;
+  const claimBusy = manualClaimStatus === "submitting";
+  const hasProofResult = Boolean(proofJob?.result?.summary);
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
   const walletConnected = claimantAddress.trim().length > 0;
   const walletBusy = walletAction !== "idle";
@@ -462,6 +634,8 @@ function GamePage() {
     !proofBusy &&
     walletConnected &&
     !walletBusy;
+  const canSubmitOnChain =
+    hasProofResult && walletConnected && !walletBusy && !claimBusy && Boolean(scoreContractId);
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
@@ -471,6 +645,10 @@ function GamePage() {
       : "gateway-health gateway-health--warn";
   const walletStatusText = walletActionLabel(walletAction, walletConnected);
   const walletStatusClassName = walletChipClassName(walletAction, walletConnected);
+  const balanceLabel =
+    tokenBalance === null
+      ? "—"
+      : `${formatWholeNumber(tokenBalance)} score token${tokenBalance === 1n ? "" : "s"}`;
 
   return (
     <main className="app-shell">
@@ -479,11 +657,6 @@ function GamePage() {
         <p>
           Deterministic tape capture wired to a Cloudflare proof gateway. Game-over runs can be
           submitted and processed through a single-flight queue into the VAST prover API.
-        </p>
-        <p>
-          <a className="headline-link" href="/leaderboard">
-            Open Leaderboard
-          </a>
         </p>
       </section>
 
@@ -625,6 +798,31 @@ function GamePage() {
             />
           </div>
 
+          <div className="wallet-balance">
+            <div className="wallet-balance__header">
+              <p>
+                <strong>Won Balance:</strong> {balanceLabel}
+              </p>
+              <button
+                type="button"
+                onClick={() => void refreshBalance()}
+                disabled={!walletConnected || isRefreshingBalance}
+              >
+                {isRefreshingBalance ? "Refreshing..." : "Refresh Balance"}
+              </button>
+            </div>
+            {tokenContractId ? (
+              <p className="wallet-balance__contract">
+                <strong>Token Contract:</strong> <code>{abbreviateHex(tokenContractId, 10)}</code>
+              </p>
+            ) : null}
+            {tokenBalanceError ? (
+              <p className="proof-warning">
+                <strong>Balance:</strong> {tokenBalanceError}
+              </p>
+            ) : null}
+          </div>
+
           <div className="wallet-panel__meta">
             <span>
               <strong>Network:</strong> {walletConfig.networkPassphrase}
@@ -654,6 +852,13 @@ function GamePage() {
           <button type="button" onClick={submitLatestRun} disabled={!canSubmit}>
             {isSubmitting ? "Submitting Tape..." : "Submit For Proof"}
           </button>
+          {hasProofResult ? (
+            <button type="button" onClick={submitProvenScoreOnChain} disabled={!canSubmitOnChain}>
+              {manualClaimStatus === "submitting"
+                ? "Submitting On-chain..."
+                : "Submit Proven Score On-chain"}
+            </button>
+          ) : null}
           {proofJob?.result ? (
             <button
               type="button"
@@ -729,11 +934,37 @@ function GamePage() {
                     <strong>Tx Hash:</strong> <code>{proofJob.claim.txHash}</code>
                   </p>
                 ) : null}
+                <p>
+                  <strong>Manual Submit:</strong>{" "}
+                  {manualClaimStatus === "idle"
+                    ? "not submitted"
+                    : manualClaimStatus === "submitting"
+                      ? "submitting"
+                      : manualClaimStatus}
+                </p>
+                <p>
+                  <strong>Manual Path:</strong> Relayer (Fee Sponsored)
+                </p>
+                {manualClaimTxHash ? (
+                  <p>
+                    <strong>Manual Tx:</strong> <code>{manualClaimTxHash}</code>
+                  </p>
+                ) : null}
+                {manualClaimError ? (
+                  <p className="proof-warning">
+                    <strong>Manual Claim:</strong> {manualClaimError}
+                  </p>
+                ) : null}
+                {!scoreContractId ? (
+                  <p className="proof-warning">
+                    <strong>Manual Claim:</strong> set VITE_SCORE_CONTRACT_ID in frontend env
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {proofJob.claim.lastError ? (
               <p className="proof-warning">
-                <strong>Claim Relay:</strong> {proofJob.claim.lastError}
+                <strong>Auto Claim:</strong> {proofJob.claim.lastError}
               </p>
             ) : null}
             {proofJob.error ? (
@@ -756,15 +987,6 @@ function GamePage() {
       </section>
     </main>
   );
-}
-
-function App() {
-  const path = typeof window !== "undefined" ? window.location.pathname : "/";
-  if (path.startsWith("/leaderboard")) {
-    return <LeaderboardPage />;
-  }
-
-  return <GamePage />;
 }
 
 export default App;

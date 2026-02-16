@@ -11,18 +11,18 @@ import {
   PluginTransportError,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
-
-const TESTNET_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
-const PUBLIC_NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
-const TESTNET_RPC_URL = "https://soroban-testnet.stellar.org";
-const TESTNET_ACCOUNT_WASM_HASH =
-  "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e";
-const TESTNET_WEBAUTHN_VERIFIER = "CBSHV66WG7UV6FQVUTB67P3DZUEJ2KJ5X6JKQH5MFRAAFNFJUAJVXJYV";
-const OPENZEPPELIN_CHANNELS_MAINNET_URL = "https://channels.openzeppelin.com";
-const OPENZEPPELIN_CHANNELS_TESTNET_URL = "https://channels.openzeppelin.com/testnet";
-const DEFAULT_RP_NAME = "Stellar ZK";
-const DEFAULT_USER_NAME = "Player";
-const APP_NAME = "Stellar ZK Asteroids";
+import {
+  DEFAULT_ACCOUNT_WASM_HASH,
+  DEFAULT_RPC_URL,
+  DEFAULT_RP_NAME,
+  DEFAULT_SMART_WALLET_USER_NAME,
+  DEFAULT_WEBAUTHN_VERIFIER_ADDRESS,
+  OPENZEPPELIN_CHANNELS_MAINNET_URL,
+  OPENZEPPELIN_CHANNELS_TESTNET_URL,
+  PUBLIC_NETWORK_PASSPHRASE,
+  SMART_WALLET_APP_NAME,
+  TESTNET_NETWORK_PASSPHRASE,
+} from "../consts";
 
 export interface SmartWalletSession {
   contractId: string;
@@ -43,9 +43,7 @@ export interface SmartAccountConfig {
 }
 
 export type SmartAccountRelayerMode =
-  | "channels-api-key"
-  | "channels-missing-key"
-  | "proxy"
+  | "configured"
   | "disabled";
 
 function getEnvValue(key: keyof ImportMetaEnv): string | undefined {
@@ -70,20 +68,19 @@ function defaultChannelsUrlForNetwork(networkPassphrase: string): string {
 }
 
 const configuredNetworkPassphrase =
-  getEnvValue("VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE") ?? TESTNET_NETWORK_PASSPHRASE;
+  getEnvValue("VITE_NETWORK_PASSPHRASE") ?? TESTNET_NETWORK_PASSPHRASE;
 
 const config: SmartAccountConfig = {
-  rpcUrl: getEnvValue("VITE_SMART_ACCOUNT_RPC_URL") ?? TESTNET_RPC_URL,
+  rpcUrl: getEnvValue("VITE_RPC_URL") ?? DEFAULT_RPC_URL,
   networkPassphrase: configuredNetworkPassphrase,
-  accountWasmHash: getEnvValue("VITE_SMART_ACCOUNT_WASM_HASH") ?? TESTNET_ACCOUNT_WASM_HASH,
+  accountWasmHash: getEnvValue("VITE_ACCOUNT_WASM_HASH") ?? DEFAULT_ACCOUNT_WASM_HASH,
   webauthnVerifierAddress:
-    getEnvValue("VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS") ?? TESTNET_WEBAUTHN_VERIFIER,
+    getEnvValue("VITE_WEBAUTHN_VERIFIER_ADDRESS") ?? DEFAULT_WEBAUTHN_VERIFIER_ADDRESS,
   relayerUrl:
-    getEnvValue("VITE_SMART_ACCOUNT_RELAYER_URL") ??
-    defaultChannelsUrlForNetwork(configuredNetworkPassphrase),
-  relayerApiKey: getEnvValue("VITE_SMART_ACCOUNT_RELAYER_API_KEY") ?? null,
-  relayerPluginId: getEnvValue("VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID") ?? null,
-  rpName: getEnvValue("VITE_SMART_ACCOUNT_RP_NAME") ?? DEFAULT_RP_NAME,
+    getEnvValue("VITE_RELAYER_URL") ?? defaultChannelsUrlForNetwork(configuredNetworkPassphrase),
+  relayerApiKey: getEnvValue("VITE_RELAYER_API_KEY") ?? null,
+  relayerPluginId: getEnvValue("VITE_RELAYER_PLUGIN_ID") ?? null,
+  rpName: getEnvValue("VITE_RP_NAME") ?? DEFAULT_RP_NAME,
 };
 
 let kitInstance: SmartAccountKit | null = null;
@@ -149,23 +146,11 @@ export function getSmartAccountConfig(): SmartAccountConfig {
 }
 
 export function getSmartAccountRelayerMode(): SmartAccountRelayerMode {
-  if (!config.relayerUrl) {
+  if (!config.relayerUrl || !config.relayerApiKey) {
     return "disabled";
   }
 
-  if (config.relayerApiKey) {
-    return "channels-api-key";
-  }
-
-  if (config.relayerUrl.includes("channels.openzeppelin.com")) {
-    return "channels-missing-key";
-  }
-
-  if (config.relayerUrl) {
-    return "proxy";
-  }
-
-  return "disabled";
+  return "configured";
 }
 
 export function getSmartAccountKit(): SmartAccountKit {
@@ -188,40 +173,21 @@ async function submitDeploymentXdr(signedTransaction: string): Promise<void> {
   const relayerUrl = config.relayerUrl?.trim() ?? "";
   const relayerApiKey = config.relayerApiKey?.trim() ?? "";
 
-  if (relayerUrl.length === 0) {
+  if (relayerUrl.length === 0 || relayerApiKey.length === 0) {
     throw new Error(
-      "missing relayer URL; set VITE_SMART_ACCOUNT_RELAYER_URL for smart wallet deployment",
+      "relayer is required; set VITE_RELAYER_URL and VITE_RELAYER_API_KEY for smart wallet deployment",
     );
   }
 
-  if (relayerApiKey.length > 0) {
-    const client = new ChannelsClient({
-      baseUrl: relayerUrl,
-      apiKey: relayerApiKey,
-      pluginId: config.relayerPluginId ?? undefined,
-    });
-    try {
-      await client.submitTransaction({ xdr: signedTransaction });
-      return;
-    } catch (error) {
-      throw new Error(`relayer submission failed: ${formatRelayerError(error)}`, { cause: error });
-    }
-  }
-
-  if (relayerUrl.includes("channels.openzeppelin.com")) {
-    throw new Error(
-      "VITE_SMART_ACCOUNT_RELAYER_API_KEY is required when using channels.openzeppelin.com directly",
-    );
-  }
-
-  const kit = getSmartAccountKit();
-  if (!kit.relayer) {
-    throw new Error("relayer is not configured in smart-account-kit");
-  }
-
-  const response = await kit.relayer.sendXdr(signedTransaction);
-  if (!response.success) {
-    throw new Error(response.error ?? "relayer submission failed");
+  const client = new ChannelsClient({
+    baseUrl: relayerUrl,
+    apiKey: relayerApiKey,
+    pluginId: config.relayerPluginId ?? undefined,
+  });
+  try {
+    await client.submitTransaction({ xdr: signedTransaction });
+  } catch (error) {
+    throw new Error(`relayer submission failed: ${formatRelayerError(error)}`, { cause: error });
   }
 }
 
@@ -241,9 +207,10 @@ export async function connectSmartWallet(): Promise<SmartWalletSession> {
 
 export async function createSmartWallet(userName: string): Promise<SmartWalletSession> {
   const kit = getSmartAccountKit();
-  const normalizedUserName = userName.trim().length > 0 ? userName.trim() : DEFAULT_USER_NAME;
+  const normalizedUserName =
+    userName.trim().length > 0 ? userName.trim() : DEFAULT_SMART_WALLET_USER_NAME;
 
-  const creation = await kit.createWallet(APP_NAME, normalizedUserName, {
+  const creation = await kit.createWallet(SMART_WALLET_APP_NAME, normalizedUserName, {
     autoSubmit: false,
   });
 

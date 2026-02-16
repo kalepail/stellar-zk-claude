@@ -22,7 +22,7 @@ This server is intentionally single-flight:
 - `x-api-key: <API_KEY>`, or
 - `Authorization: Bearer <API_KEY>`.
 
-For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
+If `API_KEY` is not set, auth is disabled and all routes are open.
 
 `/health` is always open.
 
@@ -76,7 +76,6 @@ Most relevant:
 
 - `API_KEY`: required shared secret for `/api/*` in production
 - `API_KEY_MIN_LENGTH`: minimum accepted key length (default `32`)
-- `ALLOW_MISSING_API_KEY`: set `1` only for local development with `RISC0_DEV_MODE=1`
 - `MAX_TAPE_BYTES`: request payload cap
 - `MAX_JOBS`: max retained jobs in SQLite metadata store
 - `JOB_TTL_SECS`, `JOB_SWEEP_SECS`: retention + cleanup interval

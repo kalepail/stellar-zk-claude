@@ -1,3 +1,11 @@
+import {
+  API_TIMEOUT_CANCEL_PROOF_MS,
+  API_TIMEOUT_GET_ARTIFACT_MS,
+  API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
+  API_TIMEOUT_GET_PROOF_MS,
+  API_TIMEOUT_SUBMIT_PROOF_MS,
+} from "../consts";
+
 export type ProofJobStatus =
   | "queued"
   | "dispatching"
@@ -101,6 +109,11 @@ export interface SubmitProofJobResponse {
 export interface GetProofJobResponse {
   success: true;
   job: ProofJobPublic;
+}
+
+export interface StoredProofArtifactResponse {
+  stored_at?: string;
+  prover_response?: unknown;
 }
 
 export interface GatewayProverCompatibleHealth {
@@ -213,7 +226,7 @@ export async function submitProofJob(
       headers,
       body,
     },
-    30_000,
+    API_TIMEOUT_SUBMIT_PROOF_MS,
   );
 
   if (!response.ok) {
@@ -229,7 +242,7 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
     {
       method: "GET",
     },
-    10_000,
+    API_TIMEOUT_GET_PROOF_MS,
   );
 
   if (!response.ok) {
@@ -245,7 +258,7 @@ export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse
     {
       method: "DELETE",
     },
-    10_000,
+    API_TIMEOUT_CANCEL_PROOF_MS,
   );
 
   if (!response.ok) {
@@ -255,13 +268,29 @@ export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse
   return parseJson<GetProofJobResponse>(response);
 }
 
+export async function getProofArtifact(jobId: string): Promise<StoredProofArtifactResponse> {
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}/result`,
+    {
+      method: "GET",
+    },
+    API_TIMEOUT_GET_ARTIFACT_MS,
+  );
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  return parseJson<StoredProofArtifactResponse>(response);
+}
+
 export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
   const response = await fetchWithTimeout(
     "/api/health",
     {
       method: "GET",
     },
-    10_000,
+    API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
   );
 
   if (!response.ok) {

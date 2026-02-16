@@ -7,6 +7,8 @@ import {
   DEFAULT_SEGMENT_LIMIT_PO2,
   EXPECTED_RULES_DIGEST,
   EXPECTED_RULESET,
+  MIN_PROVER_POLL_INTERVAL_MS,
+  MIN_PROVER_POLL_TIMEOUT_MS,
   RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
@@ -508,8 +510,16 @@ export async function pollProverOnce(
 }
 
 export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
-  const pollTimeoutMs = parseInteger(env.PROVER_POLL_TIMEOUT_MS, DEFAULT_POLL_TIMEOUT_MS, 5_000);
-  const pollIntervalMs = parseInteger(env.PROVER_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 500);
+  const pollTimeoutMs = parseInteger(
+    env.PROVER_POLL_TIMEOUT_MS,
+    DEFAULT_POLL_TIMEOUT_MS,
+    MIN_PROVER_POLL_TIMEOUT_MS,
+  );
+  const pollIntervalMs = parseInteger(
+    env.PROVER_POLL_INTERVAL_MS,
+    DEFAULT_POLL_INTERVAL_MS,
+    MIN_PROVER_POLL_INTERVAL_MS,
+  );
   const pollBudgetMs = parseInteger(
     env.PROVER_POLL_BUDGET_MS,
     DEFAULT_POLL_BUDGET_MS,

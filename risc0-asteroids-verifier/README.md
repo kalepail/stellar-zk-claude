@@ -223,7 +223,7 @@ Use the tunnel URL as `PROVER_BASE_URL` in your Cloudflare Worker config. For mo
 - `x-api-key: <API_KEY>` header, or
 - `Authorization: Bearer <API_KEY>` header.
 
-For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
+If `API_KEY` is not set, auth is disabled and all routes are open.
 
 `/health` is always open.
 
@@ -309,7 +309,6 @@ See `api-server/.env.example` for all options. Key variables:
 | `RUST_LOG` | `info` | Log level |
 | `RISC0_DEV_MODE` | `0` | Set to `1` for fake proofs (testing only) |
 | `API_KEY_MIN_LENGTH` | `32` | Minimum accepted `API_KEY` length |
-| `ALLOW_MISSING_API_KEY` | `0` | Local-only escape hatch; only valid with `RISC0_DEV_MODE=1` |
 | `MAX_TAPE_BYTES` | `2097152` | Max tape payload size (2 MB) |
 | `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |

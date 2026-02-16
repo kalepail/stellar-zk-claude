@@ -1,5 +1,5 @@
 import { DEFAULT_MAX_JOB_WALL_TIME_MS, MAX_QUEUE_RETRIES } from "../constants";
-import { submitClaimToRelay } from "../claim/relay";
+import { submitClaim } from "../claim/submit";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { submitToProver } from "../prover/client";
@@ -199,21 +199,54 @@ async function processClaimQueueMessage(
   const journalHex = journalRawHex(job.result.summary.journal);
   const digestHex = await sha256HexFromHex(journalHex);
 
-  const relayResult = await submitClaimToRelay(env, {
-    jobId: payload.jobId,
-    claimantAddress: job.claim.claimantAddress,
-    journalRawHex: journalHex,
-    journalDigestHex: digestHex,
-    proverResponse: artifactJson.prover_response ?? null,
-  });
+  let relayResult: Awaited<ReturnType<typeof submitClaim>>;
+  try {
+    relayResult = await submitClaim(env, {
+      jobId: payload.jobId,
+      claimantAddress: job.claim.claimantAddress,
+      journalRawHex: journalHex,
+      journalDigestHex: digestHex,
+      proverResponse: artifactJson.prover_response ?? null,
+    });
+  } catch (error) {
+    const reason = `claim submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markClaimFailed(
+        payload.jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
+    const delaySeconds = retryDelaySeconds(message.attempts);
+    await coordinator.markClaimRetry(
+      payload.jobId,
+      reason,
+      new Date(Date.now() + delaySeconds * 1000).toISOString(),
+    );
+    message.retry({ delaySeconds });
+    return;
+  }
 
   if (relayResult.type === "success") {
+    console.log("[claim-queue] claim result", {
+      jobId: payload.jobId,
+      type: relayResult.type,
+      txHash: relayResult.txHash,
+    });
     await coordinator.markClaimSucceeded(payload.jobId, relayResult.txHash);
     message.ack();
     return;
   }
 
   if (relayResult.type === "retry") {
+    console.log("[claim-queue] claim result", {
+      jobId: payload.jobId,
+      type: relayResult.type,
+      message: relayResult.message,
+      attempts: message.attempts,
+    });
     if (message.attempts >= MAX_QUEUE_RETRIES) {
       await coordinator.markClaimFailed(
         payload.jobId,
@@ -233,6 +266,11 @@ async function processClaimQueueMessage(
     return;
   }
 
+  console.log("[claim-queue] claim result", {
+    jobId: payload.jobId,
+    type: relayResult.type,
+    message: relayResult.message,
+  });
   await coordinator.markClaimFailed(payload.jobId, relayResult.message);
   message.ack();
 }
@@ -290,7 +328,33 @@ export async function handleClaimQueueBatch(
 ): Promise<void> {
   /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
-    await processClaimQueueMessage(message, env);
+    try {
+      await processClaimQueueMessage(message, env);
+    } catch (error) {
+      const payload = message.body;
+      if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
+        message.ack();
+        continue;
+      }
+
+      const reason = `claim queue consumer crashed: ${safeErrorMessage(error)}`;
+      const coordinator = coordinatorStub(env);
+      if (message.attempts >= MAX_QUEUE_RETRIES) {
+        await coordinator.markClaimFailed(
+          payload.jobId,
+          `${reason} (exhausted ${message.attempts} delivery attempts)`,
+        );
+        message.ack();
+      } else {
+        const delaySeconds = retryDelaySeconds(message.attempts);
+        await coordinator.markClaimRetry(
+          payload.jobId,
+          reason,
+          new Date(Date.now() + delaySeconds * 1000).toISOString(),
+        );
+        message.retry({ delaySeconds });
+      }
+    }
   }
   /* eslint-enable no-await-in-loop */
 }
@@ -308,10 +372,13 @@ export async function handleClaimDlqBatch(
     }
 
     const coordinator = coordinatorStub(env);
-    await coordinator.markClaimFailed(
-      payload.jobId,
-      "claim submission failed: all queue delivery attempts exhausted (dead-letter)",
-    );
+    const job = await coordinator.getJob(payload.jobId);
+    const priorError = job?.claim.lastError?.trim();
+    const dlqMessage =
+      priorError && priorError.length > 0
+        ? `${priorError} (dead-letter)`
+        : "claim submission failed: all queue delivery attempts exhausted (dead-letter)";
+    await coordinator.markClaimFailed(payload.jobId, dlqMessage);
     message.ack();
   }
   /* eslint-enable no-await-in-loop */

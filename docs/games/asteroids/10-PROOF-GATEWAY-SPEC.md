@@ -48,9 +48,10 @@ Claim queue path:
 |------|------|
 | `worker/index.ts` | Hono app entrypoint, mounts API router + queue consumer |
 | `worker/api/routes.ts` | HTTP route handlers |
-| `worker/queue/consumer.ts` | Queue message handler (proof dispatch + claim relay dispatch) |
+| `worker/queue/consumer.ts` | Queue message handler (proof dispatch + claim dispatch) |
 | `worker/prover/client.ts` | Prover HTTP client (submit + poll + summarize) |
-| `worker/claim/relay.ts` | Claim relay HTTP client (submits claimant + journal + proof payload) |
+| `worker/claim/direct.ts` | Relayer-only Channels submitter (`submit_score` via `func+auth`) |
+| `worker/claim/submit.ts` | Claim submission coordinator (relayer-only) |
 | `worker/durable/coordinator.ts` | `ProofCoordinatorDO` — job state machine + alarm polling |
 | `worker/tape.ts` | Tape format validation |
 | `worker/keys.ts` | R2 key helpers |
@@ -199,7 +200,7 @@ The worker has two queue consumers:
    - Builds `journal_raw_hex` from the proved 24-byte journal.
    - Computes `journal_digest_hex = sha256(journal_raw_hex)`.
    - Submits `{ claimant_address, journal_raw_hex, journal_digest_hex, prover_response }`
-     to `CLAIM_RELAY_URL`.
+     to `RELAYER_URL`.
    - Tracks claim retry/failure/success state in DO.
 
 Both queues use `max_batch_size=1`, `max_concurrency=1`, `max_retries=10`,
@@ -316,9 +317,9 @@ bytes needed for on-chain verification.
 | `MAX_COMPLETED_JOBS` | `"200"` | Cap for completed job records retained in DO storage |
 | `COMPLETED_JOB_RETENTION_MS` | `"86400000"` | Time-based retention cutoff for terminal jobs in DO storage |
 | `ALLOW_INSECURE_PROVER_URL` | `"0"` | Enforce HTTPS |
-| `CLAIM_RELAY_URL` | `https://replace-with-your-claim-relay.example.com/submit` | Claim relay endpoint invoked after proof success |
-| `CLAIM_RELAY_API_KEY` | _(secret, optional)_ | Optional app-level auth for claim relay |
-| `CLAIM_RELAY_REQUEST_TIMEOUT_MS` | `"30000"` | Claim relay HTTP timeout |
+| `RELAYER_URL` | `https://replace-with-your-claim-relay.example.com/submit` | Claim relay endpoint invoked after proof success |
+| `RELAYER_API_KEY` | _(secret, optional)_ | Optional app-level auth for claim relay |
+| `RELAYER_REQUEST_TIMEOUT_MS` | `"30000"` | Claim relay HTTP timeout |
 
 Prover submit defaults (hardcoded in `worker/prover/client.ts`):
 - `receipt_kind=groth16` (required for Stellar on-chain verification)
@@ -402,8 +403,9 @@ Operational defaults: `MAX_TAPE_BYTES=2097152`, `MAX_JOBS=64`,
 |------|---------|
 | `worker/index.ts` | Worker entrypoint |
 | `worker/api/routes.ts` | HTTP route handlers |
-| `worker/queue/consumer.ts` | Queue consumers (proof dispatch + claim relay) |
-| `worker/claim/relay.ts` | Claim relay client |
+| `worker/queue/consumer.ts` | Queue consumers (proof dispatch + claim submit) |
+| `worker/claim/direct.ts` | Channels relayer client (relayer-only) |
+| `worker/claim/submit.ts` | Claim submit coordinator |
 | `worker/prover/client.ts` | Prover HTTP client |
 | `worker/durable/coordinator.ts` | DO state machine + alarm polling |
 | `worker/types.ts` | Shared TypeScript types |

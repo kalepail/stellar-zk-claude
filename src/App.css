@@ -186,6 +186,35 @@
   gap: 0.75rem;
 }
 
+.manual-claim-mode {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 220px;
+}
+
+.manual-claim-mode span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(146, 182, 233, 0.9);
+}
+
+.manual-claim-mode select {
+  border: 1px solid rgba(108, 159, 230, 0.4);
+  border-radius: 8px;
+  background: rgba(13, 22, 40, 0.55);
+  color: #d9f4ff;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  padding: 0.45rem 0.55rem;
+}
+
+.manual-claim-mode select:focus {
+  outline: 2px solid rgba(102, 199, 255, 0.5);
+  outline-offset: 1px;
+}
+
 .proof-actions button {
   appearance: none;
   border: 1px solid rgba(102, 199, 255, 0.58);
@@ -422,6 +451,58 @@
   outline-offset: 1px;
 }
 
+.wallet-balance {
+  border: 1px solid rgba(108, 159, 230, 0.3);
+  border-radius: 8px;
+  background: rgba(12, 26, 45, 0.5);
+  padding: 0.5rem 0.62rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.wallet-balance__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wallet-balance__header p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.wallet-balance__header button {
+  appearance: none;
+  border: 1px solid rgba(102, 199, 255, 0.58);
+  border-radius: 7px;
+  background: linear-gradient(180deg, rgba(23, 72, 105, 0.75), rgba(13, 45, 73, 0.9));
+  color: #dff4ff;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.58rem;
+  cursor: pointer;
+}
+
+.wallet-balance__header button:hover:enabled {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(18, 71, 112, 0.35);
+}
+
+.wallet-balance__header button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.wallet-balance__contract {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(171, 196, 232, 0.9);
+}
+
 .gateway-health {
   border: 1px solid rgba(108, 159, 230, 0.24);
   background: rgba(13, 22, 40, 0.45);
@@ -490,6 +571,10 @@
     width: 100%;
   }
 
+  .manual-claim-mode {
+    width: 100%;
+  }
+
   .wallet-panel__header {
     flex-direction: column;
   }
@@ -500,6 +585,15 @@
   }
 
   .wallet-panel__actions button {
+    width: 100%;
+  }
+
+  .wallet-balance__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wallet-balance__header button {
     width: 100%;
   }
 }

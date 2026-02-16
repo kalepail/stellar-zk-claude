@@ -75,8 +75,8 @@ import { Client } from 'asteroids-score-client';
 
 const scoreContract = new Client({
   contractId: import.meta.env.VITE_SCORE_CONTRACT_ID,
-  networkPassphrase: import.meta.env.VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE,
-  rpcUrl: import.meta.env.VITE_SMART_ACCOUNT_RPC_URL,
+  networkPassphrase: import.meta.env.VITE_NETWORK_PASSPHRASE,
+  rpcUrl: import.meta.env.VITE_RPC_URL,
 });
 ```
 
@@ -105,13 +105,13 @@ smart-account-kit
 import { SmartAccountKit, IndexedDBStorage } from 'smart-account-kit';
 
 const kit = new SmartAccountKit({
-  rpcUrl: import.meta.env.VITE_SMART_ACCOUNT_RPC_URL,
-  networkPassphrase: import.meta.env.VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE,
-  accountWasmHash: import.meta.env.VITE_SMART_ACCOUNT_WASM_HASH,
-  webauthnVerifierAddress: import.meta.env.VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS,
-  relayerUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL,
+  rpcUrl: import.meta.env.VITE_RPC_URL,
+  networkPassphrase: import.meta.env.VITE_NETWORK_PASSPHRASE,
+  accountWasmHash: import.meta.env.VITE_ACCOUNT_WASM_HASH,
+  webauthnVerifierAddress: import.meta.env.VITE_WEBAUTHN_VERIFIER_ADDRESS,
+  relayerUrl: import.meta.env.VITE_RELAYER_URL,
   storage: new IndexedDBStorage(),
-  rpName: import.meta.env.VITE_SMART_ACCOUNT_RP_NAME ?? 'Stellar ZK',
+  rpName: import.meta.env.VITE_RP_NAME ?? 'Stellar ZK',
 });
 ```
 
@@ -188,8 +188,8 @@ For the managed Channels service, use `baseUrl` + `apiKey`:
 import { ChannelsClient } from '@openzeppelin/relayer-plugin-channels';
 
 const client = new ChannelsClient({
-  baseUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL!,
-  apiKey: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_API_KEY!,
+  baseUrl: import.meta.env.VITE_RELAYER_URL!,
+  apiKey: import.meta.env.VITE_RELAYER_API_KEY!,
 });
 
 const result = await client.submitTransaction({ xdr: signedTransaction });
@@ -199,9 +199,9 @@ If using a self-hosted OpenZeppelin Relayer plugin, include `pluginId`:
 
 ```typescript
 const client = new ChannelsClient({
-  baseUrl: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_URL!,
-  apiKey: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_API_KEY!,
-  pluginId: import.meta.env.VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID!,
+  baseUrl: import.meta.env.VITE_RELAYER_URL!,
+  apiKey: import.meta.env.VITE_RELAYER_API_KEY!,
+  pluginId: import.meta.env.VITE_RELAYER_PLUGIN_ID!,
 });
 ```
 
@@ -321,14 +321,14 @@ Each exposes a custom hook (`useWallet`, `useProof`, `useChain`).
 ### Vite Env Vars
 
 ```
-VITE_SMART_ACCOUNT_RPC_URL          # Soroban RPC endpoint
-VITE_SMART_ACCOUNT_NETWORK_PASSPHRASE  # "Test SDF Network ; September 2015"
-VITE_SMART_ACCOUNT_WASM_HASH        # Smart account WASM hash
-VITE_SMART_ACCOUNT_WEBAUTHN_VERIFIER_ADDRESS  # WebAuthn verifier contract ID
-VITE_SMART_ACCOUNT_RELAYER_URL      # Channels endpoint (testnet/mainnet)
-VITE_SMART_ACCOUNT_RELAYER_API_KEY  # API key for managed Channels
-VITE_SMART_ACCOUNT_RELAYER_PLUGIN_ID  # Optional, self-hosted OZ Relayer only
-VITE_SMART_ACCOUNT_RP_NAME          # Relying party name shown in passkey UX
+VITE_RPC_URL          # Soroban RPC endpoint
+VITE_NETWORK_PASSPHRASE  # "Test SDF Network ; September 2015"
+VITE_ACCOUNT_WASM_HASH        # Smart account WASM hash
+VITE_WEBAUTHN_VERIFIER_ADDRESS  # WebAuthn verifier contract ID
+VITE_RELAYER_URL      # Channels endpoint (testnet/mainnet)
+VITE_RELAYER_API_KEY  # API key for managed Channels
+VITE_RELAYER_PLUGIN_ID  # Optional, self-hosted OZ Relayer only
+VITE_RP_NAME          # Relying party name shown in passkey UX
 VITE_SCORE_CONTRACT_ID        # Asteroids score contract address
 VITE_TOKEN_CONTRACT_ID        # SAC token contract address
 VITE_EXPLORER_URL             # Stellar Expert or StellarChain base URL
