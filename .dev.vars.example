@@ -29,3 +29,45 @@ MAX_TAPE_BYTES=2097152
 MAX_JOB_WALL_TIME_MS=660000
 MAX_COMPLETED_JOBS=200
 COMPLETED_JOB_RETENTION_MS=86400000
+
+# Leaderboard ingestion (event-sourced via Galexie/Lightsail)
+# D1 backing store is configured in wrangler.jsonc via binding: LEADERBOARD_DB
+SCORE_CONTRACT_ID=
+GALEXIE_API_BASE_URL=https://galexie-pro.lightsail.network
+# Modes: auto (rpc primary + galexie fallback), rpc, datalake, events_api
+GALEXIE_SOURCE_MODE=auto
+# Optional explicit RPC URL override.
+# Leave blank to auto-select by network:
+# - testnet passphrase -> tries Lightsail testnet, then soroban-testnet, gateway.fm, and Ankr
+# - otherwise -> Lightsail mainnet
+GALEXIE_RPC_BASE_URL=
+# Used for network-aware RPC defaulting when GALEXIE_RPC_BASE_URL is unset.
+CLAIM_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+GALEXIE_SCORE_EVENTS_PATH=/events
+GALEXIE_DATASTORE_ROOT_PATH=/v1
+GALEXIE_DATASTORE_OBJECT_EXTENSION=zst
+GALEXIE_REQUEST_TIMEOUT_MS=20000
+
+# Automated sync + catch-up window
+LEADERBOARD_SYNC_CRON_ENABLED=1
+LEADERBOARD_SYNC_CRON_LIMIT=400
+LEADERBOARD_CATCHUP_INTERVAL_MINUTES=30
+LEADERBOARD_CATCHUP_WINDOW_LEDGERS=8000
+# Forward sync replays the most recent N ledgers (idempotent upsert) to heal transient gaps.
+LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS=8000
+
+# Admin key for protected sync endpoints.
+LEADERBOARD_ADMIN_KEY=
+# Optional passkey profile-auth tuning.
+# Defaults to testnet indexer URL if not set.
+SMART_ACCOUNT_INDEXER_URL=
+SMART_ACCOUNT_INDEXER_TIMEOUT_MS=10000
+# One-time passkey challenge TTL in ms (10s minimum, 10m maximum).
+LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS=120000
+# Optional explicit WebAuthn origin/RP ID. Defaults to request origin/hostname.
+LEADERBOARD_PROFILE_WEBAUTHN_ORIGIN=
+LEADERBOARD_PROFILE_WEBAUTHN_RP_ID=
+# If deploying to Cloudflare, prefer:
+#   npx wrangler secret put GALEXIE_API_KEY
+#   npx wrangler secret put LEADERBOARD_ADMIN_KEY
+GALEXIE_API_KEY=

@@ -40,6 +40,11 @@ pub enum ScoreError {
 pub struct ScoreSubmitted {
     pub claimant: Address,
     pub seed: u32,
+    pub frame_count: u32,
+    pub final_score: u32,
+    pub final_rng_state: u32,
+    pub tape_checksum: u32,
+    pub rules_digest: u32,
     pub previous_best: u32,
     pub new_best: u32,
     pub minted_delta: u32,
@@ -86,7 +91,10 @@ impl AsteroidsScoreContract {
 
         // Decode seed and score.
         let seed = read_u32_le(&journal_raw, 0);
+        let frame_count = read_u32_le(&journal_raw, 4);
         let final_score = read_u32_le(&journal_raw, 8);
+        let final_rng_state = read_u32_le(&journal_raw, 12);
+        let tape_checksum = read_u32_le(&journal_raw, 16);
 
         // Decode rules_digest from bytes 20..24 and validate
         let rules_digest = read_u32_le(&journal_raw, 20);
@@ -137,6 +145,11 @@ impl AsteroidsScoreContract {
         ScoreSubmitted {
             claimant,
             seed,
+            frame_count,
+            final_score,
+            final_rng_state,
+            tape_checksum,
+            rules_digest,
             previous_best,
             new_best: final_score,
             minted_delta,
@@ -176,6 +189,13 @@ impl AsteroidsScoreContract {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+    }
+
+    /// Admin: upgrade this contract to a new wasm hash.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     /// Read the current image ID.

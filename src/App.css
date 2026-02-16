@@ -36,6 +36,19 @@
   color: rgba(212, 247, 234, 0.9);
 }
 
+.headline-link {
+  color: #8dd1ff;
+  font-family: var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.headline-link:hover {
+  text-decoration: underline;
+}
+
 .game-panel {
   border: 1px solid rgba(166, 255, 228, 0.25);
   border-radius: 14px;

@@ -17,6 +17,7 @@ import type {
   SmartAccountRelayerMode,
   SmartWalletSession,
 } from "./wallet/smartAccount";
+import { LeaderboardPage } from "./leaderboard/LeaderboardPage";
 import "./App.css";
 import { formatUtcDateTime } from "./time";
 
@@ -146,7 +147,7 @@ async function loadSmartWalletModule(): Promise<SmartWalletModule> {
   return smartWalletModulePromise;
 }
 
-function App() {
+function GamePage() {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
   const [proofJob, setProofJob] = useState<ProofJobPublic | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
@@ -479,6 +480,11 @@ function App() {
           Deterministic tape capture wired to a Cloudflare proof gateway. Game-over runs can be
           submitted and processed through a single-flight queue into the VAST prover API.
         </p>
+        <p>
+          <a className="headline-link" href="/leaderboard">
+            Open Leaderboard
+          </a>
+        </p>
       </section>
 
       <section className="game-panel" aria-label="Asteroids game panel">
@@ -750,6 +756,15 @@ function App() {
       </section>
     </main>
   );
+}
+
+function App() {
+  const path = typeof window !== "undefined" ? window.location.pathname : "/";
+  if (path.startsWith("/leaderboard")) {
+    return <LeaderboardPage />;
+  }
+
+  return <GamePage />;
 }
 
 export default App;

@@ -2,6 +2,7 @@ import {
   IndexedDBStorage,
   SmartAccountKit,
   validateAddress,
+  type StoredCredential,
   type ConnectWalletResult,
 } from "smart-account-kit";
 import {
@@ -26,6 +27,8 @@ const APP_NAME = "Stellar ZK Asteroids";
 export interface SmartWalletSession {
   contractId: string;
   credentialId: string;
+  credentialPublicKey: string | null;
+  credentialTransports: string[] | null;
 }
 
 export interface SmartAccountConfig {
@@ -93,10 +96,30 @@ function ensureClaimantAddress(address: string): string {
   return parseClaimantStrKeyFromUserInput(normalized).normalized;
 }
 
-function toWalletSession(result: ConnectWalletResult): SmartWalletSession {
+function encodeBase64Url(bytes: Uint8Array): string {
+  if (bytes.length === 0) {
+    return "";
+  }
+
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+}
+
+async function findStoredCredential(credentialId: string): Promise<StoredCredential | null> {
+  const credentials = await getSmartAccountKit().credentials.getAll();
+  return credentials.find((credential) => credential.credentialId === credentialId) ?? null;
+}
+
+async function toWalletSession(result: ConnectWalletResult): Promise<SmartWalletSession> {
+  const credential = result.credential ?? (await findStoredCredential(result.credentialId));
   return {
     contractId: ensureClaimantAddress(result.contractId),
     credentialId: result.credentialId,
+    credentialPublicKey: credential ? encodeBase64Url(credential.publicKey) : null,
+    credentialTransports: credential?.transports ? [...credential.transports] : null,
   };
 }
 
@@ -204,7 +227,7 @@ async function submitDeploymentXdr(signedTransaction: string): Promise<void> {
 
 export async function restoreSmartWalletSession(): Promise<SmartWalletSession | null> {
   const result = await getSmartAccountKit().connectWallet();
-  return result ? toWalletSession(result) : null;
+  return result ? await toWalletSession(result) : null;
 }
 
 export async function connectSmartWallet(): Promise<SmartWalletSession> {
@@ -244,4 +267,32 @@ export async function createSmartWallet(userName: string): Promise<SmartWalletSe
 
 export async function disconnectSmartWallet(): Promise<void> {
   await getSmartAccountKit().disconnect();
+}
+
+export async function resolveSmartWalletSessionForClaimant(
+  claimantAddress: string,
+): Promise<SmartWalletSession> {
+  const normalizedClaimant = ensureClaimantAddress(claimantAddress);
+  const kit = getSmartAccountKit();
+  const restored = await kit.connectWallet({
+    contractId: normalizedClaimant,
+  });
+  const connected =
+    restored ??
+    (await kit.connectWallet({
+      contractId: normalizedClaimant,
+      prompt: true,
+    }));
+  if (!connected) {
+    throw new Error("wallet connection was cancelled");
+  }
+
+  const session = await toWalletSession(connected);
+  if (session.contractId !== normalizedClaimant) {
+    throw new Error("connected wallet does not match requested claimant address");
+  }
+  if (!session.credentialPublicKey) {
+    throw new Error("missing passkey public key in local credential storage");
+  }
+  return session;
 }

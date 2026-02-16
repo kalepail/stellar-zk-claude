@@ -281,7 +281,7 @@ test_submit_fixture() {
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $fixture_prefix is not AST3-compatible for zero-score rejection test"
+    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
     return
   fi
 
@@ -364,7 +364,7 @@ test_reject_fixture() {
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $fixture_prefix is not AST3-compatible for zero-score rejection test"
+    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
     return
   fi
 
@@ -532,7 +532,7 @@ test_submit_groth16_fixture() {
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $fixture_prefix is not AST3-compatible for Groth16 zero-score rejection test"
+    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
     return
   fi
 
@@ -614,7 +614,7 @@ test_reject_groth16_fixture() {
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $fixture_prefix is not AST3-compatible for Groth16 zero-score rejection test"
+    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
     return
   fi
 
