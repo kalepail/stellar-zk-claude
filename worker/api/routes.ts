@@ -1,10 +1,17 @@
 import { Hono } from "hono";
-import { DEFAULT_MAX_TAPE_BYTES } from "../constants";
+import {
+  DEFAULT_MAX_TAPE_BYTES,
+  EXPECTED_RULES_DIGEST,
+  EXPECTED_RULESET,
+  OPPORTUNISTIC_POLL_STALE_MS,
+} from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
+import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
-import { parseInteger, safeErrorMessage } from "../utils";
+import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
+import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -97,11 +104,48 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
   api.get("/health", async (c) => {
     const coordinator = coordinatorStub(c.env);
     const activeJob = await coordinator.getActiveJob();
+    const expectedImageIdRaw = c.env.PROVER_EXPECTED_IMAGE_ID?.trim() ?? "";
+    const expectedImageId = expectedImageIdRaw.length > 0 ? expectedImageIdRaw : null;
+
+    let prover:
+      | {
+          status: "compatible";
+          image_id: string;
+          rules_digest_hex: string;
+          ruleset: string;
+        }
+      | {
+          status: "degraded";
+          error: string;
+        };
+
+    try {
+      const health = await getValidatedProverHealth(c.env);
+      prover = {
+        status: "compatible",
+        image_id: health.imageId,
+        rules_digest_hex: health.rulesDigestHex,
+        ruleset: health.ruleset,
+      };
+    } catch (error) {
+      const healthError = describeProverHealthError(error);
+      prover = {
+        status: "degraded",
+        error: healthError.message,
+      };
+    }
 
     return c.json({
       success: true,
       service: "stellar-zk-proof-gateway",
       mode: "single-active-job",
+      expected: {
+        rules_digest_hex: `0x${(EXPECTED_RULES_DIGEST >>> 0).toString(16).padStart(8, "0")}`,
+        ruleset: EXPECTED_RULESET,
+        image_id: expectedImageId,
+      },
+      checked_at: new Date().toISOString(),
+      prover,
       active_job: activeJob ? asPublicJob(activeJob) : null,
     });
   });
@@ -134,10 +178,19 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, safeErrorMessage(error));
     }
 
+    const rawClaimant = c.req.header("x-claimant-address") ?? "";
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimant);
+    } catch (error) {
+      return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
+    }
+
     const coordinator = coordinatorStub(c.env);
     const createResult = await coordinator.createJob({
       sizeBytes: tapeBytes.byteLength,
       metadata,
+      claimantAddress,
     });
 
     if (!createResult.accepted) {
@@ -210,9 +263,26 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
 
     const coordinator = coordinatorStub(c.env);
-    const job = await coordinator.getJob(jobId);
+    let job = await coordinator.getJob(jobId);
     if (!job) {
       return jsonError(c, 404, `job not found: ${jobId}`);
+    }
+
+    // Opportunistic: if the DO alarm hasn't polled recently (unreliable in local
+    // dev), do a single-shot prover check so the frontend sees progress.
+    // DOs are single-threaded so this is safe from races in prod.
+    if (
+      !isTerminalProofStatus(job.status) &&
+      job.prover.jobId &&
+      (!job.prover.lastPolledAt ||
+        Date.now() - new Date(job.prover.lastPolledAt).getTime() > OPPORTUNISTIC_POLL_STALE_MS)
+    ) {
+      try {
+        await coordinator.kickAlarm();
+        job = (await coordinator.getJob(jobId)) ?? job;
+      } catch {
+        // Best-effort — don't fail the read if kicking the alarm errors.
+      }
     }
 
     return c.json({
@@ -254,6 +324,24 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       headers: {
         "content-type": "application/json; charset=utf-8",
       },
+    });
+  });
+
+  api.delete("/proofs/jobs/:jobId", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const job = await coordinator.markFailed(jobId, "cancelled by user");
+    if (!job) {
+      return jsonError(c, 404, `job not found: ${jobId}`);
+    }
+
+    return c.json({
+      success: true,
+      job: asPublicJob(job),
     });
   });
 

@@ -1,0 +1,21 @@
+{
+  "risk_weight_scale": 1.0,
+  "survival_weight_scale": 1.0,
+  "aggression_weight_scale": 1.0,
+  "fire_reward_scale": 1.0,
+  "shot_penalty_scale": 1.0,
+  "miss_fire_penalty_scale": 1.0,
+  "action_penalty_scale": 1.0,
+  "turn_penalty_scale": 1.0,
+  "thrust_penalty_scale": 1.0,
+  "center_weight_scale": 1.0,
+  "edge_penalty_scale": 1.0,
+  "lookahead_frames_scale": 1.0,
+  "flow_weight_scale": 1.0,
+  "speed_soft_cap_scale": 1.0,
+  "fire_distance_scale": 1.0,
+  "lurk_trigger_scale": 1.0,
+  "lurk_boost_scale": 1.0,
+  "fire_tolerance_scale": 1.0,
+  "min_fire_quality_delta": 0.0
+}

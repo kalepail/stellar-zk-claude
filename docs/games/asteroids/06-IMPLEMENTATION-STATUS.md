@@ -4,6 +4,9 @@
 - Deterministic replay and tape verification logic exists.
 - RISC0 workspace exists with host/guest/core split.
 - Strict verification model and rule groups are defined.
+- AST3 tape contract is active (`version=2`, `rules_tag=3`, reserved bytes/bits enforced).
+- Proof gateway requires claimant address header and drives claim relay after proof success.
+- Score contract enforces AST3 rules digest and claimant-scoped best-score minting.
 
 ### RISC0 workspace shape
 - Shared deterministic core crate for replay and tape parsing.

@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "updated_utc": "2026-02-11T00:00:00Z",
+  "ruleset": "AST3",
+  "note": "Legacy AST0 record artifacts were intentionally retired. Promote new AST3-compatible champions as they are discovered.",
+  "record_lock_bot": null,
+  "runs": []
+}

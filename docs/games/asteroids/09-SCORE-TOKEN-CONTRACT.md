@@ -6,7 +6,7 @@ Soroban contract that:
 1. Accepts a RISC Zero proof payload for a replayed Asteroids tape.
 2. Verifies it through the RISC Zero router contract on Stellar.
 3. Extracts the proven score from committed journal bytes.
-4. Mints score-denominated tokens to the player.
+4. Mints score-denominated tokens to the claimant.
 
 ## On-Chain Components
 
@@ -24,6 +24,7 @@ enum DataKey {
     ImageId,                  // BytesN<32> — expected proving program identity
     TokenId,                  // Address — SAC token contract
     Claimed(BytesN<32>),      // () — replay-protection per journal digest
+    Best(Address, u32),       // u32 — best score per claimant per seed
 }
 ```
 
@@ -35,8 +36,10 @@ Claimed entries are stored in **persistent** storage.
 ```rust
 enum ScoreError {
     InvalidJournalLength = 1, // journal_raw is not exactly 24 bytes
-    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5431 ("AST1")
+    InvalidRulesDigest = 2,   // rules_digest ≠ 0x4153_5433 ("AST3")
     JournalAlreadyClaimed = 3,// journal digest previously claimed
+    ZeroScoreNotAllowed = 4,  // final_score == 0
+    ScoreNotImproved = 5,     // final_score <= previous_best for claimant+seed
 }
 ```
 
@@ -50,22 +53,25 @@ One-time setup. Stores all four config values in instance storage.
 
 ## Core Function
 
-### `submit_score(player: Address, seal: Bytes, journal_raw: Bytes) -> Result<u32, ScoreError>`
+### `submit_score(seal: Bytes, journal_raw: Bytes, claimant: Address) -> Result<u32, ScoreError>`
 
 Validation and execution in order:
 
-1. `player.require_auth()`
-2. `journal_raw.len() != 24` → `InvalidJournalLength`
-3. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5431` → `InvalidRulesDigest`
+1. `journal_raw.len() != 24` → `InvalidJournalLength`
+2. Decode `rules_digest` from bytes `[20..24]` LE; must equal `0x4153_5433` → `InvalidRulesDigest`
+3. Decode `seed` from `[0..4]`, `final_score` from `[8..12]`; `final_score` must be `> 0` → `ZeroScoreNotAllowed`
 4. `journal_digest = sha256(journal_raw)`
 5. Check `Claimed(journal_digest)` not in persistent storage → `JournalAlreadyClaimed`
-6. Load `router_id`, `image_id`, `token_id` from instance storage
-7. Cross-contract call: `router.verify(seal, image_id, journal_digest)`
-8. Decode `final_score` from bytes `[8..12]` LE
-9. Store `Claimed(journal_digest)` in persistent storage
-10. Mint `final_score` tokens to `player` via `StellarAssetClient`
-11. Emit `ScoreSubmitted { player, score: final_score, journal_digest }`
-12. Return `Ok(final_score)`
+6. Load `previous_best = Best(claimant, seed)` default `0`; require `final_score > previous_best` → `ScoreNotImproved`
+7. Compute `minted_delta = final_score - previous_best`
+8. Load `router_id`, `image_id`, `token_id` from instance storage
+9. Cross-contract call: `router.verify(seal, image_id, journal_digest)`
+10. Store `Claimed(journal_digest)` and `Best(claimant, seed) = final_score`
+11. Mint `minted_delta` tokens to `claimant` via `StellarAssetClient`
+12. Emit `ScoreSubmitted` with full journal mirror + payout context:
+   - Journal mirror: `seed`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`
+   - Payout context: `claimant`, `previous_best`, `new_best`, `minted_delta`, `journal_digest`
+13. Return `Ok(final_score)`
 
 Note: `image_id` is **not** a parameter — it is read from storage. The contract
 trusts its own stored image ID rather than accepting one from the caller.
@@ -73,14 +79,17 @@ trusts its own stored image ID rather than accepting one from the caller.
 ## Read-Only Functions
 
 - `is_claimed(journal_digest: BytesN<32>) -> bool` — replay check
+- `best_score(claimant: Address, seed: u32) -> u32` — claimant’s best score for seed
 - `image_id() -> BytesN<32>` — current verifier image ID
 - `router_id() -> Address` — router contract address
 - `token_id() -> Address` — token contract address
+- `rules_digest() -> u32` — expected journal rules digest (`0x4153_5433`)
 
 ## Admin Functions
 
 - `set_image_id(new_image_id: BytesN<32>)` — requires admin auth; version rotation
 - `set_admin(new_admin: Address)` — requires admin auth; transfer admin role
+- `upgrade(new_wasm_hash: BytesN<32>)` — requires admin auth; upgrades the contract code in place
 
 ## Journal Layout
 
@@ -93,14 +102,22 @@ trusts its own stored image ID rather than accepting one from the caller.
 | 8..12 | `final_score` | Score minted as tokens |
 | 12..16 | `final_rng_state` | RNG state at game end |
 | 16..20 | `tape_checksum` | CRC-32 of tape (unused by contract) |
-| 20..24 | `rules_digest` | Must be `0x4153_5431` ("AST1") |
+| 20..24 | `rules_digest` | Must be `0x4153_5433` ("AST3") |
 
 ## Event
 
 ```rust
 struct ScoreSubmitted {
-    player: Address,
-    score: u32,
+    claimant: Address,
+    seed: u32,
+    frame_count: u32,
+    final_score: u32,
+    final_rng_state: u32,
+    tape_checksum: u32,
+    rules_digest: u32,
+    previous_best: u32,
+    new_best: u32,
+    minted_delta: u32,
     journal_digest: BytesN<32>,
 }
 ```
@@ -109,13 +126,14 @@ struct ScoreSubmitted {
 
 - **Journal digest replay lock** — each unique journal can only be claimed once.
 - **Image ID pinning** — only proofs from the expected program are accepted.
-- **Player auth** — `require_auth()` prevents unsigned third-party claims.
+- **Per-claimant improvement policy** — only strictly higher score for `(claimant, seed)` is accepted.
 - **Rules digest check** — rejects journals from incompatible game versions.
 
 ## Token Model
 
 The token is a **Stellar Asset Contract** (SAC) wrapping a classic Stellar
-asset. The contract calls `StellarAssetClient::mint()` to mint tokens. The SAC
+asset. The contract calls `StellarAssetClient::mint()` to mint only the
+improvement delta (`new_best - previous_best`) for a claimant+seed. The SAC
 admin must be set to the score contract address (or a shared admin that
 authorizes minting).
 

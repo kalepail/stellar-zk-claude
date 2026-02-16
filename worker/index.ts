@@ -4,8 +4,14 @@ import { applyApiCacheControl } from "./cache-control";
 export { ProofCoordinatorDO } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { createApiRouter } from "./api/routes";
-import { handleDlqBatch, handleQueueBatch } from "./queue/consumer";
-import type { ProofQueueMessage } from "./types";
+import { recordLeaderboardSyncFailure, runScheduledLeaderboardSync } from "./leaderboard-sync";
+import {
+  handleClaimDlqBatch,
+  handleClaimQueueBatch,
+  handleDlqBatch,
+  handleQueueBatch,
+} from "./queue/consumer";
+import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 import { safeErrorMessage } from "./utils";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
@@ -67,8 +73,38 @@ export default {
   async queue(batch: MessageBatch<unknown>, env: WorkerEnv): Promise<void> {
     if (batch.queue === "stellar-zk-proof-jobs-dlq") {
       await handleDlqBatch(batch as MessageBatch<ProofQueueMessage>, env);
+    } else if (batch.queue === "stellar-zk-claim-jobs") {
+      await handleClaimQueueBatch(batch as MessageBatch<ClaimQueueMessage>, env);
+    } else if (batch.queue === "stellar-zk-claim-jobs-dlq") {
+      await handleClaimDlqBatch(batch as MessageBatch<ClaimQueueMessage>, env);
     } else {
       await handleQueueBatch(batch as MessageBatch<ProofQueueMessage>, env);
+    }
+  },
+
+  async scheduled(
+    controller: ScheduledController,
+    env: WorkerEnv,
+    _executionCtx: ExecutionContext,
+  ): Promise<void> {
+    try {
+      const result = await runScheduledLeaderboardSync(env, controller.scheduledTime);
+      if (!result.enabled) {
+        return;
+      }
+
+      if (result.warning) {
+        console.warn(`[leaderboard-sync] ${result.warning}`);
+      }
+    } catch (error) {
+      try {
+        await recordLeaderboardSyncFailure(env, error);
+      } catch (recordError) {
+        console.error(
+          `[leaderboard-sync] failed recording scheduled sync error: ${safeErrorMessage(recordError)}`,
+        );
+      }
+      console.error(`[leaderboard-sync] scheduled sync failed: ${safeErrorMessage(error)}`);
     }
   },
 } satisfies ExportedHandler<WorkerEnv>;

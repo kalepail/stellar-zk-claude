@@ -2,7 +2,13 @@ import {
   DEFAULT_POLL_BUDGET_MS,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_POLL_TIMEOUT_MS,
+  DEFAULT_PROVER_HEALTH_CACHE_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+  DEFAULT_SEGMENT_LIMIT_PO2,
+  EXPECTED_RULES_DIGEST,
+  EXPECTED_RULESET,
+  MIN_PROVER_POLL_INTERVAL_MS,
+  MIN_PROVER_POLL_TIMEOUT_MS,
   RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
@@ -10,19 +16,48 @@ import type {
   ProverCreateJobResponse,
   ProverErrorResponse,
   ProverGetJobResponse,
+  ProverHealthResponse,
   ProverPollResult,
   ProverSubmitResult,
   ProofResultSummary,
 } from "../types";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 
-function buildProverCreateUrl(env: WorkerEnv): URL {
+export interface ValidatedProverHealth {
+  imageId: string;
+  rulesDigest: number;
+  rulesDigestHex: string;
+  ruleset: string;
+}
+
+class ProverHealthCheckError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = "ProverHealthCheckError";
+    this.retryable = retryable;
+  }
+}
+
+let proverHealthCache: {
+  cacheKey: string;
+  fetchedAtMs: number;
+  value: ValidatedProverHealth;
+} | null = null;
+
+function normalizeHex32Bytes(raw: string): string | null {
+  const normalized = raw.trim().toLowerCase().replace(/^0x/, "");
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
+function buildProverUrl(env: WorkerEnv, pathname: string): URL {
   const base = env.PROVER_BASE_URL?.trim();
   if (!base) {
     throw new Error("missing PROVER_BASE_URL");
   }
 
-  const url = new URL("/api/jobs/prove-tape/raw", base);
+  const url = new URL(pathname, base);
   if (
     url.protocol !== "https:" &&
     !parseBoolean(env.ALLOW_INSECURE_PROVER_URL, false) &&
@@ -31,36 +66,36 @@ function buildProverCreateUrl(env: WorkerEnv): URL {
     throw new Error("PROVER_BASE_URL must use https in production");
   }
 
-  const receiptKind = env.PROVER_RECEIPT_KIND?.trim();
-  if (receiptKind) {
-    url.searchParams.set("receipt_kind", receiptKind);
-  }
+  return url;
+}
 
-  const segmentLimitPo2 = parseInteger(env.PROVER_SEGMENT_LIMIT_PO2, 19, 1);
+interface ProverCreateOptions {
+  segmentLimitPo2?: number;
+}
+
+function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOptions): URL {
+  const url = buildProverUrl(env, "/api/jobs/prove-tape/raw");
+
+  const segmentLimitPo2 =
+    typeof options.segmentLimitPo2 === "number"
+      ? Math.max(1, Math.floor(options.segmentLimitPo2))
+      : DEFAULT_SEGMENT_LIMIT_PO2;
   url.searchParams.set("segment_limit_po2", String(segmentLimitPo2));
 
-  const maxFrames = parseInteger(env.PROVER_MAX_FRAMES, 18_000, 1);
-  url.searchParams.set("max_frames", String(maxFrames));
+  // The Stellar on-chain verifier expects Groth16 seals.
+  url.searchParams.set("receipt_kind", "groth16");
+  // Skip prover-side receipt verification; on-chain verification is the source of truth.
+  url.searchParams.set("verify_mode", "policy");
 
   return url;
 }
 
 function buildProverStatusUrl(env: WorkerEnv, proverJobId: string): URL {
-  const base = env.PROVER_BASE_URL?.trim();
-  if (!base) {
-    throw new Error("missing PROVER_BASE_URL");
-  }
+  return buildProverUrl(env, `/api/jobs/${proverJobId}`);
+}
 
-  const url = new URL(`/api/jobs/${proverJobId}`, base);
-  if (
-    url.protocol !== "https:" &&
-    !parseBoolean(env.ALLOW_INSECURE_PROVER_URL, false) &&
-    !isLocalHostname(url.hostname)
-  ) {
-    throw new Error("PROVER_BASE_URL must use https in production");
-  }
-
-  return url;
+function buildProverHealthUrl(env: WorkerEnv): URL {
+  return buildProverUrl(env, "/health");
 }
 
 function buildProverHeaders(env: WorkerEnv, includeContentType: boolean): Headers {
@@ -97,10 +132,44 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function submitToProver(
+export function describeProverHealthError(error: unknown): { retryable: boolean; message: string } {
+  if (error instanceof ProverHealthCheckError) {
+    return {
+      retryable: error.retryable,
+      message: error.message,
+    };
+  }
+
+  return {
+    retryable: true,
+    message: safeErrorMessage(error),
+  };
+}
+
+function cacheKeyForHealthCheck(env: WorkerEnv): string {
+  const proverBaseUrl = env.PROVER_BASE_URL?.trim() ?? "";
+  const expectedImageId = env.PROVER_EXPECTED_IMAGE_ID?.trim() ?? "";
+  return `${proverBaseUrl}|${expectedImageId}`;
+}
+
+export async function getValidatedProverHealth(
   env: WorkerEnv,
-  tapeBytes: Uint8Array,
-): Promise<ProverSubmitResult> {
+  options?: { forceRefresh?: boolean },
+): Promise<ValidatedProverHealth> {
+  const forceRefresh = options?.forceRefresh ?? false;
+  const cacheMs = parseInteger(env.PROVER_HEALTH_CACHE_MS, DEFAULT_PROVER_HEALTH_CACHE_MS, 1_000);
+  const cacheKey = cacheKeyForHealthCheck(env);
+  const now = Date.now();
+
+  if (
+    !forceRefresh &&
+    proverHealthCache &&
+    proverHealthCache.cacheKey === cacheKey &&
+    now - proverHealthCache.fetchedAtMs <= cacheMs
+  ) {
+    return proverHealthCache.value;
+  }
+
   const timeoutMs = parseInteger(
     env.PROVER_REQUEST_TIMEOUT_MS,
     DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
@@ -110,7 +179,141 @@ export async function submitToProver(
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      buildProverCreateUrl(env),
+      buildProverHealthUrl(env),
+      {
+        method: "GET",
+        headers: buildProverHeaders(env, false),
+      },
+      timeoutMs,
+    );
+  } catch (error) {
+    throw new ProverHealthCheckError(
+      `failed reaching prover health endpoint: ${safeErrorMessage(error)}`,
+      true,
+    );
+  }
+
+  if (response.status >= 500 || response.status === 429) {
+    throw new ProverHealthCheckError(`prover health endpoint returned ${response.status}`, true);
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch {
+      // Ignore parse errors.
+    }
+    throw new ProverHealthCheckError(
+      `prover health endpoint returned ${response.status}: ${detail || "no body"}`,
+      false,
+    );
+  }
+
+  let payload: ProverHealthResponse;
+  try {
+    payload = await parseJson<ProverHealthResponse>(response);
+  } catch (error) {
+    throw new ProverHealthCheckError(
+      `failed parsing prover health response: ${safeErrorMessage(error)}`,
+      true,
+    );
+  }
+
+  const normalizedImageId =
+    typeof payload.image_id === "string" ? normalizeHex32Bytes(payload.image_id) : null;
+  if (!normalizedImageId) {
+    throw new ProverHealthCheckError(
+      "prover health missing valid image_id (expected 32-byte hex)",
+      false,
+    );
+  }
+
+  const rulesDigest =
+    typeof payload.rules_digest === "number" && Number.isFinite(payload.rules_digest)
+      ? payload.rules_digest >>> 0
+      : null;
+  if (rulesDigest === null) {
+    throw new ProverHealthCheckError("prover health missing rules_digest (u32)", false);
+  }
+
+  if (rulesDigest !== EXPECTED_RULES_DIGEST >>> 0) {
+    throw new ProverHealthCheckError(
+      `prover health rules_digest mismatch: 0x${rulesDigest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
+      false,
+    );
+  }
+
+  const ruleset = typeof payload.ruleset === "string" ? payload.ruleset.trim() : "";
+  if (ruleset !== EXPECTED_RULESET) {
+    throw new ProverHealthCheckError(
+      `prover health ruleset mismatch: ${ruleset || "missing"} (expected ${EXPECTED_RULESET})`,
+      false,
+    );
+  }
+
+  const expectedImageIdRaw = env.PROVER_EXPECTED_IMAGE_ID?.trim();
+  if (expectedImageIdRaw && expectedImageIdRaw.length > 0) {
+    const normalizedExpectedImageId = normalizeHex32Bytes(expectedImageIdRaw);
+    if (!normalizedExpectedImageId) {
+      throw new ProverHealthCheckError("PROVER_EXPECTED_IMAGE_ID must be 32-byte hex", false);
+    }
+    if (normalizedExpectedImageId !== normalizedImageId) {
+      throw new ProverHealthCheckError(
+        `prover health image_id mismatch: ${normalizedImageId} (expected ${normalizedExpectedImageId})`,
+        false,
+      );
+    }
+  }
+
+  const validated: ValidatedProverHealth = {
+    imageId: normalizedImageId,
+    rulesDigest,
+    rulesDigestHex: `0x${rulesDigest.toString(16).padStart(8, "0")}`,
+    ruleset,
+  };
+
+  proverHealthCache = {
+    cacheKey,
+    fetchedAtMs: now,
+    value: validated,
+  };
+
+  return validated;
+}
+
+export async function submitToProver(
+  env: WorkerEnv,
+  tapeBytes: Uint8Array,
+  options: ProverCreateOptions,
+): Promise<ProverSubmitResult> {
+  try {
+    await getValidatedProverHealth(env);
+  } catch (error) {
+    const healthError = describeProverHealthError(error);
+    return {
+      type: healthError.retryable ? "retry" : "fatal",
+      message: `prover health check failed: ${healthError.message}`,
+    };
+  }
+
+  const timeoutMs = parseInteger(
+    env.PROVER_REQUEST_TIMEOUT_MS,
+    DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
+    1_000,
+  );
+
+  const createUrl = buildProverCreateUrlWithOptions(env, options);
+  const submittedSegmentLimitPo2 = parseInteger(
+    createUrl.searchParams.get("segment_limit_po2") ?? undefined,
+    DEFAULT_SEGMENT_LIMIT_PO2,
+    1,
+  );
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      createUrl,
       {
         method: "POST",
         headers: buildProverHeaders(env, true),
@@ -176,17 +379,147 @@ export async function submitToProver(
     type: "success",
     jobId: payload.job_id,
     statusUrl,
+    segmentLimitPo2: submittedSegmentLimitPo2,
   };
 }
 
-export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
+/**
+ * Single-shot prover status check: one HTTP fetch, parse, return.
+ * Used by `kickAlarm()` for lightweight progress checks and internally
+ * by `pollProver()` for its polling loop.
+ */
+export async function pollProverOnce(
+  env: WorkerEnv,
+  proverJobId: string,
+): Promise<ProverPollResult> {
   const requestTimeoutMs = parseInteger(
     env.PROVER_REQUEST_TIMEOUT_MS,
     DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
     1_000,
   );
-  const pollTimeoutMs = parseInteger(env.PROVER_POLL_TIMEOUT_MS, DEFAULT_POLL_TIMEOUT_MS, 5_000);
-  const pollIntervalMs = parseInteger(env.PROVER_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 500);
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      buildProverStatusUrl(env, proverJobId),
+      {
+        method: "GET",
+        headers: buildProverHeaders(env, false),
+      },
+      requestTimeoutMs,
+    );
+  } catch (error) {
+    return {
+      type: "retry",
+      message: `failed reading prover status: ${safeErrorMessage(error)}`,
+    };
+  }
+
+  if (response.status === 429 || response.status >= 500) {
+    let errorBody: ProverErrorResponse | undefined;
+    try {
+      errorBody = (await response.json()) as ProverErrorResponse;
+    } catch {
+      // Ignore parse errors.
+    }
+    const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
+    const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
+    return {
+      type: "retry",
+      message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
+    };
+  }
+
+  // A 404 means the prover lost the job (crash/restart). The tape is
+  // still valid — clear the prover job ID so the next attempt
+  // re-submits rather than polling a dead job forever.
+  if (response.status === 404) {
+    return {
+      type: "retry",
+      message: "prover job not found (likely prover restart); will re-submit",
+      clearProverJob: true,
+    };
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch {
+      // Ignore parse errors.
+    }
+
+    return {
+      type: "fatal",
+      message: `prover status endpoint returned ${response.status}: ${detail || "no body"}`,
+    };
+  }
+
+  let payload: ProverGetJobResponse;
+  try {
+    payload = await parseJson<ProverGetJobResponse>(response);
+  } catch (error) {
+    return {
+      type: "retry",
+      message: `failed parsing prover status response: ${safeErrorMessage(error)}`,
+    };
+  }
+
+  if (payload.status === "succeeded") {
+    if (!payload.result?.proof || !payload.result.proof.journal || !payload.result.proof.stats) {
+      return {
+        type: "retry",
+        message: "prover reported success but result payload was incomplete; will re-submit",
+        clearProverJob: true,
+      };
+    }
+    return {
+      type: "success",
+      response: payload,
+    };
+  }
+
+  if (payload.status === "failed") {
+    if (payload.error_code && RETRYABLE_JOB_ERROR_CODES.has(payload.error_code)) {
+      return {
+        type: "retry",
+        message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
+        clearProverJob: true,
+      };
+    }
+    const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
+    return {
+      type: "fatal",
+      message: payload.error
+        ? `prover marked job as failed${codePart}: ${payload.error}`
+        : `prover marked job as failed${codePart}`,
+    };
+  }
+
+  if (payload.status !== "queued" && payload.status !== "running") {
+    return {
+      type: "fatal",
+      message: `prover returned unknown job status: ${payload.status}`,
+    };
+  }
+
+  return {
+    type: "running",
+    status: payload.status,
+  };
+}
+
+export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
+  const pollTimeoutMs = parseInteger(
+    env.PROVER_POLL_TIMEOUT_MS,
+    DEFAULT_POLL_TIMEOUT_MS,
+    MIN_PROVER_POLL_TIMEOUT_MS,
+  );
+  const pollIntervalMs = parseInteger(
+    env.PROVER_POLL_INTERVAL_MS,
+    DEFAULT_POLL_INTERVAL_MS,
+    MIN_PROVER_POLL_INTERVAL_MS,
+  );
   const pollBudgetMs = parseInteger(
     env.PROVER_POLL_BUDGET_MS,
     DEFAULT_POLL_BUDGET_MS,
@@ -199,116 +532,16 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
   // Polling is intentionally sequential to preserve strict single-job semantics.
   /* eslint-disable no-await-in-loop */
   while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
-        buildProverStatusUrl(env, proverJobId),
-        {
-          method: "GET",
-          headers: buildProverHeaders(env, false),
-        },
-        requestTimeoutMs,
-      );
-    } catch (error) {
-      return {
-        type: "retry",
-        message: `failed reading prover status: ${safeErrorMessage(error)}`,
-      };
+    const result = await pollProverOnce(env, proverJobId);
+
+    // Terminal results (success, retry, fatal) break out immediately.
+    if (result.type !== "running") {
+      return result;
     }
 
-    if (response.status === 429 || response.status >= 500) {
-      let errorBody: ProverErrorResponse | undefined;
-      try {
-        errorBody = (await response.json()) as ProverErrorResponse;
-      } catch {
-        // Ignore parse errors.
-      }
-      const codePart = errorBody?.error_code ? ` (${errorBody.error_code})` : "";
-      const detailPart = errorBody?.error ? `: ${errorBody.error}` : "";
-      return {
-        type: "retry",
-        message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
-      };
-    }
-
-    // A 404 means the prover lost the job (crash/restart). The tape is
-    // still valid — clear the prover job ID so the next attempt
-    // re-submits rather than polling a dead job forever.
-    if (response.status === 404) {
-      return {
-        type: "retry",
-        message: "prover job not found (likely prover restart); will re-submit",
-        clearProverJob: true,
-      };
-    }
-
-    if (!response.ok) {
-      let detail = "";
-      try {
-        detail = await response.text();
-      } catch {
-        // Ignore parse errors.
-      }
-
-      return {
-        type: "fatal",
-        message: `prover status endpoint returned ${response.status}: ${detail || "no body"}`,
-      };
-    }
-
-    let payload: ProverGetJobResponse;
-    try {
-      payload = await parseJson<ProverGetJobResponse>(response);
-    } catch (error) {
-      return {
-        type: "retry",
-        message: `failed parsing prover status response: ${safeErrorMessage(error)}`,
-      };
-    }
-
-    if (payload.status === "succeeded") {
-      if (!payload.result?.proof || !payload.result.proof.journal || !payload.result.proof.stats) {
-        return {
-          type: "retry",
-          message: "prover reported success but result payload was incomplete; will re-submit",
-          clearProverJob: true,
-        };
-      }
-      return {
-        type: "success",
-        response: payload,
-      };
-    }
-
-    if (payload.status === "failed") {
-      if (payload.error_code && RETRYABLE_JOB_ERROR_CODES.has(payload.error_code)) {
-        return {
-          type: "retry",
-          message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
-          clearProverJob: true,
-        };
-      }
-      const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
-      return {
-        type: "fatal",
-        message: payload.error
-          ? `prover marked job as failed${codePart}: ${payload.error}`
-          : `prover marked job as failed${codePart}`,
-      };
-    }
-
-    if (payload.status !== "queued" && payload.status !== "running") {
-      return {
-        type: "fatal",
-        message: `prover returned unknown job status: ${payload.status}`,
-      };
-    }
-
+    // Still running — if budget is almost exhausted, return as-is.
     if (Date.now() + pollIntervalMs >= budgetDeadline) {
-      return {
-        type: "running",
-        status: payload.status,
-      };
+      return result;
     }
 
     await sleep(pollIntervalMs);
@@ -325,6 +558,15 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   const result = response.result;
   if (!result) {
     throw new Error("prover result payload missing");
+  }
+  if (result.proof.journal.final_score >>> 0 === 0) {
+    throw new Error("prover returned final_score=0; zero-score runs are not accepted");
+  }
+  const digest = result.proof.journal.rules_digest >>> 0;
+  if (digest !== EXPECTED_RULES_DIGEST >>> 0) {
+    throw new Error(
+      `unexpected rules digest 0x${digest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
+    );
   }
 
   return {

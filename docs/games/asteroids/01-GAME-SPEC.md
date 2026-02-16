@@ -15,11 +15,14 @@ Game state transitions must be deterministic given:
 - Rotation uses 8-bit BAM.
 - Thrust and drag operate in fixed-point integer space.
 - Speed is clamped to configured max.
+- On death, the ship respawns after a fixed delay (`SHIP_RESPAWN_FRAMES = 75`) with spawn invulnerability.
+- On wave start, ship spawn is immediate (`queueShipRespawn(0)`).
 
 ### Player bullets
 - Bullet cap is enforced.
-- Fire cooldown is enforced.
+- Fire gating uses an anti-autofire shift register (edge-triggered hold behavior).
 - Bullet lifetime is frame-based.
+- Ship bullet lifetime is `72` frames.
 
 ### Asteroids
 - Wave-based spawning with cap.
@@ -27,9 +30,13 @@ Game state transitions must be deterministic given:
 - Split behavior respects live-entity caps.
 
 ### Saucers
-- Spawn cadence and count scale with progression.
+- Spawn cadence and count scale with progression (max concurrent saucers by wave: `1` for waves `<4`, `2` for waves `4..6`, `3` for waves `>=7`).
 - Anti-lurk behavior increases pressure when player stalls.
 - Small saucers aim with bounded error; large saucers are less accurate.
+- Saucers only enter from left/right edges and are culled as soon as they leave X bounds.
+- Saucer spawn/fire is paused while the ship is not visible.
+- Saucer fire cadence uses deterministic pressure-based cooldown ranges (sampled from game RNG), not a fixed reload constant.
+- Saucer bullet hard cap is `2`, with lifetime `72` frames.
 
 ### Scoring and progression
 - Score increments only from valid destruction events.
@@ -42,8 +49,9 @@ reasonable while preserving arcade pressure.
 
 ### Difficulty controls
 - Asteroid wave count scales up to a cap of 16.
-- Saucer concurrency scales by wave (`1` early, then `2`, then `3`).
+- Saucer concurrency scales by wave (`1`, then `2`, then `3` in late waves).
 - Saucer spawn cadence accelerates with wave and anti-lurk pressure.
+- Saucer firing cadence tightens with pressure via deterministic cooldown ranges.
 - Small-saucer aim tightens with wave progression.
 - Asteroid speed increases by wave with an upper cap.
 - Anti-lurk threshold is fixed at 6 seconds (`360` frames at 60 FPS).
@@ -52,7 +60,7 @@ reasonable while preserving arcade pressure.
 - Starting lives: `3`
 - Extra life step: `10,000`
 - Asteroid score bands: `20 / 50 / 100`
-- Saucer score bands: `200 / 1000`
+- Saucer score bands: `200 / 990`
 
 ## Deliberate Scope Decisions
 - Hyperspace is omitted in this version to keep controls, verification surface,

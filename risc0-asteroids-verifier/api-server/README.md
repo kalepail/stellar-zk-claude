@@ -17,20 +17,29 @@ This server is intentionally single-flight:
 
 ## Auth
 
-If `API_KEY` is set, all `/api/*` routes require either:
+`API_KEY` is required by default, and all `/api/*` routes require either:
 
 - `x-api-key: <API_KEY>`, or
 - `Authorization: Bearer <API_KEY>`.
 
+If `API_KEY` is not set, auth is disabled and all routes are open.
+
 `/health` is always open.
+
+`POST /api/jobs/prove-tape/raw` rejects zero-score tapes (`final_score == 0`)
+with `400` and `error_code: "zero_score_not_allowed"`.
 
 ## Quick Local Run
 
 From `risc0-asteroids-verifier/`:
 
 ```bash
-cargo run --release -p api-server
+RISC0_DEV_MODE=1 cargo run --release -p api-server
 ```
+
+Feature note:
+- CPU is the default build (`default = []`).
+- Enable CUDA explicitly for GPU proving: `cargo run --release -p api-server --features cuda`.
 
 Health check:
 
@@ -38,12 +47,15 @@ Health check:
 curl -s http://127.0.0.1:8080/health | jq
 ```
 
+Health includes prover identity fields (`image_id`, `rules_digest`, `rules_digest_hex`, `ruleset`)
+so downstream services can verify they are targeting the expected prover build.
+
 Submit a job:
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=19' \
-  --data-binary @../test-fixtures/test-short.tape \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy' \
+  --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
 ```
@@ -62,7 +74,8 @@ See `.env.example` for full config.
 
 Most relevant:
 
-- `API_KEY`: optional shared secret for `/api/*`
+- `API_KEY`: required shared secret for `/api/*` in production
+- `API_KEY_MIN_LENGTH`: minimum accepted key length (default `32`)
 - `MAX_TAPE_BYTES`: request payload cap
 - `MAX_JOBS`: max retained jobs in SQLite metadata store
 - `JOB_TTL_SECS`, `JOB_SWEEP_SECS`: retention + cleanup interval
@@ -72,16 +85,15 @@ Most relevant:
 - `HTTP_KEEP_ALIVE_SECS`: keep-alive window
 - `HTTP_WORKERS` (optional): explicit Actix worker count
 - `CORS_ALLOWED_ORIGIN` (optional): allow browser access from one explicit origin (disabled by default)
-- `RUNNING_JOB_TIMEOUT_SECS`: mark long-running proofs as timed out
-- `TIMED_OUT_PROOF_KILL_SECS`: after timeout, abort process if proof task still has not returned (set `0` to disable)
+- `RUNNING_JOB_TIMEOUT_SECS`: mark long-running proofs as timed out (default: 600s / 10 min)
+- `TIMED_OUT_PROOF_KILL_SECS`: after timeout, abort process if proof task still has not returned (default: 60s; set `0` to disable)
 
 Prover concurrency is fixed at `1` in code.
 
 ## Security Defaults
 
-- `ALLOW_DEV_MODE_REQUESTS=false`
-- `RISC0_DEV_MODE=0`
-- `verify_receipt` defaults to `false` (verification happens on-chain)
+- `RISC0_DEV_MODE=0` in production (secure proving), `RISC0_DEV_MODE=1` only for local/dev
+- `verify_mode` defaults to `policy` (verification happens on-chain)
 
 These defaults keep proving in production-safe mode.
 

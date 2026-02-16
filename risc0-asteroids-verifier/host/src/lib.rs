@@ -74,6 +74,78 @@ impl std::fmt::Display for ReceiptKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProofMode {
+    #[default]
+    Secure,
+    Dev,
+}
+
+impl ProofMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Secure => "secure",
+            Self::Dev => "dev",
+        }
+    }
+}
+
+impl FromStr for ProofMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "secure" => Ok(Self::Secure),
+            "dev" => Ok(Self::Dev),
+            _ => Err(anyhow!("invalid proof mode: {value} (expected secure|dev)")),
+        }
+    }
+}
+
+impl std::fmt::Display for ProofMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VerifyMode {
+    #[default]
+    Verify,
+    Policy,
+}
+
+impl VerifyMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verify => "verify",
+            Self::Policy => "policy",
+        }
+    }
+}
+
+impl FromStr for VerifyMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "verify" => Ok(Self::Verify),
+            "policy" => Ok(Self::Policy),
+            _ => Err(anyhow!(
+                "invalid verify mode: {value} (expected verify|policy)"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for VerifyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ProofStats {
     pub segments: u64,
@@ -93,25 +165,13 @@ pub struct TapeProof {
     pub stats: ProofStats,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProveOptions {
     pub max_frames: u32,
     pub segment_limit_po2: u32,
     pub receipt_kind: ReceiptKind,
-    pub allow_dev_mode: bool,
-    pub verify_receipt: bool,
-}
-
-impl Default for ProveOptions {
-    fn default() -> Self {
-        Self {
-            max_frames: 18_000,
-            segment_limit_po2: SEGMENT_LIMIT_PO2_DEFAULT,
-            receipt_kind: ReceiptKind::Composite,
-            allow_dev_mode: false,
-            verify_receipt: true,
-        }
-    }
+    pub proof_mode: ProofMode,
+    pub verify_mode: VerifyMode,
 }
 
 pub fn risc0_dev_mode_enabled() -> bool {
@@ -146,9 +206,9 @@ pub fn verify_tape_receipt(receipt: &Receipt) -> Result<()> {
 
 pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
     let dev_mode_enabled = risc0_dev_mode_enabled();
-    if dev_mode_enabled && !options.allow_dev_mode {
+    if dev_mode_enabled && options.proof_mode != ProofMode::Dev {
         return Err(anyhow!(
-            "RISC0_DEV_MODE is enabled. Refusing to run without allow_dev_mode=true because fake receipts are insecure."
+            "RISC0_DEV_MODE is enabled. Refusing to run without proof_mode=dev because fake receipts are insecure."
         ));
     }
 
@@ -195,7 +255,7 @@ pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
         }
     }
 
-    if options.verify_receipt {
+    if matches!(options.verify_mode, VerifyMode::Verify) {
         verify_tape_receipt(&receipt)?;
     }
 

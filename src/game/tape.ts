@@ -4,11 +4,12 @@
  * Tape layout (little-endian):
  *
  * HEADER (16 bytes):
- *   [0..3]   u32  magic       = 0x5A4B5450 ("ZKTP")
- *   [4]      u8   version     = 1
- *   [5..7]   u8   reserved[3] = 0
- *   [8..11]  u32  seed
- *   [12..15] u32  frameCount
+ *   [0..3]   u32    magic           = 0x5A4B5450 ("ZKTP")
+ *   [4]      u8     version         = 2
+ *   [5]      u8     rules_tag       = 3
+ *   [6..7]   u8[2]  reserved        = 0
+ *   [8..11]  u32    seed
+ *   [12..15] u32    frameCount
  *
  * BODY (frameCount bytes):
  *   [16 .. 16+N-1]  u8[]  One byte per frame
@@ -21,18 +22,20 @@
  * FOOTER (12 bytes):
  *   [16+N .. 16+N+3]   u32  finalScore
  *   [16+N+4 .. 16+N+7] u32  finalRngState
- *   [16+N+8 .. 16+N+11] u32  checksum (CRC-32 of header+body)
+ *   [16+N+8 .. 16+N+11] u32 checksum (CRC-32 of header+body)
  */
 
-export const TAPE_MAGIC = 0x5a4b5450;
-export const TAPE_VERSION = 1;
+import { RULES_TAG } from "./constants";
 
-const HEADER_SIZE = 16;
-const FOOTER_SIZE = 12;
+export const TAPE_MAGIC = 0x5a4b5450;
+export const TAPE_VERSION = 2;
+export const TAPE_HEADER_SIZE = 16;
+export const TAPE_FOOTER_SIZE = 12;
 
 export interface TapeHeader {
   magic: number;
   version: number;
+  rulesTag: number;
   seed: number;
   frameCount: number;
 }
@@ -109,22 +112,23 @@ export function serializeTape(
   finalRngState: number,
 ): Uint8Array {
   const frameCount = inputs.length;
-  const totalSize = HEADER_SIZE + frameCount + FOOTER_SIZE;
+  const totalSize = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
   const data = new Uint8Array(totalSize);
   const view = new DataView(data.buffer);
 
   // Header
   view.setUint32(0, TAPE_MAGIC, true);
   view.setUint8(4, TAPE_VERSION);
-  // reserved bytes 5-7 already 0
+  view.setUint8(5, RULES_TAG);
+  // reserved bytes 6-7 already 0
   view.setUint32(8, seed >>> 0, true);
   view.setUint32(12, frameCount, true);
 
   // Body
-  data.set(inputs, HEADER_SIZE);
+  data.set(inputs, TAPE_HEADER_SIZE);
 
   // Footer
-  const footerOffset = HEADER_SIZE + frameCount;
+  const footerOffset = TAPE_HEADER_SIZE + frameCount;
   view.setUint32(footerOffset, finalScore >>> 0, true);
   view.setUint32(footerOffset + 4, finalRngState >>> 0, true);
 
@@ -135,8 +139,8 @@ export function serializeTape(
   return data;
 }
 
-export function deserializeTape(data: Uint8Array): Tape {
-  if (data.length < HEADER_SIZE + FOOTER_SIZE) {
+export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
+  if (data.length < TAPE_HEADER_SIZE + TAPE_FOOTER_SIZE) {
     throw new Error("Tape too short");
   }
 
@@ -152,24 +156,38 @@ export function deserializeTape(data: Uint8Array): Tape {
     throw new Error(`Unsupported tape version: ${version}`);
   }
 
+  const rulesTag = view.getUint8(5);
+  if (rulesTag !== RULES_TAG) {
+    throw new Error(
+      `Unknown rules tag: ${rulesTag} (expected ${RULES_TAG}). Regenerate the tape with the current AST3 client.`,
+    );
+  }
+  if (view.getUint8(6) !== 0 || view.getUint8(7) !== 0) {
+    throw new Error("Header reserved bytes [6..7] are non-zero");
+  }
+
   const seed = view.getUint32(8, true);
   const frameCount = view.getUint32(12, true);
-
-  if (data.length < HEADER_SIZE + frameCount + FOOTER_SIZE) {
+  if (frameCount === 0 || (maxFrames !== undefined && frameCount > maxFrames)) {
     throw new Error(
-      `Tape truncated: expected ${HEADER_SIZE + frameCount + FOOTER_SIZE} bytes, got ${data.length}`,
+      `Frame count out of range: ${frameCount}${maxFrames !== undefined ? ` (max ${maxFrames})` : ""}`,
     );
   }
 
-  const inputs = data.slice(HEADER_SIZE, HEADER_SIZE + frameCount);
+  const expectedLength = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
+  if (data.length !== expectedLength) {
+    throw new Error(`Tape length mismatch: expected ${expectedLength} bytes, got ${data.length}`);
+  }
 
-  const footerOffset = HEADER_SIZE + frameCount;
+  const inputs = data.subarray(TAPE_HEADER_SIZE, TAPE_HEADER_SIZE + frameCount);
+
+  const footerOffset = TAPE_HEADER_SIZE + frameCount;
   const finalScore = view.getUint32(footerOffset, true);
   const finalRngState = view.getUint32(footerOffset + 4, true);
   const storedChecksum = view.getUint32(footerOffset + 8, true);
 
-  // Verify CRC-32
-  const computed = crc32(data.subarray(0, footerOffset));
+  // Verify CRC-32 and reserved input bits in one pass.
+  const computed = crc32AndValidateInputs(data, TAPE_HEADER_SIZE, footerOffset);
   if (computed >>> 0 !== storedChecksum >>> 0) {
     throw new Error(
       `CRC mismatch: stored=0x${storedChecksum.toString(16)}, computed=0x${(computed >>> 0).toString(16)}`,
@@ -177,7 +195,7 @@ export function deserializeTape(data: Uint8Array): Tape {
   }
 
   return {
-    header: { magic, version, seed, frameCount },
+    header: { magic, version, rulesTag, seed, frameCount },
     inputs,
     footer: { finalScore, finalRngState, checksum: storedChecksum },
   };
@@ -202,6 +220,21 @@ export function crc32(data: Uint8Array): number {
   let crc = 0xffffffff;
   for (let i = 0; i < data.length; i++) {
     crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function crc32AndValidateInputs(data: Uint8Array, inputsStart: number, inputsEnd: number): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < inputsEnd; i++) {
+    const byte = data[i];
+    if (i >= inputsStart && (byte & 0xf0) !== 0) {
+      const frame = i - inputsStart;
+      throw new Error(
+        `Input byte reserved bits set at frame ${frame}: 0x${byte.toString(16).padStart(2, "0")}`,
+      );
+    }
+    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   }
   return (crc ^ 0xffffffff) >>> 0;
 }

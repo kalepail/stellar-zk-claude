@@ -1,0 +1,2 @@
+# AST3 reset: no retained benchmark directories yet.
+# Add benchmark directory names here only after promoting AST3-verified runs.

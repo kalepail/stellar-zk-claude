@@ -77,11 +77,11 @@ SSH into your instance and build (replace the path with your actual `WORKDIR`):
 ```bash
 cd <WORKDIR>/risc0-asteroids-verifier
 
-# Default build (includes CUDA acceleration):
+# CPU-default build (local/dev):
 cargo build --locked --release -p api-server
 
-# CPU-only (for testing without GPU):
-cargo build --locked --release -p api-server --no-default-features
+# CUDA build (Vast/prod GPU):
+cargo build --locked --release -p api-server --features cuda
 ```
 
 The first build will take a while (~15-30 min depending on hardware) because it compiles the RISC Zero zkVM guest ELF. Subsequent builds use incremental compilation and are much faster.
@@ -93,25 +93,28 @@ The release binary is at `target/release/api-server`.
 ```bash
 cd <WORKDIR>/risc0-asteroids-verifier
 
-# Minimal (with API key auth):
+# Minimal CPU run (with API key auth):
 API_KEY='your-strong-random-secret' cargo run --release -p api-server
 
 # Or run the binary directly:
 API_KEY='your-strong-random-secret' ./target/release/api-server
 
-# With full env config:
+# CUDA run (recommended on Vast/prod GPU):
+API_KEY='your-strong-random-secret' cargo run --release -p api-server --features cuda
+
+# With full env config (CUDA):
 API_KEY='your-strong-random-secret' \
 RUST_LOG=info \
 RISC0_DEV_MODE=0 \
 MAX_FRAMES=18000 \
-cargo run --release -p api-server
+cargo run --release -p api-server --features cuda
 ```
 
 Verify it's running and confirm the accelerator:
 
 ```bash
 curl -s http://127.0.0.1:8080/health | jq '.accelerator'
-# Should print "cuda" on GPU instances, "cpu" if built with --no-default-features
+# "cuda" only when built with --features cuda; otherwise "cpu"
 ```
 
 ### 5. Recommended production run (supervisord)
@@ -148,6 +151,28 @@ If you update `/etc/stellar-zk/api-server.env`, apply changes with:
 
 ```bash
 supervisorctl restart risc0-asteroids-api
+```
+
+### 5b. Full prover state reset (flush jobs DB + artifacts)
+
+If the persisted job store is in a bad state (for example after schema drift),
+you can wipe all prover job state and start fresh:
+
+```bash
+cd <WORKDIR>/risc0-asteroids-verifier
+sudo bash deploy/reset-prover-state.sh
+```
+
+This deletes:
+- `/var/lib/stellar-zk/prover/jobs.db*`
+- `/var/lib/stellar-zk/prover/results/*`
+- `/var/lib/stellar-zk/prover/api-server.log`
+- `/var/lib/stellar-zk/prover/api-server.err`
+
+Use `--yes` to skip confirmation:
+
+```bash
+sudo bash deploy/reset-prover-state.sh --yes
 ```
 
 ### 6. Expose via Cloudflare Tunnel
@@ -194,9 +219,11 @@ Use the tunnel URL as `PROVER_BASE_URL` in your Cloudflare Worker config. For mo
 
 ### Authentication
 
-If `API_KEY` is set, all `/api/*` routes require either:
+`API_KEY` is required by default, and all `/api/*` routes require either:
 - `x-api-key: <API_KEY>` header, or
 - `Authorization: Bearer <API_KEY>` header.
+
+If `API_KEY` is not set, auth is disabled and all routes are open.
 
 `/health` is always open.
 
@@ -204,8 +231,8 @@ If `API_KEY` is set, all `/api/*` routes require either:
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=19' \
-  --data-binary @../test-fixtures/test-short.tape \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy' \
+  --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
 
@@ -217,10 +244,15 @@ echo "Job ID: ${JOB_ID}"
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `receipt_kind` | `composite` | `composite`, `succinct`, or `groth16` |
-| `segment_limit_po2` | `19` | Segment size (2^n), range [16..21] |
+| `segment_limit_po2` | `21` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
-| `allow_dev_mode` | `false` | Allow dev-mode proving (disabled by policy) |
-| `verify_receipt` | `false` | Verify the receipt after generation (off by default; verification happens on-chain) |
+| `verify_mode` | `policy` | `policy` (skip prover-side verification) or `verify` |
+
+Zero-score tapes (`final_score == 0`) are rejected with `400` and
+`error_code: "zero_score_not_allowed"`.
+
+`proof_mode` is not a request parameter: the api-server forces proof mode from
+`RISC0_DEV_MODE` at startup (dev receipts only when `RISC0_DEV_MODE=1`).
 
 ### Poll for completion
 
@@ -248,7 +280,7 @@ The server is single-flight: only one proving job runs at a time. New submission
         "final_score": 100,
         "final_rng_state": 67890,
         "tape_checksum": 11111,
-        "rules_digest": 22222
+        "rules_digest": 1095980082
       },
       "receipt": { "..." },
       "requested_receipt_kind": "composite",
@@ -273,9 +305,10 @@ See `api-server/.env.example` for all options. Key variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_BIND_ADDR` | `0.0.0.0:8080` | Listen address |
-| `API_KEY` | _(empty)_ | Shared secret for `/api/*` auth |
+| `API_KEY` | `replace-with-a-strong-random-secret` | Shared secret for `/api/*` auth (required in production) |
 | `RUST_LOG` | `info` | Log level |
 | `RISC0_DEV_MODE` | `0` | Set to `1` for fake proofs (testing only) |
+| `API_KEY_MIN_LENGTH` | `32` | Minimum accepted `API_KEY` length |
 | `MAX_TAPE_BYTES` | `2097152` | Max tape payload size (2 MB) |
 | `MAX_JOBS` | `64` | Max retained jobs in SQLite metadata store |
 | `MAX_FRAMES` | `18000` | Max game frames for replay |
@@ -283,13 +316,12 @@ See `api-server/.env.example` for all options. Key variables:
 | `MAX_SEGMENT_LIMIT_PO2` | `21` | Max allowed segment limit |
 | `JOB_TTL_SECS` | `86400` | Finished job retention (24h) |
 | `JOB_SWEEP_SECS` | `60` | Cleanup interval |
-| `RUNNING_JOB_TIMEOUT_SECS` | `1800` | Timeout for active proofs before marking failed |
-| `TIMED_OUT_PROOF_KILL_SECS` | `120` | Grace window after timeout before forced process abort (`0` disables) |
+| `RUNNING_JOB_TIMEOUT_SECS` | `600` | Timeout for active proofs before marking failed |
+| `TIMED_OUT_PROOF_KILL_SECS` | `60` | Grace window after timeout before forced process abort (`0` disables) |
 | `HTTP_MAX_CONNECTIONS` | `25000` | Max inbound connections |
 | `HTTP_KEEP_ALIVE_SECS` | `75` | Keep-alive timeout |
 | `HTTP_WORKERS` | _(auto)_ | Actix worker thread count |
 | `CORS_ALLOWED_ORIGIN` | _(empty)_ | Optional single allowed browser origin |
-| `ALLOW_DEV_MODE_REQUESTS` | `false` | Allow `allow_dev_mode=true` query param |
 
 ## Connecting the Cloudflare Worker
 
@@ -301,14 +333,13 @@ The Cloudflare Worker (`worker/`) proxies frontend proof requests to this api-se
 | `PROVER_API_KEY` (secret) | Must match the `API_KEY` on the api-server |
 | `PROVER_ACCESS_CLIENT_ID` (secret) | _(optional)_ Cloudflare Access service token ID |
 | `PROVER_ACCESS_CLIENT_SECRET` (secret) | _(optional)_ Cloudflare Access service token secret |
-| `PROVER_RECEIPT_KIND` | `groth16` by default (should match api-server policy) |
-| `PROVER_SEGMENT_LIMIT_PO2` | `21` by default (must be within api-server's [min, max] range) |
-| `PROVER_MAX_FRAMES` | `18000` (must be <= api-server's MAX_FRAMES) |
+| `PROVER_EXPECTED_IMAGE_ID` | _(optional)_ 32-byte hex image ID to pin worker to a specific prover build |
+| `PROVER_HEALTH_CACHE_MS` | Cached prover health TTL in milliseconds (default `30000`) |
 | `PROVER_POLL_INTERVAL_MS` | Poll cadence when prover job is still active |
-| `PROVER_POLL_TIMEOUT_MS` | Absolute poll timeout before transition to retry/failure path |
+| `PROVER_POLL_TIMEOUT_MS` | Poll-loop safety bound (default `660000` / 11 min) |
 | `PROVER_POLL_BUDGET_MS` | Per-alarm poll work budget in the DO |
 | `PROVER_REQUEST_TIMEOUT_MS` | Timeout for each outbound prover request |
-| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime |
+| `MAX_JOB_WALL_TIME_MS` | Worker-side max end-to-end job lifetime (default `660000` / 11 min) |
 | `MAX_COMPLETED_JOBS` | Retention cap for terminal jobs in the coordinator DO |
 | `COMPLETED_JOB_RETENTION_MS` | Time-based retention cutoff for terminal jobs in the coordinator DO |
 | `ALLOW_INSECURE_PROVER_URL` | Keep `0` in production; only allow non-HTTPS for local/dev endpoints |
@@ -321,7 +352,7 @@ echo 'your-strong-random-secret' | npx wrangler secret put PROVER_API_KEY
 echo 'https://xyz.trycloudflare.com' | npx wrangler secret put PROVER_BASE_URL
 ```
 
-The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
+The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header and query params `receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21`, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
 
 ## CLI Prover
 
@@ -331,7 +362,7 @@ For local testing without the HTTP API:
 cd risc0-asteroids-verifier
 
 # Dev mode (fast, fake proof):
-RISC0_DEV_MODE=1 cargo run -p host --release -- --allow-dev-mode --tape ../test-fixtures/test-medium.tape
+RISC0_DEV_MODE=1 cargo run -p host --release -- --proof-mode dev --verify-mode policy --tape ../test-fixtures/test-medium.tape
 
 # Real proof:
 RISC0_DEV_MODE=0 cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape
@@ -343,8 +374,52 @@ cargo run -p host --release -- --tape ../test-fixtures/test-medium.tape --journa
 cargo run -p host --release --bin benchmark -- --tape ../test-fixtures/test-medium.tape
 ```
 
+## Core Cycle Regression Gate
+
+For deterministic guest-cost tracking (CPU mode, no CUDA/proving), run:
+
+```bash
+bash scripts/bench-core-cycles.sh --threshold-mode check
+```
+
+Optional hotspot capture (writes `.pprof` + `go tool pprof -top` report):
+
+```bash
+bash scripts/bench-core-cycles.sh --pprof-case medium --threshold-mode check
+```
+
+Threshold file:
+- `risc0-asteroids-verifier/benchmarks/core-cycle-thresholds.env`
+
 ## Tests
 
 ```bash
 cargo test -p asteroids-verifier-core
 ```
+
+## Segment Sweep Benchmark (Remote Prover)
+
+Use this when tuning `segment_limit_po2` on your x86/CUDA prover host:
+
+```bash
+bash scripts/bench-segment-sweep.sh https://your-prover.example.com \
+  --seg-floor 19 \
+  --seg-ceiling 22 \
+  --receipts composite,succinct \
+  --repeat 2 \
+  --verify-mode policy \
+  --tapes all
+```
+
+Key knobs:
+- `--seg-floor` / `--seg-ceiling`: requested sweep bounds.
+- `--bounds-mode`: `clamp` (default) or `strict` against `/health` policy bounds.
+- `--receipts`: CSV list of `composite`, `succinct`, and/or `groth16`.
+- `--tapes`: CSV list of `short`, `medium`, `real`, or `all`.
+- `--verify-mode`: `policy` (skip prover-side verification) or `verify` (force prover-side verification).
+- `--max-frames`: optional override for stress scenarios.
+- `--repeat`: run each configuration multiple times for stability.
+- Zero-score tapes are skipped automatically (prover policy rejects `final_score=0`).
+
+Output:
+- CSV is written to `batch-results/segment-sweep-<timestamp>.csv` by default.

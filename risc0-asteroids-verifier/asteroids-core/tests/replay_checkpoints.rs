@@ -1,791 +1,98 @@
-use std::fs;
-
+use asteroids_verifier_core::rng::SeededRng;
+use asteroids_verifier_core::sim::replay;
 use asteroids_verifier_core::sim::{replay_with_checkpoints, ReplayCheckpoint};
-use asteroids_verifier_core::tape::parse_tape;
+use asteroids_verifier_core::tape::{parse_tape, serialize_tape};
 
-#[derive(Clone, Copy, Debug)]
-struct ExpectedCheckpoint {
-    frame: u32,
-    rng: u32,
-    score: u32,
-    lives: i32,
-    wave: i32,
-    asteroids: usize,
-    bullets: usize,
-    saucers: usize,
-    saucer_bullets: usize,
-    ship_x: i32,
-    ship_y: i32,
-    ship_vx: i32,
-    ship_vy: i32,
-    ship_angle: i32,
-    ship_can_control: bool,
-    ship_fire_cooldown: i32,
-    ship_respawn_timer: i32,
-    ship_invulnerable_timer: i32,
+fn mix_u64(hash: u64, value: u64) -> u64 {
+    // FNV-1a style mix for stable fixture fingerprinting.
+    hash.wrapping_mul(0x0000_0100_0000_01B3) ^ value
 }
 
-fn load(path: &str) -> Vec<u8> {
-    let full = format!("../../{path}");
-    fs::read(&full).unwrap_or_else(|err| panic!("failed reading {full}: {err}"))
-}
+fn checkpoint_fingerprint(checkpoints: &[ReplayCheckpoint]) -> u64 {
+    let mut hash = 0xCBF2_9CE4_8422_2325u64;
 
-fn assert_checkpoint(actual: &ReplayCheckpoint, expected: &ExpectedCheckpoint) {
-    assert_eq!(actual.frame_count, expected.frame, "frame");
-    assert_eq!(
-        actual.rng_state, expected.rng,
-        "rng at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.score, expected.score,
-        "score at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.lives, expected.lives,
-        "lives at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.wave, expected.wave,
-        "wave at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.asteroids, expected.asteroids,
-        "asteroid count at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.bullets, expected.bullets,
-        "bullet count at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.saucers, expected.saucers,
-        "saucer count at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.saucer_bullets, expected.saucer_bullets,
-        "saucer bullet count at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_x, expected.ship_x,
-        "ship x at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_y, expected.ship_y,
-        "ship y at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_vx, expected.ship_vx,
-        "ship vx at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_vy, expected.ship_vy,
-        "ship vy at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_angle, expected.ship_angle,
-        "ship angle at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_can_control, expected.ship_can_control,
-        "ship can_control at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_fire_cooldown, expected.ship_fire_cooldown,
-        "ship fire_cooldown at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_respawn_timer, expected.ship_respawn_timer,
-        "ship respawn_timer at frame {}",
-        expected.frame
-    );
-    assert_eq!(
-        actual.ship_invulnerable_timer, expected.ship_invulnerable_timer,
-        "ship invulnerable_timer at frame {}",
-        expected.frame
-    );
-}
-
-fn assert_fixture(path: &str, stride: u32, expected: &[ExpectedCheckpoint]) {
-    let bytes = load(path);
-    let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
-    let actual = replay_with_checkpoints(tape.header.seed, tape.inputs, stride);
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "checkpoint count mismatch for {path}"
-    );
-
-    for (actual_checkpoint, expected_checkpoint) in actual.iter().zip(expected.iter()) {
-        assert_checkpoint(actual_checkpoint, expected_checkpoint);
+    for checkpoint in checkpoints {
+        hash = mix_u64(hash, checkpoint.frame_count as u64);
+        hash = mix_u64(hash, checkpoint.rng_state as u64);
+        hash = mix_u64(hash, checkpoint.score as u64);
+        hash = mix_u64(hash, checkpoint.lives as i64 as u64);
+        hash = mix_u64(hash, checkpoint.wave as i64 as u64);
+        hash = mix_u64(hash, checkpoint.asteroids as u64);
+        hash = mix_u64(hash, checkpoint.bullets as u64);
+        hash = mix_u64(hash, checkpoint.saucers as u64);
+        hash = mix_u64(hash, checkpoint.saucer_bullets as u64);
+        hash = mix_u64(hash, checkpoint.ship_x as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_y as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_vx as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_vy as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_angle as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_can_control as u64);
+        hash = mix_u64(hash, checkpoint.ship_fire_cooldown as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_respawn_timer as i64 as u64);
+        hash = mix_u64(hash, checkpoint.ship_invulnerable_timer as i64 as u64);
     }
-}
 
-const SHORT_EXPECTED: &[ExpectedCheckpoint] = &[
-    ExpectedCheckpoint {
-        frame: 0,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5760,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 192,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 120,
-    },
-    ExpectedCheckpoint {
-        frame: 50,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5760,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 189,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 70,
-    },
-    ExpectedCheckpoint {
-        frame: 100,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5726,
-        ship_vx: 0,
-        ship_vy: -72,
-        ship_angle: 192,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 20,
-    },
-    ExpectedCheckpoint {
-        frame: 150,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5557,
-        ship_vx: 0,
-        ship_vy: -22,
-        ship_angle: 198,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 200,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 177,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 250,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 186,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 300,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 198,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 350,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 207,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 400,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 216,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 450,
-        rng: 0x5273B9EC,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 222,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 500,
-        rng: 0xCF8B815B,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 7909,
-        ship_y: 5396,
-        ship_vx: 282,
-        ship_vy: -151,
-        ship_angle: 219,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-];
-
-const MEDIUM_EXPECTED: &[ExpectedCheckpoint] = &[
-    ExpectedCheckpoint {
-        frame: 0,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5760,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 192,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 120,
-    },
-    ExpectedCheckpoint {
-        frame: 200,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 177,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 400,
-        rng: 0xF7FA5F49,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 0,
-        saucer_bullets: 0,
-        ship_x: 7680,
-        ship_y: 5531,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 216,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 600,
-        rng: 0x750120CE,
-        score: 0,
-        lives: 3,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 10450,
-        ship_y: 4613,
-        ship_vx: 325,
-        ship_vy: 66,
-        ship_angle: 104,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 800,
-        rng: 0x67142824,
-        score: 20,
-        lives: 3,
-        wave: 1,
-        asteroids: 5,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 1020,
-        ship_y: 4875,
-        ship_vx: 331,
-        ship_vy: 0,
-        ship_angle: 162,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 1000,
-        rng: 0x542B1F4F,
-        score: 20,
-        lives: 3,
-        wave: 1,
-        asteroids: 6,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 4382,
-        ship_y: 2541,
-        ship_vx: 366,
-        ship_vy: -438,
-        ship_angle: 207,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 1200,
-        rng: 0x66FF9601,
-        score: 20,
-        lives: 3,
-        wave: 1,
-        asteroids: 8,
-        bullets: 1,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 5474,
-        ship_y: 8090,
-        ship_vx: 0,
-        ship_vy: -309,
-        ship_angle: 123,
-        ship_can_control: true,
-        ship_fire_cooldown: 6,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 1400,
-        rng: 0xAF19AAA0,
-        score: 40,
-        lives: 2,
-        wave: 1,
-        asteroids: 10,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 6572,
-        ship_y: 3673,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 240,
-        ship_can_control: false,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 1600,
-        rng: 0x6D37D43C,
-        score: 40,
-        lives: 2,
-        wave: 1,
-        asteroids: 9,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 8676,
-        ship_y: 8307,
-        ship_vx: 251,
-        ship_vy: 774,
-        ship_angle: 71,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 1800,
-        rng: 0x777011C4,
-        score: 40,
-        lives: 2,
-        wave: 1,
-        asteroids: 10,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 4111,
-        ship_y: 9280,
-        ship_vx: -494,
-        ship_vy: -521,
-        ship_angle: 239,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 2000,
-        rng: 0x97271607,
-        score: 140,
-        lives: 2,
-        wave: 1,
-        asteroids: 8,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 8920,
-        ship_y: 4476,
-        ship_vx: 226,
-        ship_vy: -202,
-        ship_angle: 104,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 2200,
-        rng: 0xFFCE0925,
-        score: 1290,
-        lives: 2,
-        wave: 1,
-        asteroids: 6,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 0,
-        ship_x: 15043,
-        ship_y: 5250,
-        ship_vx: -23,
-        ship_vy: 80,
-        ship_angle: 78,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 2400,
-        rng: 0xB3F0B513,
-        score: 1290,
-        lives: 2,
-        wave: 1,
-        asteroids: 6,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 13033,
-        ship_y: 7930,
-        ship_vx: -185,
-        ship_vy: 266,
-        ship_angle: 232,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 2600,
-        rng: 0x02FBFA24,
-        score: 1490,
-        lives: 2,
-        wave: 1,
-        asteroids: 3,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 0,
-        ship_x: 10557,
-        ship_y: 9692,
-        ship_vx: -82,
-        ship_vy: 139,
-        ship_angle: 145,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 2800,
-        rng: 0x5CC811E9,
-        score: 1490,
-        lives: 2,
-        wave: 1,
-        asteroids: 3,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 10311,
-        ship_y: 11103,
-        ship_vx: 0,
-        ship_vy: 127,
-        ship_angle: 232,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 3000,
-        rng: 0xAF5C8BB6,
-        score: 1690,
-        lives: 1,
-        wave: 1,
-        asteroids: 3,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 12244,
-        ship_y: 11000,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 81,
-        ship_can_control: false,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 13,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 3200,
-        rng: 0x6AE0BCB9,
-        score: 1690,
-        lives: 1,
-        wave: 1,
-        asteroids: 3,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 7671,
-        ship_y: 5760,
-        ship_vx: -56,
-        ship_vy: 14,
-        ship_angle: 114,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 74,
-    },
-    ExpectedCheckpoint {
-        frame: 3400,
-        rng: 0x0F6336CE,
-        score: 1890,
-        lives: 1,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 3,
-        ship_x: 8314,
-        ship_y: 5886,
-        ship_vx: 585,
-        ship_vy: -460,
-        ship_angle: 211,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 3600,
-        rng: 0xF8CEA9DB,
-        score: 1940,
-        lives: 1,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 13970,
-        ship_y: 4981,
-        ship_vx: 281,
-        ship_vy: 458,
-        ship_angle: 90,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 3800,
-        rng: 0xC379F5FB,
-        score: 1940,
-        lives: 1,
-        wave: 1,
-        asteroids: 4,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 2,
-        ship_x: 113,
-        ship_y: 10134,
-        ship_vx: 224,
-        ship_vy: 160,
-        ship_angle: 175,
-        ship_can_control: true,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 0,
-        ship_invulnerable_timer: 0,
-    },
-    ExpectedCheckpoint {
-        frame: 3980,
-        rng: 0x213DD5CC,
-        score: 2040,
-        lives: 0,
-        wave: 1,
-        asteroids: 3,
-        bullets: 0,
-        saucers: 1,
-        saucer_bullets: 1,
-        ship_x: 13707,
-        ship_y: 3211,
-        ship_vx: 0,
-        ship_vy: 0,
-        ship_angle: 127,
-        ship_can_control: false,
-        ship_fire_cooldown: 0,
-        ship_respawn_timer: 99999,
-        ship_invulnerable_timer: 0,
-    },
-];
-
-#[test]
-fn short_fixture_matches_typescript_checkpoints() {
-    assert_fixture("test-fixtures/test-short.tape", 50, SHORT_EXPECTED);
+    hash
 }
 
 #[test]
-fn medium_fixture_matches_typescript_checkpoints() {
-    assert_fixture("test-fixtures/test-medium.tape", 200, MEDIUM_EXPECTED);
+fn short_fixture_checkpoint_fingerprint_stable() {
+    let seed = 0xDEAD_BEEF;
+    let mut rng = SeededRng::new(0xA0A0_0001);
+    let mut inputs = vec![0u8; 700];
+    for input in &mut inputs {
+        *input = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let bytes = serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
+    let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
+    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 50);
+
+    assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
+    assert_eq!(
+        checkpoints.last().expect("checkpoint").frame_count,
+        tape.header.frame_count
+    );
+
+    // Golden fingerprint for generated AST3 tape.
+    assert_eq!(
+        checkpoint_fingerprint(&checkpoints),
+        13_845_899_089_436_327_554
+    );
+}
+
+#[test]
+fn medium_fixture_checkpoint_fingerprint_stable() {
+    let seed = 0xDEAD_BEEF;
+    let mut rng = SeededRng::new(0xA0A0_0002);
+    let mut inputs = vec![0u8; 4_500];
+    for input in &mut inputs {
+        *input = (rng.next() & 0x0F) as u8;
+    }
+    let replay_result = replay(seed, &inputs);
+    let bytes = serialize_tape(
+        seed,
+        &inputs,
+        replay_result.final_score,
+        replay_result.final_rng_state,
+    );
+    let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
+    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 200);
+
+    assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
+    assert_eq!(
+        checkpoints.last().expect("checkpoint").frame_count,
+        tape.header.frame_count
+    );
+
+    // Golden fingerprint for generated AST3 tape.
+    assert_eq!(
+        checkpoint_fingerprint(&checkpoints),
+        10_200_522_372_937_520_498
+    );
 }

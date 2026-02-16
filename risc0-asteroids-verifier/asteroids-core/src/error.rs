@@ -18,6 +18,7 @@ pub enum RuleCode {
     PlayerBulletCooldownBypass,
     PlayerBulletLimit,
     PlayerBulletState,
+    SaucerBulletLimit,
     SaucerBulletState,
     AsteroidState,
     SaucerState,
@@ -43,6 +44,7 @@ impl fmt::Display for RuleCode {
             Self::PlayerBulletCooldownBypass => write!(f, "PLAYER_BULLET_COOLDOWN_BYPASS"),
             Self::PlayerBulletLimit => write!(f, "PLAYER_BULLET_LIMIT"),
             Self::PlayerBulletState => write!(f, "PLAYER_BULLET_STATE"),
+            Self::SaucerBulletLimit => write!(f, "SAUCER_BULLET_LIMIT"),
             Self::SaucerBulletState => write!(f, "SAUCER_BULLET_STATE"),
             Self::AsteroidState => write!(f, "ASTEROID_STATE"),
             Self::SaucerState => write!(f, "SAUCER_STATE"),
@@ -56,6 +58,7 @@ pub enum VerifyError {
     TapeTooShort { actual: usize, min: usize },
     InvalidMagic { found: u32 },
     UnsupportedVersion { found: u8 },
+    UnknownRulesTag { found: u8 },
     HeaderReservedNonZero,
     FrameCountOutOfRange { frame_count: u32, max_frames: u32 },
     TapeLengthMismatch { expected: usize, actual: usize },
@@ -75,6 +78,7 @@ impl fmt::Display for VerifyError {
             }
             Self::InvalidMagic { found } => write!(f, "invalid tape magic: 0x{found:08x}"),
             Self::UnsupportedVersion { found } => write!(f, "unsupported tape version: {found}"),
+            Self::UnknownRulesTag { found } => write!(f, "unknown rules tag: {found}"),
             Self::HeaderReservedNonZero => write!(f, "header reserved bytes are non-zero"),
             Self::FrameCountOutOfRange {
                 frame_count,
@@ -179,6 +183,10 @@ mod tests {
             "PLAYER_BULLET_STATE"
         );
         assert_eq!(
+            RuleCode::SaucerBulletLimit.to_string(),
+            "SAUCER_BULLET_LIMIT"
+        );
+        assert_eq!(
             RuleCode::SaucerBulletState.to_string(),
             "SAUCER_BULLET_STATE"
         );
@@ -198,6 +206,9 @@ mod tests {
         assert!(VerifyError::UnsupportedVersion { found: 9 }
             .to_string()
             .contains("unsupported tape version"));
+        assert!(VerifyError::UnknownRulesTag { found: 99 }
+            .to_string()
+            .contains("unknown rules tag"));
         assert_eq!(
             VerifyError::HeaderReservedNonZero.to_string(),
             "header reserved bytes are non-zero"

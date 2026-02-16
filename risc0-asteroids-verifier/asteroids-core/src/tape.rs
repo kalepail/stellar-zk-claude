@@ -1,13 +1,14 @@
 use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION};
+use crate::constants::{RULES_TAG, TAPE_FOOTER_SIZE, TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION};
 use crate::error::VerifyError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapeHeader {
     pub magic: u32,
     pub version: u8,
+    pub rules_tag: u8,
     pub seed: u32,
     pub frame_count: u32,
 }
@@ -19,7 +20,7 @@ pub struct TapeFooter {
     pub checksum: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TapeView<'a> {
     pub header: TapeHeader,
     pub inputs: &'a [u8],
@@ -71,7 +72,11 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
         return Err(VerifyError::UnsupportedVersion { found: version });
     }
 
-    if bytes[5] != 0 || bytes[6] != 0 || bytes[7] != 0 {
+    let rules_tag = bytes[5];
+    if rules_tag != RULES_TAG {
+        return Err(VerifyError::UnknownRulesTag { found: rules_tag });
+    }
+    if bytes[6] != 0 || bytes[7] != 0 {
         return Err(VerifyError::HeaderReservedNonZero);
     }
 
@@ -97,20 +102,11 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
     let inputs_end = inputs_start + frame_count as usize;
     let inputs = &bytes[inputs_start..inputs_end];
 
-    for (frame, byte) in inputs.iter().enumerate() {
-        if (byte & 0xF0) != 0 {
-            return Err(VerifyError::ReservedInputBitsNonZero {
-                frame: frame as u32,
-                byte: *byte,
-            });
-        }
-    }
-
     let final_score = read_u32_le(bytes, inputs_end);
     let final_rng_state = read_u32_le(bytes, inputs_end + 4);
     let checksum = read_u32_le(bytes, inputs_end + 8);
 
-    let computed = crc32(&bytes[..inputs_end]);
+    let computed = crc32_and_validate_inputs(bytes, inputs_start, inputs_end)?;
     if checksum != computed {
         return Err(VerifyError::CrcMismatch {
             stored: checksum,
@@ -122,6 +118,7 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
         header: TapeHeader {
             magic,
             version,
+            rules_tag,
             seed,
             frame_count,
         },
@@ -140,7 +137,7 @@ pub fn serialize_tape(seed: u32, inputs: &[u8], final_score: u32, final_rng_stat
 
     write_u32_le(&mut data, 0, TAPE_MAGIC);
     data[4] = TAPE_VERSION;
-    data[5] = 0;
+    data[5] = RULES_TAG;
     data[6] = 0;
     data[7] = 0;
     write_u32_le(&mut data, 8, seed);
@@ -211,6 +208,31 @@ pub fn crc32(data: &[u8]) -> u32 {
     crc ^ 0xFFFF_FFFFu32
 }
 
+fn crc32_and_validate_inputs(
+    bytes: &[u8],
+    inputs_start: usize,
+    inputs_end: usize,
+) -> Result<u32, VerifyError> {
+    let mut crc = 0xFFFF_FFFFu32;
+    let mut i = 0usize;
+
+    while i < inputs_end {
+        let byte = bytes[i];
+        if i >= inputs_start && (byte & 0xF0) != 0 {
+            return Err(VerifyError::ReservedInputBitsNonZero {
+                frame: (i - inputs_start) as u32,
+                byte,
+            });
+        }
+
+        let idx = ((crc ^ byte as u32) & 0xFF) as usize;
+        crc = CRC_TABLE[idx] ^ (crc >> 8);
+        i += 1;
+    }
+
+    Ok(crc ^ 0xFFFF_FFFFu32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,9 +296,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_rules_tag() {
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        bytes[5] = 255;
+        assert!(matches!(
+            parse_tape(&bytes, 100),
+            Err(VerifyError::UnknownRulesTag { found: 255 })
+        ));
+    }
+
+    #[test]
     fn rejects_nonzero_header_reserved_bytes() {
         let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
-        bytes[5] = 1;
+        bytes[6] = 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
             Err(VerifyError::HeaderReservedNonZero)

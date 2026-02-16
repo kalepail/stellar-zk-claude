@@ -13,48 +13,117 @@ set -uo pipefail
 #   5. Single-flight enforcement – 429 when prover is busy
 #
 # Usage:
-#   bash scripts/stress-test-api.sh <prover-url> [options]
+#   bash scripts/stress-test-api.sh [prover-url] [options]
 #
 # Options:
-#   --delay <minutes>   How long to wait before delayed retrieval (default: 5)
-#   --tape <path>       Tape file for real proving (default: test-fixtures/test-medium.tape)
-#   --short-tape <path> Short tape for fast error tests (default: test-fixtures/test-short.tape)
+#   --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
+#   --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
+#   --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+#   --long-phase <mode>     auto|on|off (default: auto)
+#   -h, --help              Show this help
 #
 # Examples:
-#   bash scripts/stress-test-api.sh https://risc0-kalien.stellar.buzz
-#   bash scripts/stress-test-api.sh https://risc0-kalien.stellar.buzz --delay 10
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080 --delay-minutes 10
+#   bash scripts/stress-test-api.sh http://127.0.0.1:8080 --fixtures-dir ./test-fixtures --long-phase off
+#   bash scripts/stress-test-api.sh https://<vast-host>:<port> --delay-minutes 10
 # ============================================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TAPE_FILE="$ROOT_DIR/test-fixtures/test-medium.tape"
-SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
-LONG_TAPE="$ROOT_DIR/test-fixtures/test-real-game.tape"
+FIXTURES_DIR="$ROOT_DIR/test-fixtures"
+TAPE_FILE=""
+SHORT_TAPE=""
+LONG_TAPE=""
 POLL_INTERVAL=5
 DELAY_MINUTES=5
+SEGMENT_LIMIT_PO2=20
+LONG_PHASE_MODE="auto" # auto|on|off
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <prover-url> [--delay <minutes>] [--tape <path>] [--short-tape <path>]" >&2
-  exit 1
+set_fixture_paths() {
+  TAPE_FILE="$FIXTURES_DIR/test-medium.tape"
+  SHORT_TAPE="$FIXTURES_DIR/test-short.tape"
+  LONG_TAPE="$FIXTURES_DIR/test-real-game.tape"
+}
+
+usage() {
+  cat <<'USAGE_EOF'
+Usage: scripts/stress-test-api.sh [prover-url] [options]
+
+Options:
+  --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
+  --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
+  --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+  --long-phase <mode>     auto|on|off (default: auto)
+  -h, --help              Show this help
+
+Examples:
+  bash scripts/stress-test-api.sh
+  bash scripts/stress-test-api.sh http://127.0.0.1:8080
+  bash scripts/stress-test-api.sh https://<vast-host>:<port> --delay-minutes 10
+USAGE_EOF
+}
+
+set_fixture_paths
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
 fi
 
-PROVER_URL="${1%/}"
-shift
+PROVER_URL="http://127.0.0.1:8080"
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  PROVER_URL="${1%/}"
+  shift
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --delay) DELAY_MINUTES="$2"; shift 2 ;;
-    --tape) TAPE_FILE="$2"; shift 2 ;;
-    --short-tape) SHORT_TAPE="$2"; shift 2 ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
+    --delay-minutes) DELAY_MINUTES="${2:-}"; shift 2 ;;
+    --fixtures-dir)
+      FIXTURES_DIR="${2:-}"
+      set_fixture_paths
+      shift 2
+      ;;
+    --segment-limit-po2) SEGMENT_LIMIT_PO2="${2:-}"; shift 2 ;;
+    --long-phase) LONG_PHASE_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
   esac
 done
 
+if ! [[ "$DELAY_MINUTES" =~ ^[0-9]+$ ]] || [[ "$DELAY_MINUTES" -lt 1 ]]; then
+  echo "ERROR: --delay-minutes must be an integer >= 1" >&2
+  exit 1
+fi
+if ! [[ "$SEGMENT_LIMIT_PO2" =~ ^[0-9]+$ ]] || [[ "$SEGMENT_LIMIT_PO2" -lt 1 ]]; then
+  echo "ERROR: --segment-limit-po2 must be an integer >= 1" >&2
+  exit 1
+fi
+if [[ "$LONG_PHASE_MODE" != "auto" && "$LONG_PHASE_MODE" != "on" && "$LONG_PHASE_MODE" != "off" ]]; then
+  echo "ERROR: --long-phase must be auto, on, or off" >&2
+  exit 1
+fi
+if [[ ! -d "$FIXTURES_DIR" ]]; then
+  echo "ERROR: fixtures directory not found: $FIXTURES_DIR" >&2
+  exit 1
+fi
 if [[ ! -f "$TAPE_FILE" ]]; then
-  echo "ERROR: tape file not found: $TAPE_FILE" >&2
+  echo "ERROR: medium tape file not found: $TAPE_FILE" >&2
   exit 1
 fi
 if [[ ! -f "$SHORT_TAPE" ]]; then
   echo "ERROR: short tape file not found: $SHORT_TAPE" >&2
+  exit 1
+fi
+if [[ "$LONG_PHASE_MODE" == "on" && ! -f "$LONG_TAPE" ]]; then
+  echo "ERROR: --long-phase on requires long tape at: $LONG_TAPE" >&2
   exit 1
 fi
 
@@ -68,6 +137,13 @@ FAIL=0
 WARN=0
 TESTS_RUN=0
 JOBS_TO_CLEAN=()
+declare -a ACCUMULATED_IDS=()
+GARBAGE_REJECTED_AT_SUBMIT=0
+LAST_GARBAGE_ID=""
+LAST_GARBAGE_HTTP=""
+LAST_GARBAGE_ERROR_CODE=""
+LONG_JOB_ID=""
+LONG_JOB_PERSISTED=0
 
 pass() { PASS=$((PASS + 1)); TESTS_RUN=$((TESTS_RUN + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); TESTS_RUN=$((TESTS_RUN + 1)); echo "  FAIL: $1"; }
@@ -95,20 +171,36 @@ submit_garbage_and_wait() {
   gfile=$(mktemp)
   dd if=/dev/urandom of="$gfile" bs=128 count=1 2>/dev/null
 
+  local query
+  query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy"
   local resp_raw http_code body
-  resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20" \
+  resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@$gfile" -H "content-type: application/octet-stream")
   http_code=$(echo "$resp_raw" | tail -1)
   body=$(echo "$resp_raw" | sed '$d')
   rm -f "$gfile"
 
+  LAST_GARBAGE_ID=""
+  LAST_GARBAGE_HTTP="$http_code"
+  LAST_GARBAGE_ERROR_CODE="$(echo "$body" | json_field error_code)"
+
+  # Current API behavior rejects malformed tapes before enqueue.
+  if [[ "$http_code" == "400" && "$LAST_GARBAGE_ERROR_CODE" == "invalid_tape" ]]; then
+    GARBAGE_REJECTED_AT_SUBMIT=$((GARBAGE_REJECTED_AT_SUBMIT + 1))
+    info "$label: rejected at submit with invalid_tape"
+    return 0
+  fi
+
   if [[ "$http_code" != "202" ]]; then
     info "$label: rejected with $http_code (expected 202)"
-    LAST_GARBAGE_ID=""
     return 1
   fi
 
   LAST_GARBAGE_ID=$(echo "$body" | json_field job_id)
+  if [[ -z "$LAST_GARBAGE_ID" ]]; then
+    info "$label: accepted but missing job_id"
+    return 1
+  fi
   JOBS_TO_CLEAN+=("$LAST_GARBAGE_ID")
 
   # Wait for failure
@@ -148,11 +240,18 @@ echo "$(date)"
 echo "================================================================"
 echo ""
 echo "Target:      $PROVER_URL"
+echo "Fixtures:    $FIXTURES_DIR"
 echo "Tape:        $(basename "$TAPE_FILE") ($(wc -c < "$TAPE_FILE" | tr -d ' ') bytes)"
 echo "Short tape:  $(basename "$SHORT_TAPE") ($(wc -c < "$SHORT_TAPE" | tr -d ' ') bytes)"
-if [[ -f "$LONG_TAPE" ]]; then
+if [[ "$LONG_PHASE_MODE" == "off" ]]; then
+echo "Long tape:   (disabled by --long-phase off)"
+elif [[ -f "$LONG_TAPE" ]]; then
 echo "Long tape:   $(basename "$LONG_TAPE") ($(wc -c < "$LONG_TAPE" | tr -d ' ') bytes)"
+else
+echo "Long tape:   missing at $LONG_TAPE"
 fi
+echo "Long phase:  $LONG_PHASE_MODE"
+echo "Seg po2:     $SEGMENT_LIMIT_PO2"
 echo "Delay test:  ${DELAY_MINUTES} minutes"
 echo ""
 
@@ -223,7 +322,8 @@ info "response: $body"
 # Test 2b: Submit empty body → 400
 echo ""
 echo "[2b] POST empty body"
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw" \
+empty_query=""
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${empty_query}" \
   -H "content-type: application/octet-stream" -d '')
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -267,6 +367,10 @@ if [[ -n "$GARBAGE_JOB_1" ]]; then
   else
     fail "finished_at_unix_s is missing on failed job"
   fi
+elif [[ "$LAST_GARBAGE_HTTP" == "400" && "$LAST_GARBAGE_ERROR_CODE" == "invalid_tape" ]]; then
+  pass "garbage tape rejected pre-enqueue with invalid_tape"
+else
+  fail "garbage tape handling unexpected (HTTP ${LAST_GARBAGE_HTTP:-unknown}, error_code=${LAST_GARBAGE_ERROR_CODE:-none})"
 fi
 
 # Test 2d: Invalid job ID format → 404 or 400
@@ -296,7 +400,8 @@ fi
 # Test 2f: Out-of-range segment_limit_po2 → 400
 echo ""
 echo "[2f] POST with out-of-range segment_limit_po2"
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=99" \
+bad_segment_query="segment_limit_po2=99&verify_mode=policy"
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${bad_segment_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
@@ -329,11 +434,17 @@ echo ""
 # Check stored_jobs count increased
 health_resp=$(curl -sf "$PROVER_URL/health" 2>/dev/null)
 stored_now=$(echo "$health_resp" | json_field stored_jobs)
-# We have: initial + garbage_1 + 5 accumulated = initial + 6
-expected_min=$((INITIAL_STORED + 6))
+accumulated_count=${#ACCUMULATED_IDS[@]}
+persisted_garbage_jobs="$accumulated_count"
+if [[ -n "${GARBAGE_JOB_1:-}" ]]; then
+  persisted_garbage_jobs=$((persisted_garbage_jobs + 1))
+fi
+expected_min=$((INITIAL_STORED + persisted_garbage_jobs))
 info "stored_jobs now: $stored_now (started at $INITIAL_STORED, expect >= $expected_min)"
 
-if [[ "$stored_now" -ge "$expected_min" ]]; then
+if [[ "$persisted_garbage_jobs" -eq 0 ]]; then
+  pass "garbage tapes rejected at submit (invalid_tape); no failed jobs persisted by design"
+elif [[ "$stored_now" -ge "$expected_min" ]]; then
   pass "stored_jobs reflects accumulated failed jobs ($stored_now >= $expected_min)"
 else
   fail "stored_jobs too low: $stored_now (expected >= $expected_min)"
@@ -342,20 +453,24 @@ fi
 # Verify all accumulated jobs are still individually retrievable
 echo ""
 echo "[3b] Verify all accumulated jobs are retrievable"
-all_retrievable=true
-for jid in "${ACCUMULATED_IDS[@]}"; do
-  jr=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null) || { all_retrievable=false; break; }
-  s=$(echo "$jr" | json_field status)
-  if [[ "$s" != "failed" ]]; then
-    all_retrievable=false
-    break
-  fi
-done
-
-if [[ "$all_retrievable" == "true" ]]; then
-  pass "all ${#ACCUMULATED_IDS[@]} accumulated failed jobs retrievable with correct status"
+if [[ "$accumulated_count" -eq 0 ]]; then
+  pass "no accumulated failed jobs to retrieve (all invalid tapes rejected pre-enqueue)"
 else
-  fail "some accumulated jobs not retrievable or wrong status"
+  all_retrievable=true
+  for jid in "${ACCUMULATED_IDS[@]}"; do
+    jr=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null) || { all_retrievable=false; break; }
+    s=$(echo "$jr" | json_field status)
+    if [[ "$s" != "failed" ]]; then
+      all_retrievable=false
+      break
+    fi
+  done
+
+  if [[ "$all_retrievable" == "true" ]]; then
+    pass "all ${#ACCUMULATED_IDS[@]} accumulated failed jobs retrievable with correct status"
+  else
+    fail "some accumulated jobs not retrievable or wrong status"
+  fi
 fi
 
 echo ""
@@ -371,7 +486,8 @@ echo "[4a] Submit medium tape for proving"
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 info "tape: $(basename "$TAPE_FILE") ($tape_size bytes)"
 
-resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20&receipt_kind=composite" \
+submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${submit_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream" 2>&1)
 
 if [[ $? -ne 0 ]]; then
@@ -409,8 +525,9 @@ for attempt in $(seq 1 10); do
 done
 
 # Now try to submit a second job while the prover is busy
-resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20" \
-  --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
+busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${busy_query}" \
+  --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
 body=$(echo "$resp_raw" | sed '$d')
 
@@ -528,7 +645,14 @@ echo ""
 
 echo "── Phase 5: Running Status Observation (long tape) ────────────"
 
-if [[ -f "$LONG_TAPE" ]]; then
+RUN_LONG_PHASE=0
+if [[ "$LONG_PHASE_MODE" == "on" ]]; then
+  RUN_LONG_PHASE=1
+elif [[ "$LONG_PHASE_MODE" == "auto" && -f "$LONG_TAPE" ]]; then
+  RUN_LONG_PHASE=1
+fi
+
+if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
   wait_for_idle
 
   echo ""
@@ -536,14 +660,18 @@ if [[ -f "$LONG_TAPE" ]]; then
   long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
   info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
 
-  resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?segment_limit_po2=20&receipt_kind=composite" \
+  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+  resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${long_query}" \
     --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
 
   if [[ $? -ne 0 ]]; then
     fail "failed to submit long tape"
   else
     LONG_JOB_ID=$(echo "$resp" | json_field job_id)
-    JOBS_TO_CLEAN+=("$LONG_JOB_ID")
+    if [[ -n "$LONG_JOB_ID" ]]; then
+      JOBS_TO_CLEAN+=("$LONG_JOB_ID")
+      LONG_JOB_PERSISTED=1
+    fi
 
     if [[ -n "$LONG_JOB_ID" ]]; then
       pass "long tape submitted, job_id=$LONG_JOB_ID"
@@ -607,8 +735,12 @@ if [[ -f "$LONG_TAPE" ]]; then
     fi
   fi
 else
-  info "long tape not found at $LONG_TAPE — skipping running-status test"
-  warn "skipped running-status observation (no long tape)"
+  if [[ "$LONG_PHASE_MODE" == "off" ]]; then
+    info "long-phase=off — skipping running-status observation"
+  else
+    info "long tape not found at $LONG_TAPE — skipping running-status test"
+    warn "skipped running-status observation (no long tape)"
+  fi
 fi
 
 echo ""
@@ -676,7 +808,12 @@ else
 fi
 
 # stored should be initial + garbage_1 + 5 accumulated + medium proof (+ long proof if run) = initial + 7 or 8
-expected_stored=$((INITIAL_STORED + 7))
+stored_garbage_jobs=${#ACCUMULATED_IDS[@]}
+if [[ -n "${GARBAGE_JOB_1:-}" ]]; then
+  stored_garbage_jobs=$((stored_garbage_jobs + 1))
+fi
+# +1 for medium proof job, +1 for long proof job if submitted.
+expected_stored=$((INITIAL_STORED + stored_garbage_jobs + 1 + LONG_JOB_PERSISTED))
 if [[ "$stored" -ge "$expected_stored" ]]; then
   pass "stored_jobs count accurate ($stored >= $expected_stored)"
 else
@@ -764,27 +901,31 @@ echo ""
 echo "[8b] GET all accumulated failed jobs after ${DELAY_MINUTES} minute delay"
 failed_still_ok=0
 failed_missing=0
-for jid in "${ACCUMULATED_IDS[@]}"; do
-  jr_d=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null)
-  if [[ $? -eq 0 ]]; then
-    s=$(echo "$jr_d" | json_field status)
-    e=$(echo "$jr_d" | json_field error)
-    if [[ "$s" == "failed" && -n "$e" && "$e" != "" && "$e" != "None" ]]; then
-      failed_still_ok=$((failed_still_ok + 1))
+if [[ "${#ACCUMULATED_IDS[@]}" -eq 0 ]]; then
+  pass "no accumulated failed jobs to re-check after delay (invalid tapes rejected pre-enqueue)"
+else
+  for jid in "${ACCUMULATED_IDS[@]}"; do
+    jr_d=$(curl -sf "$PROVER_URL/api/jobs/$jid" 2>/dev/null)
+    if [[ $? -eq 0 ]]; then
+      s=$(echo "$jr_d" | json_field status)
+      e=$(echo "$jr_d" | json_field error)
+      if [[ "$s" == "failed" && -n "$e" && "$e" != "" && "$e" != "None" ]]; then
+        failed_still_ok=$((failed_still_ok + 1))
+      else
+        failed_missing=$((failed_missing + 1))
+      fi
     else
       failed_missing=$((failed_missing + 1))
     fi
+  done
+
+  info "$failed_still_ok/${#ACCUMULATED_IDS[@]} failed jobs still intact with error messages"
+
+  if [[ $failed_missing -eq 0 ]]; then
+    pass "all ${#ACCUMULATED_IDS[@]} failed jobs persist with errors after ${DELAY_MINUTES} min"
   else
-    failed_missing=$((failed_missing + 1))
+    fail "$failed_missing/${#ACCUMULATED_IDS[@]} failed jobs missing or corrupted after delay"
   fi
-done
-
-info "$failed_still_ok/${#ACCUMULATED_IDS[@]} failed jobs still intact with error messages"
-
-if [[ $failed_missing -eq 0 ]]; then
-  pass "all ${#ACCUMULATED_IDS[@]} failed jobs persist with errors after ${DELAY_MINUTES} min"
-else
-  fail "$failed_missing/${#ACCUMULATED_IDS[@]} failed jobs missing or corrupted after delay"
 fi
 
 # Re-check the very first garbage job

@@ -3,37 +3,43 @@
   "name": "stellar-zk",
   "main": "./worker/index.ts",
   "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
   },
   "vars": {
     "PROVER_BASE_URL": "https://replace-with-your-prover.example.com",
-    "PROVER_RECEIPT_KIND": "groth16",
-    "PROVER_SEGMENT_LIMIT_PO2": "21",
-    "PROVER_MAX_FRAMES": "18000",
+    "PROVER_HEALTH_CACHE_MS": "30000",
     "PROVER_POLL_INTERVAL_MS": "3000",
-    "PROVER_POLL_TIMEOUT_MS": "900000",
+    "PROVER_POLL_TIMEOUT_MS": "660000",
     "PROVER_POLL_BUDGET_MS": "45000",
     "PROVER_REQUEST_TIMEOUT_MS": "30000",
     "MAX_TAPE_BYTES": "2097152",
-    "MAX_JOB_WALL_TIME_MS": "3600000",
+    "MAX_JOB_WALL_TIME_MS": "660000",
     "MAX_COMPLETED_JOBS": "200",
     "COMPLETED_JOB_RETENTION_MS": "86400000",
-    "ALLOW_INSECURE_PROVER_URL": "0"
+    "ALLOW_INSECURE_PROVER_URL": "0",
+    "RELAYER_URL": "",
+    "RELAYER_PLUGIN_ID": "",
+    "RELAYER_REQUEST_TIMEOUT_MS": "30000",
   },
   "r2_buckets": [
     {
       "binding": "PROOF_ARTIFACTS",
-      "bucket_name": "stellar-zk-proof-artifacts"
-    }
+      "bucket_name": "stellar-zk-proof-artifacts",
+    },
   ],
   "queues": {
     "producers": [
       {
         "binding": "PROOF_QUEUE",
-        "queue": "stellar-zk-proof-jobs"
-      }
+        "queue": "stellar-zk-proof-jobs",
+      },
+      {
+        "binding": "CLAIM_QUEUE",
+        "queue": "stellar-zk-claim-jobs",
+      },
     ],
     "consumers": [
       {
@@ -42,31 +48,44 @@
         "max_batch_timeout": 1,
         "max_retries": 10,
         "max_concurrency": 1,
-        "dead_letter_queue": "stellar-zk-proof-jobs-dlq"
+        "dead_letter_queue": "stellar-zk-proof-jobs-dlq",
       },
       {
         "queue": "stellar-zk-proof-jobs-dlq",
         "max_batch_size": 1,
         "max_batch_timeout": 5,
         "max_retries": 3,
-        "max_concurrency": 1
-      }
-    ]
+        "max_concurrency": 1,
+      },
+      {
+        "queue": "stellar-zk-claim-jobs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 10,
+        "max_concurrency": 1,
+        "dead_letter_queue": "stellar-zk-claim-jobs-dlq",
+      },
+      {
+        "queue": "stellar-zk-claim-jobs-dlq",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "max_concurrency": 1,
+      },
+    ],
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "PROOF_COORDINATOR",
-        "class_name": "ProofCoordinatorDO"
-      }
-    ]
+        "class_name": "ProofCoordinatorDO",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1-proof-coordinator",
-      "new_sqlite_classes": [
-        "ProofCoordinatorDO"
-      ]
-    }
-  ]
+      "new_sqlite_classes": ["ProofCoordinatorDO"],
+    },
+  ],
 }

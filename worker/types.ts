@@ -12,6 +12,10 @@ export interface ProofQueueMessage {
   jobId: string;
 }
 
+export interface ClaimQueueMessage {
+  jobId: string;
+}
+
 export interface TapeMetadata {
   seed: number;
   frameCount: number;
@@ -67,8 +71,23 @@ export interface ProverTracking {
   jobId: string | null;
   status: ProverJobStatus | null;
   statusUrl: string | null;
+  segmentLimitPo2: number | null;
   lastPolledAt: string | null;
   pollingErrors: number;
+  recoveryAttempts: number;
+}
+
+export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
+
+export interface ClaimTracking {
+  claimantAddress: string;
+  status: ClaimStatus;
+  attempts: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  submittedAt: string | null;
+  txHash: string | null;
 }
 
 export interface ProofJobRecord {
@@ -81,7 +100,85 @@ export interface ProofJobRecord {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
+}
+
+export type LeaderboardWindow = "10m" | "day" | "all";
+
+export interface PlayerProfileRecord {
+  claimantAddress: string;
+  username: string | null;
+  linkUrl: string | null;
+  updatedAt: string;
+}
+
+export interface LeaderboardRunRecord {
+  jobId: string;
+  claimantAddress: string;
+  score: number;
+  mintedDelta: number;
+  seed: number;
+  frameCount: number | null;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
+  completedAt: string;
+  claimStatus: ClaimStatus;
+  claimTxHash: string | null;
+}
+
+export interface LeaderboardRankedEntry extends LeaderboardRunRecord {
+  rank: number;
+}
+
+export interface LeaderboardWindowMetadata {
+  startAt: string | null;
+  endAt: string | null;
+}
+
+export interface LeaderboardComputedPage {
+  window: LeaderboardWindow;
+  generatedAt: string;
+  windowRange: LeaderboardWindowMetadata;
+  totalPlayers: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+  entries: LeaderboardRankedEntry[];
+  me: LeaderboardRankedEntry | null;
+}
+
+export interface LeaderboardEventRecord {
+  eventId: string;
+  claimantAddress: string;
+  seed: number;
+  frameCount: number | null;
+  finalScore: number;
+  finalRngState: number | null;
+  tapeChecksum: number | null;
+  rulesDigest: number | null;
+  previousBest: number;
+  newBest: number;
+  mintedDelta: number;
+  journalDigest: string | null;
+  txHash: string | null;
+  eventIndex: number | null;
+  ledger: number | null;
+  closedAt: string;
+  source: "galexie" | "rpc";
+  ingestedAt: string;
+}
+
+export interface LeaderboardIngestionState {
+  provider: "galexie" | "rpc";
+  sourceMode: "rpc" | "events_api" | "datalake";
+  cursor: string | null;
+  highestLedger: number | null;
+  lastSyncedAt: string | null;
+  lastBackfillAt: string | null;
+  totalEvents: number;
+  lastError: string | null;
 }
 
 export interface PublicProofTapeInfo {
@@ -99,6 +196,7 @@ export interface PublicProofJob {
   queue: QueueTracking;
   prover: ProverTracking;
   result: ProofResultInfo | null;
+  claim: ClaimTracking;
   error: string | null;
 }
 
@@ -123,6 +221,13 @@ export interface ProverCreateJobResponse {
   error?: string;
 }
 
+export interface ProverHealthResponse {
+  status: string;
+  image_id?: string;
+  rules_digest?: number;
+  ruleset?: string;
+}
+
 export interface ProverJobResultEnvelope {
   proof: {
     journal: ProofJournal;
@@ -145,8 +250,8 @@ export interface ProverGetJobResponse {
     max_frames: number;
     receipt_kind: string;
     segment_limit_po2: number;
-    allow_dev_mode: boolean;
-    verify_receipt: boolean;
+    proof_mode: "secure" | "dev";
+    verify_mode: "policy" | "verify";
     accelerator: string;
   };
   result?: ProverJobResultEnvelope;
@@ -161,7 +266,7 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string }
+  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

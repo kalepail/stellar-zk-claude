@@ -36,10 +36,13 @@ export function parseBoolean(raw: string | undefined, fallback: boolean): boolea
 }
 
 export function safeErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return String(error);
+  const raw =
+    error instanceof Error && error.message && error.message.trim().length > 0
+      ? error.message
+      : String(error);
+  // Collapse control chars (including embedded binary bytes) so responses
+  // remain valid JSON and readable in UI surfaces.
+  return raw.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
 }
 
 export function isLocalHostname(hostname: string): boolean {

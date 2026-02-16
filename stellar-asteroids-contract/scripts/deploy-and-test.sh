@@ -16,8 +16,8 @@
 #
 # Usage:
 #   ./scripts/deploy-and-test.sh                    # full deploy + test (mock verifier)
-#   ./scripts/deploy-and-test.sh --groth16          # mock tests + real Groth16 tests
-#   ./scripts/deploy-and-test.sh --skip-deploy      # reuse existing deployment
+#   ./scripts/deploy-and-test.sh --proof-mode all   # mock tests + real Groth16 tests
+#   ./scripts/deploy-and-test.sh --deploy-mode reuse # reuse existing deployment
 #   ./scripts/deploy-and-test.sh --deployer <name>  # custom deployer key name
 
 set -euo pipefail
@@ -28,8 +28,8 @@ source "$SCRIPT_DIR/_helpers.sh"
 
 require_cmds stellar python3 xxd
 
-SKIP_DEPLOY=false
-RUN_GROTH16=false
+DEPLOY_MODE="fresh" # fresh|reuse
+PROOF_MODE="mock" # mock|all
 # Use unique key names per run to avoid token admin conflicts
 RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-deploy-${RUN_ID}"
@@ -43,30 +43,56 @@ PASSED=0
 FAILED=0
 TOTAL=0
 
+usage() {
+  cat <<'USAGE_EOF'
+Usage: stellar-asteroids-contract/scripts/deploy-and-test.sh [options]
+
+Options:
+  --deploy-mode <mode>  fresh|reuse (default: fresh)
+  --proof-mode <mode>   mock|all (default: mock)
+  --deployer <name>     Custom deployer key name
+  -h, --help            Show this help
+USAGE_EOF
+}
+
 # ---------------------------------------------------------------------------
 # Parse args
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-deploy)
-      SKIP_DEPLOY=true
-      shift
+    --deploy-mode)
+      DEPLOY_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
       ;;
-    --groth16)
-      RUN_GROTH16=true
-      shift
+    --proof-mode)
+      PROOF_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
       ;;
     --deployer)
       DEPLOYER_NAME="$2"
       shift 2
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
       echo "Unknown arg: $1" >&2
-      echo "Usage: $0 [--skip-deploy] [--groth16] [--deployer <name>]" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
+
+if [[ "$DEPLOY_MODE" != "fresh" && "$DEPLOY_MODE" != "reuse" ]]; then
+  err "--deploy-mode must be fresh or reuse"
+  exit 1
+fi
+
+if [[ "$PROOF_MODE" != "mock" && "$PROOF_MODE" != "all" ]]; then
+  err "--proof-mode must be mock or all"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Test assertions
@@ -226,6 +252,15 @@ test_read_functions() {
     token_id 2>&1) || true
   token_result=$(echo "$token_result" | tr -d '"')
   assert_eq "token_id matches" "$TOKEN_ID" "$token_result"
+
+  local rules_digest_result
+  rules_digest_result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    rules_digest 2>&1) || true
+  assert_eq "rules_digest matches AST3" "$((0x41535433))" "$rules_digest_result"
 }
 
 # ---------------------------------------------------------------------------
@@ -245,6 +280,10 @@ test_submit_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -267,9 +306,9 @@ test_submit_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -300,11 +339,69 @@ test_submit_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "duplicate $label rejected" "$dup_exit"
+}
+
+# ---------------------------------------------------------------------------
+# Test: Reject a zero-score fixture via mock verifier
+# ---------------------------------------------------------------------------
+test_reject_fixture() {
+  local label="$1" fixture_prefix="$2"
+
+  info "--- Test: reject $label (score must be > 0) ---"
+
+  local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
+
+  if [[ ! -f "$journal_file" ]]; then
+    warn "SKIP: fixture file not found: $journal_file"
+    return
+  fi
+
+  local journal_hex
+  journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+    return
+  fi
+
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Generating mock seal..."
+  local seal_hex
+  seal_hex=$(mock_seal "$IMAGE_ID_HEX" "$journal_digest_hex")
+
+  info "Submitting proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "$label rejected" "$exit_code"
+
+  local claimed
+  claimed=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    is_claimed \
+    --journal_digest "${journal_digest_hex}" \
+    2>&1) || true
+  assert_eq "is_claimed after rejected $label" "false" "$claimed"
 }
 
 # ---------------------------------------------------------------------------
@@ -434,6 +531,10 @@ test_submit_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+    return
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -451,9 +552,9 @@ test_submit_groth16_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score (Groth16) failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -484,11 +585,68 @@ test_submit_groth16_fixture() {
     --network "$NETWORK" \
     -- \
     submit_score \
-    --player "$PLAYER_ADDR" \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "Groth16 duplicate $label rejected" "$dup_exit"
+}
+
+# ---------------------------------------------------------------------------
+# Test: Reject a zero-score fixture using real Groth16 seal from fixture
+# ---------------------------------------------------------------------------
+test_reject_groth16_fixture() {
+  local label="$1" fixture_prefix="$2"
+
+  info "--- Test: reject Groth16 $label (score must be > 0) ---"
+
+  local seal_file="$FIXTURES_DIR/${fixture_prefix}.seal"
+  local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
+
+  for f in "$seal_file" "$journal_file"; do
+    if [[ ! -f "$f" ]]; then
+      warn "SKIP: fixture file not found: $f"
+      return
+    fi
+  done
+
+  local seal_hex journal_hex
+  seal_hex=$(tr -d '[:space:]' < "$seal_file")
+  journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+    return
+  fi
+
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Submitting Groth16 proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$GRF1_SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "Groth16 $label rejected" "$exit_code"
+
+  local claimed
+  claimed=$(stellar contract invoke -q \
+    --id "$GRF1_SCORE_CONTRACT_ID" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    is_claimed \
+    --journal_digest "${journal_digest_hex}" \
+    2>&1) || true
+  assert_eq "Groth16 is_claimed after rejected $label" "false" "$claimed"
 }
 
 # ---------------------------------------------------------------------------
@@ -500,13 +658,13 @@ echo "$(date)"
 echo "================================================"
 echo ""
 
-if [[ "$SKIP_DEPLOY" == false ]]; then
+if [[ "$DEPLOY_MODE" == "fresh" ]]; then
   deploy
 else
   load_state "$STATE_FILE"
   read_image_id
   if [[ -z "${SCORE_CONTRACT_ID:-}" || -z "${TOKEN_ID:-}" ]]; then
-    err "No deployment state found. Run without --skip-deploy first."
+    err "No deployment state found. Run with --deploy-mode fresh first."
     exit 1
   fi
   info "Reusing deployment from $STATE_FILE"
@@ -529,21 +687,20 @@ test_unclaimed_digest
 
 echo ""
 
-# 3. Submit all 3 proof fixtures via mock verifier
-#    Scores: short=0, medium=2040, real-game=16270
-test_submit_fixture "short tape"     "proof-short-groth16"     0
+# 3. Reject zero-score fixture, then submit positive-score fixtures via mock verifier
+test_reject_fixture "short tape" "proof-short-groth16"
 echo ""
-test_submit_fixture "medium tape"    "proof-medium-groth16"    2040
+test_submit_fixture "medium tape"    "proof-medium-groth16"    90
 echo ""
-test_submit_fixture "real game tape" "proof-real-game-groth16" 16270
+test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 4. Check cumulative token balance (0 + 2040 + 16270 = 18310)
-test_cumulative_balance "18310"
+# 4. Check cumulative token balance (90 + 32860 = 32950)
+test_cumulative_balance "32950"
 
-# 5. Groth16 tests (if --groth16 flag was passed)
-if [[ "$RUN_GROTH16" == true ]]; then
+# 5. Groth16 tests (if proof-mode=all)
+if [[ "$PROOF_MODE" == "all" ]]; then
   echo ""
   echo "================================================"
   echo "Groth16 Real Proof Tests"
@@ -552,11 +709,11 @@ if [[ "$RUN_GROTH16" == true ]]; then
 
   deploy_groth16
 
-  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     0
+  test_reject_groth16_fixture "short tape" "proof-short-groth16"
   echo ""
-  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    2040
+  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
   echo ""
-  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 16270
+  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 32860
 
   echo ""
 
@@ -572,7 +729,7 @@ if [[ "$RUN_GROTH16" == true ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "18310" "$grf1_balance"
+  assert_eq "Groth16 cumulative token balance" "32950" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

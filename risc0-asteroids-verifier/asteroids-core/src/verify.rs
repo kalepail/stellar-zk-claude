@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST_V1};
+use crate::constants::{MAX_FRAMES_DEFAULT, RULES_DIGEST};
 use crate::error::VerifyError;
 use crate::sim::{replay_strict, ReplayResult, ReplayViolation};
 use crate::tape::parse_tape;
@@ -12,7 +12,7 @@ pub struct GuestInput {
     pub max_frames: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationJournal {
     pub seed: u32,
     pub frame_count: u32,
@@ -77,7 +77,7 @@ where
         final_score: replay_result.final_score,
         final_rng_state: replay_result.final_rng_state,
         tape_checksum: tape.footer.checksum,
-        rules_digest: RULES_DIGEST_V1,
+        rules_digest: RULES_DIGEST,
     })
 }
 
@@ -157,7 +157,13 @@ mod tests {
     #[test]
     fn guest_input_uses_default_max_frames_when_zero() {
         let inputs = [0x00u8; 32];
-        let tape = valid_tape(0x4455_6677, &inputs);
+        let replay_result = replay(0x4455_6677, &inputs);
+        let tape = serialize_tape(
+            0x4455_6677,
+            &inputs,
+            replay_result.final_score,
+            replay_result.final_rng_state,
+        );
         let guest_input = GuestInput {
             tape,
             max_frames: 0,
@@ -165,7 +171,7 @@ mod tests {
 
         let journal = verify_guest_input(&guest_input).unwrap();
         assert_eq!(journal.frame_count, inputs.len() as u32);
-        assert_eq!(journal.rules_digest, RULES_DIGEST_V1);
+        assert_eq!(journal.rules_digest, RULES_DIGEST);
     }
 
     #[test]

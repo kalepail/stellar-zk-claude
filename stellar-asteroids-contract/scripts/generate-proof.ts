@@ -9,13 +9,13 @@
  * Usage:
  *   bun run scripts/generate-proof.ts \
  *     --tape ../test-fixtures/test-short.tape \
- *     --prover https://risc0-kalien.stellar.buzz \
+ *     --prover http://127.0.0.1:8080 \
  *     --out ../test-fixtures/proof-short.json
  *
  * Output fixture format:
  *   {
  *     "seal":        "hex string (260 bytes = 4-byte selector + 256-byte proof)",
- *     "journal_raw": "hex string (24 bytes = 6 x u32 LE)",
+ *     "journal_raw": "hex string (24-byte base)",
  *     "image_id":    "hex string (32 bytes LE)",
  *     "journal":     { seed, frame_count, final_score, ... },
  *     "receipt_kind": "groth16",
@@ -27,6 +27,8 @@ import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { createHash } from "crypto";
 
+const EXPECTED_RULES_DIGEST = 0x41535433; // "AST3"
+
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
@@ -34,7 +36,7 @@ import { createHash } from "crypto";
 function parseArgs() {
   const args = process.argv.slice(2);
   let tape = "";
-  let prover = "https://risc0-kalien.stellar.buzz";
+  let prover = "http://127.0.0.1:8080";
   let out = "";
   let receiptKind = "groth16";
   let segmentLimitPo2 = "21";
@@ -143,7 +145,13 @@ async function submitTape(
   segmentLimitPo2: string,
   maxFrames: string
 ): Promise<string> {
-  const url = `${proverUrl}/api/jobs/prove-tape/raw?receipt_kind=${receiptKind}&segment_limit_po2=${segmentLimitPo2}&max_frames=${maxFrames}&verify_receipt=true`;
+  const params = new URLSearchParams({
+    receipt_kind: receiptKind,
+    segment_limit_po2: segmentLimitPo2,
+    max_frames: maxFrames,
+    verify_mode: "policy",
+  });
+  const url = `${proverUrl}/api/jobs/prove-tape/raw?${params.toString()}`;
 
   console.log(`Submitting tape (${tapeBytes.length} bytes) to ${proverUrl}...`);
 
@@ -250,7 +258,7 @@ function extractSeal(receipt: any): Uint8Array {
 }
 
 function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
-  // Journal is 6 x u32 LE = 24 bytes
+  // Journal format: 24-byte base (6 x u32 LE)
   const buf = new Uint8Array(24);
   const view = new DataView(buf.buffer);
 
@@ -327,12 +335,25 @@ async function main() {
   }
 
   const { proof } = result.result;
+  const rulesDigest = proof.journal.rules_digest >>> 0;
+  if (rulesDigest !== EXPECTED_RULES_DIGEST) {
+    throw new Error(
+      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST3). Update/redeploy prover before generating fixtures.`
+    );
+  }
+  if ((proof.journal.final_score >>> 0) === 0) {
+    throw new Error(
+      "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures."
+    );
+  }
+
   console.log(`Proof complete in ${result.result.elapsed_ms}ms`);
   console.log(
     `  Receipt kind: ${proof.produced_receipt_kind || proof.requested_receipt_kind}`
   );
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
+  console.log(`  Rules digest: 0x${rulesDigest.toString(16)}`);
   console.log(
     `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
   );
@@ -342,7 +363,7 @@ async function main() {
   const journalRaw = extractJournalRaw(proof.journal);
 
   // Get image_id: prefer --image-id flag, then fetch from prover /health
-  let imageId = extractImageId(config.imageId || undefined);
+  let imageId = extractImageId(config.imageId);
   if (!imageId) {
     imageId = await fetchImageIdFromProver(config.proverUrl);
   }

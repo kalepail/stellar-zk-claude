@@ -88,8 +88,10 @@ pub fn apply_drag(v: i32) -> i32 {
 }
 
 pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i32) {
-    let max = max_sq_q16_16 as i64;
-    let mut speed_sq = (vx as i64 * vx as i64) + (vy as i64 * vy as i64);
+    // Kept in i32 for RV32 guest performance. This stays safe because vx/vy are
+    // tightly bounded by the game physics and clamping rules.
+    let max = max_sq_q16_16;
+    let mut speed_sq = (vx * vx) + (vy * vy);
 
     if speed_sq <= max {
         return (vx, vy);
@@ -98,7 +100,7 @@ pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i
     while speed_sq > max {
         vx = (vx * 3) >> 2;
         vy = (vy * 3) >> 2;
-        speed_sq = (vx as i64 * vx as i64) + (vy as i64 * vy as i64);
+        speed_sq = (vx * vx) + (vy * vy);
     }
 
     (vx, vy)
@@ -106,23 +108,24 @@ pub fn clamp_speed_q8_8(mut vx: i32, mut vy: i32, max_sq_q16_16: i32) -> (i32, i
 
 #[inline]
 pub fn wrap_x_q12_4(x: i32) -> i32 {
-    if x < 0 {
-        x + WORLD_WIDTH_Q12_4
-    } else if x >= WORLD_WIDTH_Q12_4 {
-        x - WORLD_WIDTH_Q12_4
-    } else {
+    // Fast-path: positions are almost always already in-range.
+    if (x as u32) < (WORLD_WIDTH_Q12_4 as u32) {
         x
+    } else if x < 0 {
+        x + WORLD_WIDTH_Q12_4
+    } else {
+        x - WORLD_WIDTH_Q12_4
     }
 }
 
 #[inline]
 pub fn wrap_y_q12_4(y: i32) -> i32 {
-    if y < 0 {
-        y + WORLD_HEIGHT_Q12_4
-    } else if y >= WORLD_HEIGHT_Q12_4 {
-        y - WORLD_HEIGHT_Q12_4
-    } else {
+    if (y as u32) < (WORLD_HEIGHT_Q12_4 as u32) {
         y
+    } else if y < 0 {
+        y + WORLD_HEIGHT_Q12_4
+    } else {
+        y - WORLD_HEIGHT_Q12_4
     }
 }
 
@@ -144,8 +147,7 @@ pub fn shortest_delta_q12_4(from: i32, to: i32, size: i32) -> i32 {
 
     if delta > half {
         delta -= size;
-    }
-    if delta < -half {
+    } else if delta < -half {
         delta += size;
     }
 

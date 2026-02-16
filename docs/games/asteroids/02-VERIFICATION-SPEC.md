@@ -11,7 +11,9 @@ A tape is valid only if all conditions hold:
 ## Tape Rules
 ### Header
 - `magic == 0x5A4B5450` (`ZKTP`)
-- `version == 1`
+- `version == 2`
+- `rules_tag == 3` (`AST3`)
+- header reserved bytes `[6..7] == 0`
 - `frameCount > 0`
 - `frameCount <= configured max` (default 18,000)
 
@@ -44,7 +46,7 @@ Any reorder is invalid.
 - `TAPE_*`: parsing, limits, checksum, reserved bits.
 - `GLOBAL_*`: frame monotonicity, mode transitions, RNG consistency.
 - `SHIP_*`: turn/thrust/drag/clamp/position step.
-- `PLAYER_BULLET_*`: cap/cooldown/spawn/lifetime.
+- `PLAYER_BULLET_*`: cap/fire-gate/spawn/lifetime.
 - `ASTEROID_*`: motion/split/caps/wave spawn count.
 - `SAUCER_*`: spawn cadence/count/fire behavior.
 - `COLLISION_*`: canonical collision order and side effects.
@@ -56,10 +58,13 @@ Any reorder is invalid.
 - Footer RNG check is required and catches divergence cascades.
 
 ## Required Verification Output
-- `ok`
-- `failFrame`
-- `errorCode`
-- `message`
-- `finalScore`
-- `finalRngState`
-- `elapsedMs`
+On success, verifier returns/commits the canonical 24-byte journal (6 × `u32` LE):
+- `seed`
+- `frame_count`
+- `final_score`
+- `final_rng_state`
+- `tape_checksum`
+- `rules_digest` (`0x4153_5433`, `AST3`)
+
+On failure, verifier returns a deterministic `VerifyError` variant (parse error,
+rule violation, or footer mismatch class).

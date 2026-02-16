@@ -1,12 +1,10 @@
 import { useEffect, useRef } from "react";
+import type { GameRunRecord } from "../game/AsteroidsGame";
 import { AsteroidsGame } from "../game/AsteroidsGame";
 
 export interface CompletedGameRun {
-  tape: Uint8Array;
-  score: number;
+  record: GameRunRecord;
   frameCount: number;
-  seed: number;
-  finalRngState: number;
   endedAtMs: number;
 }
 
@@ -29,7 +27,7 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
       return;
     }
 
-    const game = new AsteroidsGame(canvas);
+    const game = new AsteroidsGame({ canvas });
     let modeBefore = game.getMode();
     let watcherFrame: number | null = null;
     let disposed = false;
@@ -41,14 +39,11 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
 
       const modeNow = game.getMode();
       if (modeNow === "game-over" && modeBefore !== "game-over") {
-        const tape = game.getTape();
-        if (tape) {
+        const record = game.getRunRecord();
+        if (record) {
           onGameOverRef.current?.({
-            tape,
-            score: game.getScore(),
-            frameCount: game.getFrameCount(),
-            seed: game.getGameSeed(),
-            finalRngState: game.getRngState(),
+            record,
+            frameCount: record.inputs.length,
             endedAtMs: Date.now(),
           });
         }

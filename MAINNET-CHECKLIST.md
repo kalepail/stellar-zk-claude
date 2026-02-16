@@ -31,13 +31,22 @@ jobs and consume expensive GPU time.
       Zero Trust application policy on the tunnel.
 - [ ] **Verify `RISC0_DEV_MODE=0`** on the prover instance. Dev mode generates
       fake proofs that would pass the mock verifier but not the Groth16 verifier.
-- [ ] **Verify `ALLOW_DEV_MODE_REQUESTS=false`** on the prover instance so
-      clients cannot request dev-mode proving.
+- [ ] **Verify the prover does not accept a client-controlled dev-proof override.**
+      The api-server must force proof mode from `RISC0_DEV_MODE` (dev receipts only
+      when `RISC0_DEV_MODE=1`), and production must run with `RISC0_DEV_MODE=0`.
 - [ ] **Verify `ALLOW_INSECURE_PROVER_URL=0`** in wrangler.jsonc (already the
       default). The worker must communicate with the prover over HTTPS only.
 - [ ] **Update `PROVER_BASE_URL`** in wrangler.jsonc from the placeholder
       `https://replace-with-your-prover.example.com` to the actual tunnel URL.
       Alternatively store it as a Wrangler secret.
+- [ ] **Run automated preflight checks** before every deploy:
+      ```bash
+      WORKER_CONFIG=wrangler.jsonc \
+      PROVER_ENV=risc0-asteroids-verifier/api-server/.env \
+      ./scripts/mainnet-security-preflight.sh
+      ```
+      This catches placeholder URLs, insecure transport flags, weak/missing
+      API key config, and dev-mode leaks early.
 
 ---
 
@@ -58,12 +67,14 @@ Switch all Stellar references from testnet to mainnet.
       spec (`docs/games/asteroids/10-CLIENT-INTEGRATION-SPEC.md:106-112`)
       defines these — they need actual values:
       ```
-      VITE_SOROBAN_RPC_URL=<mainnet RPC>
+      VITE_RPC_URL=<mainnet RPC>
       VITE_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
-      VITE_CONTRACT_ADDRESS=<mainnet score contract ID>
-      VITE_TOKEN_ADDRESS=<mainnet token ID>
-      VITE_RELAYER_URL=<relayer endpoint>
-      VITE_EXPLORER_URL=https://stellar.expert
+      VITE_ACCOUNT_WASM_HASH=<mainnet account contract wasm hash>
+      VITE_WEBAUTHN_VERIFIER_ADDRESS=<mainnet webauthn verifier contract ID>
+      VITE_RELAYER_URL=https://channels.openzeppelin.com
+      VITE_RELAYER_API_KEY=<mainnet relayer API key>
+      VITE_RELAYER_PLUGIN_ID=<optional relayer plugin ID>
+      VITE_RP_NAME="Stellar ZK"
       ```
 - [ ] **Confirm the RISC Zero router contract exists on mainnet**. The testnet
       router is `CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD` and
@@ -213,7 +224,7 @@ submission. These are all missing and required for mainnet.
       6. Return tx hash + minted score
 - [ ] **Implement token balance and history display** (`chain/` module):
       token balance queries, `ScoreSubmitted` event history.
-- [ ] **Choose and configure a relayer** (Stellar Launchtube or custom) for
+- [ ] **Choose and configure a relayer** (OpenZeppelin Channels or custom) for
       feeless or sponsored transactions.
 - [ ] **Handle mainnet XLM requirements**: players need trustlines to the SCORE
       token. Decide if the relayer/sponsor covers this or if the user must have
@@ -269,8 +280,8 @@ Production readiness for the Vast.ai prover server.
       - `MAX_JOBS=64` (or higher for mainnet traffic)
       - `MAX_TAPE_BYTES=2097152` (2 MB, verify this covers max game length)
       - `MAX_FRAMES=18000` (5 minutes at 60 fps — confirm this is sufficient)
-      - `RUNNING_JOB_TIMEOUT_SECS=1800` (30 min per proof — adjust per actual
-        proving times)
+      - `RUNNING_JOB_TIMEOUT_SECS=600` (accept up to 10 min per proof; typical
+        proves should be ~5 min on CUDA)
 - [ ] **Benchmark proving times** with real game tapes of various lengths.
       Document expected latency for short, medium, and long games.
 - [ ] **Set up health monitoring** with automated alerts if `/health` returns
@@ -297,7 +308,8 @@ Production readiness for the Vast.ai prover server.
       cd <your-clone>/risc0-asteroids-verifier
 
       # 1. Build first (the service runs the compiled binary, not cargo run)
-      cargo build --locked --release -p api-server
+      #    NOTE: CPU is default; CUDA must be enabled explicitly for Vast/prod.
+      cargo build --locked --release -p api-server --features cuda
 
       # 2. Install supervisord config and env file
       mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
@@ -336,7 +348,7 @@ Rust prover core.
       2. Submit to prover and get Groth16 proof
       3. Submit proof to testnet contract with Groth16 verifier
       4. Confirm token minting succeeds
-- [ ] **Validate the `RULES_DIGEST_V1` constant** (`0x4153_5431` / "AST1").
+- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5433` / "AST3").
       This is baked into both the guest and contract. It serves as a versioning
       marker — if game rules change, bump this value.
 
@@ -521,7 +533,5 @@ anything to mainnet so all deployed config points to the final names.
 | Env Var | Required Value for Mainnet |
 |---|---|
 | `RISC0_DEV_MODE` | `0` |
-| `ALLOW_DEV_MODE_REQUESTS` | `false` |
 | `ALLOW_INSECURE_PROVER_URL` | `0` |
-| `PROVER_RECEIPT_KIND` | `groth16` |
 | `NETWORK` | `mainnet` (in deployment scripts) |

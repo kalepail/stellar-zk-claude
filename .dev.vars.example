@@ -1,0 +1,84 @@
+# Cloudflare Worker local vars (`wrangler dev`)
+# Copy to .dev.vars and set secrets before running locally.
+
+# Required
+PROVER_BASE_URL=https://replace-with-your-prover.example.com
+
+# Claim contract (required for relayer-only submission)
+SCORE_CONTRACT_ID=CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU
+
+# Required for remote provers. For localhost/127.0.0.1 you may omit auth.
+PROVER_API_KEY=
+# Optional alternative auth for remote provers (must set both fields).
+PROVER_ACCESS_CLIENT_ID=
+PROVER_ACCESS_CLIENT_SECRET=
+
+# Claim submission (relayer-only via OpenZeppelin Channels `func+auth`)
+RELAYER_URL=
+RELAYER_API_KEY=
+# Optional for self-hosted OpenZeppelin Relayer plugin routes.
+# Leave blank for managed Channels URLs.
+RELAYER_PLUGIN_ID=
+RELAYER_REQUEST_TIMEOUT_MS=30000
+
+# Prover behavior / policy
+PROVER_EXPECTED_IMAGE_ID=
+ALLOW_INSECURE_PROVER_URL=0
+
+# Health + request tuning
+PROVER_HEALTH_CACHE_MS=30000
+PROVER_POLL_INTERVAL_MS=3000
+# Target: ~5 min typical proofs, accept up to 10 min.
+# Keep this above the prover timeout so the gateway can observe final status.
+PROVER_POLL_TIMEOUT_MS=660000
+PROVER_POLL_BUDGET_MS=45000
+PROVER_REQUEST_TIMEOUT_MS=30000
+
+# Gateway limits + retention
+MAX_TAPE_BYTES=2097152
+# End-to-end cap (includes queue + polling + R2 writes). Slightly above 10 min.
+MAX_JOB_WALL_TIME_MS=660000
+MAX_COMPLETED_JOBS=200
+COMPLETED_JOB_RETENTION_MS=86400000
+
+# Leaderboard ingestion (event-sourced via Galexie/Lightsail)
+# D1 backing store is configured in wrangler.jsonc via binding: LEADERBOARD_DB
+SCORE_CONTRACT_ID=
+GALEXIE_API_BASE_URL=https://galexie-pro.lightsail.network
+# Modes: auto (rpc primary + galexie fallback), rpc, datalake, events_api
+GALEXIE_SOURCE_MODE=auto
+# Optional explicit RPC URL override.
+# Leave blank to auto-select by network:
+# - testnet passphrase -> tries Lightsail testnet, then soroban-testnet, gateway.fm, and Ankr
+# - otherwise -> Lightsail mainnet
+GALEXIE_RPC_BASE_URL=
+# Used for network-aware RPC defaulting when GALEXIE_RPC_BASE_URL is unset.
+CLAIM_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+GALEXIE_SCORE_EVENTS_PATH=/events
+GALEXIE_DATASTORE_ROOT_PATH=/v1
+GALEXIE_DATASTORE_OBJECT_EXTENSION=zst
+GALEXIE_REQUEST_TIMEOUT_MS=20000
+
+# Automated sync + catch-up window
+LEADERBOARD_SYNC_CRON_ENABLED=1
+LEADERBOARD_SYNC_CRON_LIMIT=400
+LEADERBOARD_CATCHUP_INTERVAL_MINUTES=30
+LEADERBOARD_CATCHUP_WINDOW_LEDGERS=8000
+# Forward sync replays the most recent N ledgers (idempotent upsert) to heal transient gaps.
+LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS=8000
+
+# Admin key for protected sync endpoints.
+LEADERBOARD_ADMIN_KEY=
+# Optional passkey profile-auth tuning.
+# Defaults to testnet indexer URL if not set.
+SMART_ACCOUNT_INDEXER_URL=
+SMART_ACCOUNT_INDEXER_TIMEOUT_MS=10000
+# One-time passkey challenge TTL in ms (10s minimum, 10m maximum).
+LEADERBOARD_PROFILE_AUTH_CHALLENGE_TTL_MS=120000
+# Optional explicit WebAuthn origin/RP ID. Defaults to request origin/hostname.
+LEADERBOARD_PROFILE_WEBAUTHN_ORIGIN=
+LEADERBOARD_PROFILE_WEBAUTHN_RP_ID=
+# If deploying to Cloudflare, prefer:
+#   npx wrangler secret put GALEXIE_API_KEY
+#   npx wrangler secret put LEADERBOARD_ADMIN_KEY
+GALEXIE_API_KEY=
