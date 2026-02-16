@@ -4,6 +4,7 @@ import { applyApiCacheControl } from "./cache-control";
 export { ProofCoordinatorDO } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { createApiRouter } from "./api/routes";
+import { createLeaderboardRouter } from "./api/leaderboard-routes";
 import { recordLeaderboardSyncFailure, runScheduledLeaderboardSync } from "./leaderboard-sync";
 import {
   handleClaimDlqBatch,
@@ -22,6 +23,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.route("/api", createApiRouter());
+app.route("/api/leaderboard", createLeaderboardRouter());
 
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {

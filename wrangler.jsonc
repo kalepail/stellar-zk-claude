@@ -24,6 +24,13 @@
     "RELAYER_PLUGIN_ID": "",
     "RELAYER_REQUEST_TIMEOUT_MS": "30000",
   },
+  "d1_databases": [
+    {
+      "binding": "LEADERBOARD_DB",
+      "database_name": "stellar-zk-leaderboard",
+      "database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
+    },
+  ],
   "r2_buckets": [
     {
       "binding": "PROOF_ARTIFACTS",
@@ -88,4 +95,7 @@
       "new_sqlite_classes": ["ProofCoordinatorDO"],
     },
   ],
+  "triggers": {
+    "crons": ["*/1 * * * *"],
+  },
 }

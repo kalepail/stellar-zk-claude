@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type ClaimStatus,
   getLeaderboard,
@@ -10,8 +10,10 @@ import {
   type LeaderboardWindow,
   updateLeaderboardProfile,
 } from "./api";
-import { formatUtcDateTime } from "../time";
+import { formatUtcDateTime, timeAgo } from "../time";
 import "./LeaderboardPage.css";
+
+const AUTO_REFRESH_MS = 60_000;
 
 function abbreviateAddress(value: string): string {
   if (value.length <= 16) {
@@ -87,6 +89,96 @@ function isSmartAccountContractAddress(address: string): boolean {
   return address.trim().startsWith("C");
 }
 
+function isSafeUrl(url: string | null | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+  const trimmed = url.trim().toLowerCase();
+  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
+}
+
+function RelativeTime({ value }: { value: string | null | undefined }) {
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    if (!value) {
+      return;
+    }
+    const interval = setInterval(() => forceUpdate((n) => n + 1), 15_000);
+    return () => clearInterval(interval);
+  }, [value]);
+
+  if (!value) {
+    return <span>n/a</span>;
+  }
+
+  return <span title={formatUtcDateTime(value)}>{timeAgo(value)}</span>;
+}
+
+function SkeletonRows({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <tr key={i} className="leaderboard-skeleton-row">
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function PlayerSkeletonRows({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <tr key={i} className="leaderboard-skeleton-row">
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
+          </td>
+          <td>
+            <span className="leaderboard-skeleton-cell" />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 export function LeaderboardPage() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/leaderboard";
   const playerAddress = useMemo(() => getPlayerAddressFromPath(pathname), [pathname]);
@@ -109,6 +201,56 @@ export function LeaderboardPage() {
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSavedAt, setProfileSavedAt] = useState<string | null>(null);
 
+  // Track last refresh time for relative display
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+
+  const fetchLeaderboardRef = useRef<(() => void) | undefined>(undefined);
+
+  const fetchLeaderboard = useCallback(
+    (silent: boolean) => {
+      if (playerAddress) {
+        return;
+      }
+
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+
+      void (async () => {
+        try {
+          const response = await getLeaderboard({
+            window: windowKey,
+            limit,
+            offset,
+            address: findAddress,
+          });
+          setLeaderboard(response);
+          setLastRefreshAt(new Date().toISOString());
+          if (!silent) {
+            setError(null);
+          }
+        } catch (reason) {
+          if (!silent) {
+            const detail =
+              reason instanceof LeaderboardApiError || reason instanceof Error
+                ? reason.message
+                : "failed to load leaderboard";
+            setError(detail);
+          }
+        } finally {
+          if (!silent) {
+            setLoading(false);
+          }
+        }
+      })();
+    },
+    [findAddress, limit, offset, playerAddress, windowKey],
+  );
+
+  fetchLeaderboardRef.current = () => fetchLeaderboard(true);
+
+  // Initial + parameter-change fetch
   useEffect(() => {
     if (playerAddress) {
       return;
@@ -128,6 +270,7 @@ export function LeaderboardPage() {
         });
         if (!cancelled) {
           setLeaderboard(response);
+          setLastRefreshAt(new Date().toISOString());
         }
       } catch (reason) {
         if (cancelled) {
@@ -149,6 +292,19 @@ export function LeaderboardPage() {
       cancelled = true;
     };
   }, [findAddress, limit, offset, playerAddress, windowKey]);
+
+  // Auto-refresh every 60s (silent background refresh)
+  useEffect(() => {
+    if (playerAddress) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      fetchLeaderboardRef.current?.();
+    }, AUTO_REFRESH_MS);
+
+    return () => clearInterval(interval);
+  }, [playerAddress]);
 
   useEffect(() => {
     if (!playerAddress) {
@@ -281,7 +437,17 @@ export function LeaderboardPage() {
           </a>
         </header>
 
-        {playerLoading ? <p className="leaderboard-note">Loading player...</p> : null}
+        {playerLoading ? (
+          <section className="leaderboard-card">
+            <div className="leaderboard-table-wrap">
+              <table className="leaderboard-table" aria-label="Loading player data">
+                <tbody>
+                  <PlayerSkeletonRows count={3} />
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
         {playerError ? <p className="leaderboard-error">{playerError}</p> : null}
 
         {playerData ? (
@@ -295,7 +461,8 @@ export function LeaderboardPage() {
                 <strong>Address:</strong>{" "}
                 <code className="leaderboard-address">{playerData.player.claimant_address}</code>
               </p>
-              {playerData.player.profile?.linkUrl ? (
+              {playerData.player.profile?.linkUrl &&
+              isSafeUrl(playerData.player.profile.linkUrl) ? (
                 <p>
                   <strong>Link:</strong>{" "}
                   <a href={playerData.player.profile.linkUrl} target="_blank" rel="noreferrer">
@@ -319,9 +486,7 @@ export function LeaderboardPage() {
                 <div>
                   <dt>Last Played</dt>
                   <dd>
-                    {playerData.player.stats.last_played_at
-                      ? formatUtcDateTime(playerData.player.stats.last_played_at)
-                      : "n/a"}
+                    <RelativeTime value={playerData.player.stats.last_played_at} />
                   </dd>
                 </div>
               </dl>
@@ -379,7 +544,7 @@ export function LeaderboardPage() {
                   </button>
                   {profileSavedAt ? (
                     <span className="leaderboard-note">
-                      Saved {formatUtcDateTime(profileSavedAt)}
+                      Saved <RelativeTime value={profileSavedAt} />
                     </span>
                   ) : null}
                 </div>
@@ -404,15 +569,15 @@ export function LeaderboardPage() {
                 <p className="leaderboard-note">No proved runs yet.</p>
               ) : (
                 <div className="leaderboard-table-wrap">
-                  <table className="leaderboard-table">
+                  <table className="leaderboard-table" aria-label="Recent proved runs">
                     <thead>
                       <tr>
-                        <th>Score</th>
-                        <th>Frames</th>
-                        <th>Minted Δ (this run)</th>
-                        <th>Seed</th>
-                        <th>Completed (UTC)</th>
-                        <th>Claim</th>
+                        <th scope="col">Score</th>
+                        <th scope="col">Frames</th>
+                        <th scope="col">Minted (this run)</th>
+                        <th scope="col">Seed</th>
+                        <th scope="col">Completed</th>
+                        <th scope="col">Claim</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -422,7 +587,9 @@ export function LeaderboardPage() {
                           <td className="leaderboard-cell--num">{formatMetric(run.frameCount)}</td>
                           <td className="leaderboard-cell--num">{formatMetric(run.mintedDelta)}</td>
                           <td className="leaderboard-cell--mono">{formatHex32(run.seed)}</td>
-                          <td>{formatUtcDateTime(run.completedAt)}</td>
+                          <td>
+                            <RelativeTime value={run.completedAt} />
+                          </td>
                           <td>
                             <span className={claimStatusClass(run.claimStatus)}>
                               {run.claimStatus}
@@ -456,6 +623,10 @@ export function LeaderboardPage() {
       leaderboard?.entries.length === 0 &&
       (leaderboard?.ingestion?.total_events ?? 0) > 0) ||
     false;
+  const isEmptyAllTime =
+    leaderboard?.window === "all" &&
+    leaderboard.entries.length === 0 &&
+    (leaderboard.ingestion?.total_events ?? 0) === 0;
 
   return (
     <main className="leaderboard-shell">
@@ -471,17 +642,31 @@ export function LeaderboardPage() {
         </div>
         <div className="leaderboard-header-actions">
           {leaderboard?.ingestion?.last_synced_at ? (
-            <span className="leaderboard-sync-pill">
-              Synced {formatUtcDateTime(leaderboard.ingestion.last_synced_at)}
+            <span
+              className="leaderboard-sync-pill"
+              title={formatUtcDateTime(leaderboard.ingestion.last_synced_at)}
+            >
+              Synced <RelativeTime value={leaderboard.ingestion.last_synced_at} />
             </span>
           ) : (
             <span className="leaderboard-sync-pill leaderboard-sync-pill--muted">
               Sync in progress
             </span>
           )}
-          <a className="leaderboard-navlink" href="/">
-            Back To Game
-          </a>
+          <div className="leaderboard-header-links">
+            <button
+              type="button"
+              className="leaderboard-refresh-btn"
+              onClick={() => fetchLeaderboard(false)}
+              disabled={loading}
+              title={lastRefreshAt ? `Last refreshed ${timeAgo(lastRefreshAt)}` : "Refresh"}
+            >
+              Refresh
+            </button>
+            <a className="leaderboard-navlink" href="/">
+              Back To Game
+            </a>
+          </div>
         </div>
       </header>
 
@@ -490,18 +675,19 @@ export function LeaderboardPage() {
           <h2>Filters</h2>
           <p>Switch horizon or lookup a claimant contract address.</p>
         </div>
-        <div className="leaderboard-window-buttons">
-          {(["10m", "day", "all"] as LeaderboardWindow[]).map((window) => (
+        <div className="leaderboard-window-buttons" role="group" aria-label="Time window selector">
+          {(["10m", "day", "all"] as LeaderboardWindow[]).map((w) => (
             <button
-              key={window}
+              key={w}
               type="button"
               onClick={() => {
-                setWindowKey(window);
+                setWindowKey(w);
                 setOffset(0);
               }}
-              className={window === windowKey ? "active" : ""}
+              className={w === windowKey ? "active" : ""}
+              aria-pressed={w === windowKey}
             >
-              {windowLabel(window)}
+              {windowLabel(w)}
             </button>
           ))}
         </div>
@@ -518,6 +704,7 @@ export function LeaderboardPage() {
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder="Find address (G... or C...)"
+            aria-label="Search for a player address"
           />
           <button type="submit">Find Me</button>
           <button type="button" onClick={clearFindMe} disabled={!findAddress}>
@@ -526,8 +713,32 @@ export function LeaderboardPage() {
         </form>
       </section>
 
-      {loading ? <p className="leaderboard-note">Loading leaderboard...</p> : null}
       {error ? <p className="leaderboard-error">{error}</p> : null}
+
+      {loading && !leaderboard ? (
+        <section className="leaderboard-card leaderboard-surface">
+          <h2 className="leaderboard-section-title">Rankings</h2>
+          <div className="leaderboard-table-wrap">
+            <table className="leaderboard-table" aria-label="Loading leaderboard rankings">
+              <thead>
+                <tr>
+                  <th scope="col">Rank</th>
+                  <th scope="col">Player</th>
+                  <th scope="col">Score</th>
+                  <th scope="col">Frames</th>
+                  <th scope="col">Minted (this run)</th>
+                  <th scope="col">Seed</th>
+                  <th scope="col">Completed</th>
+                  <th scope="col">Claim</th>
+                </tr>
+              </thead>
+              <tbody>
+                <SkeletonRows count={5} />
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       {leaderboard ? (
         <>
@@ -536,7 +747,7 @@ export function LeaderboardPage() {
               <p>
                 <strong>Window:</strong> {windowLabel(leaderboard.window)}
                 {" · "}
-                <strong>Updated:</strong> {formatUtcDateTime(leaderboard.generated_at)}
+                <strong>Updated:</strong> <RelativeTime value={leaderboard.generated_at} />
               </p>
               <p>
                 <strong>Showing:</strong> {showingStart}-{showingEnd} of{" "}
@@ -593,24 +804,32 @@ export function LeaderboardPage() {
           <section className="leaderboard-card leaderboard-surface">
             <h2 className="leaderboard-section-title">Rankings</h2>
             <p className="leaderboard-note">
-              Rankings show one row per claimant (their best proved run in this window). Minted Δ is
+              Rankings show one row per claimant (their best proved run in this window). Minted is
               the token delta minted for that specific submission.
             </p>
-            {leaderboard.entries.length === 0 ? (
+            {isEmptyAllTime ? (
+              <div className="leaderboard-empty-cta">
+                <p>No proved runs yet.</p>
+                <p>Play the game and prove your score to appear here.</p>
+                <a className="leaderboard-cta-link" href="/">
+                  Play Now
+                </a>
+              </div>
+            ) : leaderboard.entries.length === 0 ? (
               <p className="leaderboard-note">No proved runs in this window yet.</p>
             ) : (
               <div className="leaderboard-table-wrap">
-                <table className="leaderboard-table">
+                <table className="leaderboard-table" aria-label="Leaderboard rankings">
                   <thead>
                     <tr>
-                      <th>Rank</th>
-                      <th>Player</th>
-                      <th>Score</th>
-                      <th>Frames</th>
-                      <th>Minted Δ (this run)</th>
-                      <th>Seed</th>
-                      <th>Completed (UTC)</th>
-                      <th>Claim</th>
+                      <th scope="col">Rank</th>
+                      <th scope="col">Player</th>
+                      <th scope="col">Score</th>
+                      <th scope="col">Frames</th>
+                      <th scope="col">Minted (this run)</th>
+                      <th scope="col">Seed</th>
+                      <th scope="col">Completed</th>
+                      <th scope="col">Claim</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -630,7 +849,7 @@ export function LeaderboardPage() {
                               {displayName(entry)}
                             </a>
                             <code>{abbreviateAddress(entry.claimantAddress)}</code>
-                            {entry.profile?.linkUrl ? (
+                            {entry.profile?.linkUrl && isSafeUrl(entry.profile.linkUrl) ? (
                               <a href={entry.profile.linkUrl} target="_blank" rel="noreferrer">
                                 Link
                               </a>
@@ -641,7 +860,9 @@ export function LeaderboardPage() {
                         <td className="leaderboard-cell--num">{formatMetric(entry.frameCount)}</td>
                         <td className="leaderboard-cell--num">{formatMetric(entry.mintedDelta)}</td>
                         <td className="leaderboard-cell--mono">{formatHex32(entry.seed)}</td>
-                        <td>{formatUtcDateTime(entry.completedAt)}</td>
+                        <td>
+                          <RelativeTime value={entry.completedAt} />
+                        </td>
                         <td>
                           <span className={claimStatusClass(entry.claimStatus)}>
                             {entry.claimStatus}

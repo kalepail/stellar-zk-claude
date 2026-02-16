@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AsteroidsCanvas, type CompletedGameRun } from "./components/AsteroidsCanvas";
 import {
   cancelProofJob,
@@ -170,7 +170,11 @@ async function loadSmartWalletModule(): Promise<SmartWalletModule> {
   return smartWalletModulePromise;
 }
 
-function App() {
+const LazyLeaderboardPage = lazy(() =>
+  import("./leaderboard/LeaderboardPage").then((m) => ({ default: m.LeaderboardPage })),
+);
+
+function GameApp() {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
   const [proofJob, setProofJob] = useState<ProofJobPublic | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
@@ -987,6 +991,18 @@ function App() {
       </section>
     </main>
   );
+}
+
+function App() {
+  if (window.location.pathname.startsWith("/leaderboard")) {
+    return (
+      <Suspense>
+        <LazyLeaderboardPage />
+      </Suspense>
+    );
+  }
+
+  return <GameApp />;
 }
 
 export default App;

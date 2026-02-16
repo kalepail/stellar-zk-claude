@@ -166,7 +166,7 @@ export async function getLeaderboard({
 
   const response = await fetchWithTimeout(
     `/api/leaderboard?${params.toString()}`,
-    { method: "GET", cache: "no-store" },
+    { method: "GET" },
     10_000,
   );
   if (!response.ok) {
@@ -181,7 +181,7 @@ export async function getLeaderboardPlayer(
 ): Promise<LeaderboardPlayerResponse> {
   const response = await fetchWithTimeout(
     `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}`,
-    { method: "GET", cache: "no-store" },
+    { method: "GET" },
     10_000,
   );
   if (!response.ok) {
